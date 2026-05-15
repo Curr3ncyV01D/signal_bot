@@ -5,6 +5,7 @@ from aiogram import Bot, Dispatcher
 from aiogram.client.session.aiohttp import AiohttpSession
 
 from src.core.config import config
+from src.services import bybit_ws
 from src.database.session import async_session
 from src.database.crud import get_recent_liquidations
 from src.bot.handlers import router
