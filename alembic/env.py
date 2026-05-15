@@ -13,7 +13,7 @@ import os
 sys.path.append(os.path.dirname(os.path.dirname(__file__))) # Чтобы видел папку src
 
 from src.core.config import config as app_config
-from src.database.models import Base
+from src.database.models import Base, User, Liquidation
 # ===================================
 
 # this is the Alembic Config object, which provides
