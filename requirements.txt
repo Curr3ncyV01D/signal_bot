@@ -1,0 +1,8 @@
+aiogram==3.28.2
+SQLAlchemy==2.0.49
+asyncpg==0.31.0
+pybit==5.16.0
+pydantic-settings==2.14.1
+python-dotenv==1.2.2
+aiohttp-socks==0.11.0
+alembic==1.18.4
