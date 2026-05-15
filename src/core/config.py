@@ -6,11 +6,10 @@ class Settings(BaseSettings):
     # Базовые настройки (Обязательные)
     BOT_TOKEN: str
     DB_URL: str
-    
     # Список игнорируемых монет (например, ["BTCUSDT", "ETHUSDT"])
     # Если в .env ничего не указано, список будет пустым
     IGNORED_SYMBOLS: list[str] = [] 
-    
+
     @field_validator("IGNORED_SYMBOLS", mode="before")
     @classmethod
     def parse_ignored_symbols(cls, value):
@@ -24,6 +23,11 @@ class Settings(BaseSettings):
             # Сразу переводим в верхний регистр для надежности
             return [s.upper() for s in data if s.strip()]
         return value
+
+    # Прокси-адрес (необязателен и нужен только для разработки. Пример, http://127.0.0.1:7890)
+    # Если в .env ничего не указано, будет None
+    PROXY_URL: str | None = None 
+
 
     # --- БИЗНЕС-ЛОГИКА (Магические числа) ---
     

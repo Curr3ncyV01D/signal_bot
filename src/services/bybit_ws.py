@@ -11,10 +11,11 @@ class BybitListener:
         self.queue = queue
         self.loop = loop
         
-        # Настройка прокси
-        os.environ['HTTP_PROXY'] = "http://127.0.0.1:10801"
-        os.environ['HTTPS_PROXY'] = "http://127.0.0.1:10801"
-
+        if config.PROXY_URL:
+            os.environ['HTTP_PROXY'] = config.PROXY_URL
+            os.environ['HTTPS_PROXY'] = config.PROXY_URL
+            logger.info("Bybit Listener использует прокси")
+        
         self.http = HTTP(testnet=False)
         # Список для хранения всех открытых вебсокетов
         self.ws_connections = []

@@ -20,8 +20,16 @@ async def main():
     logging.getLogger('pybit').setLevel(logging.WARNING)
     logging.getLogger('websocket').setLevel(logging.WARNING)
 
+    # Логика прокси
+    session = None
+    if config.PROXY_URL:
+        from aiogram.client.session.aiohttp import AiohttpSession
+        session = AiohttpSession(proxy=config.PROXY_URL)
+        logging.info(f"📡 Запуск с прокси: {config.PROXY_URL}")
+    else:
+        logging.info("🌐 Запуск без прокси (прямое соединение)")
+    
     # Инициализация бота
-    session = AiohttpSession(proxy="http://127.0.0.1:10801")
     bot = Bot(token=config.BOT_TOKEN, session=session)
     dp = Dispatcher()
     dp.include_router(router)

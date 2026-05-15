@@ -4,11 +4,16 @@ services:
     container_name: bybit_bot_db
     restart: always
     environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD:
-      POSTGRES_DB: bybit_bot
+      POSTGRES_USER: ${DB_USER:-postgres}
+      POSTGRES_PASSWORD: ${DB_PASSWORD} 
+      POSTGRES_DB: ${DB_NAME:-bybit_bot}
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-postgres} -d ${DB_NAME:-bybit_bot}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
     ports:
       - 5432:5432
   bot:
@@ -21,7 +26,7 @@ services:
     env_file:
       - .env
     environment:
-      - DB_URL=postgresql+asyncpg://postgres:@db:5432/bybit_bot
+      - DB_URL=${DB_URL:-postgresql+asyncpg://postgres:admin1234@localhost:5432/bybit_bot}
     logging:
       driver: "json-file"
       options:
