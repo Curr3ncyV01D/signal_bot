@@ -35,13 +35,13 @@ class LiquidationAggregator:
 
             delta = (now - date).total_seconds()
             
-            if delta > config.WINDOW_1H_SEC:
+            if delta > config.WINDOW_VOLUME_1H:
                 break # Всё, дальше идут записи старше часа, они нам не нужны
             
             sum_1h += value
-            if delta <= config.WINDOW_5M_SEC: 
+            if delta <= config.WINDOW_SQUEEZE_5M: 
                 sum_5m += value
-                if delta <= config.WINDOW_1M_SEC: 
+                if delta <= config.WINDOW_CASCADE: 
                     cascade_count += 1
 
 

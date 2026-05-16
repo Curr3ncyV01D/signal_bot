@@ -32,22 +32,22 @@ class Settings(BaseSettings):
     # --- БИЗНЕС-ЛОГИКА (Магические числа) ---
     
     # 1. Настройки чувствительности алертов
-    ALERT_GROWTH_PERCENTAGE: float = 1.50  # Прирост +50% для нового алерта
+    ALERT_GROWTH_PERCENTAGE: float = 1.50  # Прирост +n% для нового алерта
     VOLUME_MULTIPLIER: float = 3.0         # Во сколько раз 1h порог больше 5m порога
     GLOBAL_COOLDOWN_SEC: int = 180         # Задержка между алертами (сек)
 
     # 2. Настройки Каскадов
-    CASCADE_TRIGGER_COUNT: int = 10        # Кол-во событий для алерта "LIQ CASCADE"
+    CASCADE_TRIGGER_COUNT: int = 15        # Кол-во событий для алерта "LIQ CASCADE"
     CASCADE_UI_DISPLAY_COUNT: int = 5      # Кол-во событий для показа строки в сообщении
 
     # 3. Настройки UI и Фильтров
     SQUEEZE_RATIO: float = 0.3             # Доля 5м объема от 1ч объема для "QUICK SQUEEZE"
     MIN_LIQ_VALUE_FILTER: float = 100.0    # Отсечение рыночного шума (в долларах)
 
-    # 4. Временные окна для оперативной памяти (в секундах)
-    WINDOW_1H_SEC: int = 3600
-    WINDOW_5M_SEC: int = 300
-    WINDOW_1M_SEC: int = 60
+    # 4. Временные окна для расчетов (в секундах)
+    WINDOW_VOLUME_1H: int = 3600    # Окно для LIQ VOLUME
+    WINDOW_SQUEEZE_5M: int = 300    # Окно для QUICK SQUEEZE
+    WINDOW_CASCADE: int = 150       # Окно для счета событий каскада
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
