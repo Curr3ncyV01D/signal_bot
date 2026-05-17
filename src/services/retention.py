@@ -1,5 +1,6 @@
 import asyncio
 import logging
+from datetime import datetime, timedelta, timezone
 from src.database.session import async_session
 from src.database.crud.liq_service import delete_old_liquidations
 
@@ -22,9 +23,9 @@ async def retention_policy_worker(hours: int = 4, interval_hours: int = 1):
                 else:
                     logger.debug("Retention Policy: старых записей для удаления не найдено.")
                 
-                next_run = datetime.now() + timedelta(hours=interval_hours)
+                next_run = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(hours=interval_hours)
                 logger.debug(f"Следующая очистка базы запланирована на {next_run.strftime('%H:%M:%S')}")
-                
+
         except Exception as e:
             logger.error(f"Ошибка в Retention Policy воркере: {e}")
         
