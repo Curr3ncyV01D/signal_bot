@@ -1,7 +1,7 @@
 import logging
 from datetime import datetime, timezone
 from src.core.config import config
-from src.database.crud import get_active_users
+from src.database.crud.user_service import get_active_users
 from src.bot.notifier import send_liquidation_alert
 from src.services.aggregator import aggregator
 from src.services.statistics import stats_manager
@@ -15,55 +15,54 @@ async def process_liquidation_item(session, symbol: str, side_label: str, bot):
     """Принимает решение об отправке уведомления"""
     
     # 1. Мгновенно получаем всю статистику из оперативной памяти
-    sum_5m, sum_1h, cascade_count = aggregator.get_metrics(symbol, side_label)
+    sum_5m, sum_1h, sum_cascade, cascade_count = aggregator.get_metrics(symbol, side_label)
     
     # 2. Получаем активных юзеров из базы
     users = await get_active_users(session)
     now = datetime.now(timezone.utc).replace(tzinfo=None)
 
     for user in users:
-
-        # --- ОПРЕДЕЛЕНИЕ ТИПА УВЕДОМЛЕНИЯ ---
-        # Логика приоритетов: каскад > сквиз > объем
-        is_cascade_now = cascade_count >= config.CASCADE_TRIGGER_COUNT
-        is_squeeze_now = sum_5m > (sum_1h * config.SQUEEZE_RATIO)
-        is_volume_now = sum_1h >= (user.threshold * config.VOLUME_MULTIPLIER) or sum_5m >= user.threshold
-
-        # --- ФИЛЬТРАЦИЯ ПО НАСТРОЙКАМ УВЕДОМЛЕНИЙ ---
-        if is_cascade_now and not user.alert_cascade:
-            continue
-        if is_squeeze_now and not is_cascade_now and not user.alert_squeeze:
-            continue
-        if is_volume_now and not is_cascade_now and not is_squeeze_now and not user.alert_volume:
-            continue
-
-
-        # --- ПРОВЕРКА ТРИГГЕРОВ ---
-        # Проверяем, выполнено ли ХОТЯ БЫ ОДНО условие для тревоги
-        is_5m_triggered = sum_5m >= user.threshold
-        is_1h_triggered = sum_1h >= (user.threshold * config.VOLUME_MULTIPLIER)
-        is_cascade = cascade_count >= config.CASCADE_TRIGGER_COUNT
+        # --- 1. ТРИГГЕРЫ (Базовые условия пробития порогов) ---
+        is_cascade = (cascade_count >= config.CASCADE_TRIGGER_COUNT and 
+                    sum_cascade >= user.threshold_cascade)
         
-        if not (is_5m_triggered or is_1h_triggered or is_cascade):
-            continue # Рынок спокоен, пороги не пробиты
+        is_vol_5m = sum_5m >= user.threshold
+        is_vol_1h = sum_1h >= (user.threshold * config.VOLUME_MULTIPLIER)
 
-        # --- АНТИ-СПАМ (Smart Threshold) ---
-        history_key = (user.id, symbol, side_label) 
+        # Если ни один порог не пробит — мгновенно скипаем юзера
+        if not (is_cascade or is_vol_5m or is_vol_1h):
+            continue
+
+        # --- 2. ОПРЕДЕЛЕНИЕ ТИПА (Для заголовка и фильтров юзера) ---
+        # Теперь мы знаем, что событие ВАЖНОЕ. Определяем его приоритетный тип.
+        if is_cascade:
+            alert_type = "CASCADE"
+            is_allowed = user.alert_cascade
+        elif sum_5m > (sum_1h * config.SQUEEZE_RATIO):
+            alert_type = "SQUEEZE"
+            is_allowed = user.alert_squeeze
+        else:
+            alert_type = "VOLUME"
+            is_allowed = user.alert_volume
+
+        # --- 3. ФИЛЬТРАЦИЯ ПО НАСТРОЙКАМ ---
+        if not is_allowed:
+            continue
+
+        # --- 4. АНТИ-СПАМ (Smart Threshold) ---
+        history_key = (user.id, symbol, side_label)
         last_alert = user_alert_history.get(history_key)
 
         if last_alert:
-            # Жесткий кулдаун: минимум сколько-то секунд между любыми сообщениями по одной монете
             if (now - last_alert['time']).total_seconds() < config.GLOBAL_COOLDOWN_SEC:
                 continue
                 
-            # Проверка "Значимости" прироста
-            # Если это не новый каскад, то сумма должна вырасти минимум на заданный процент от прошлого алерта
-            grew_5m = sum_5m >= last_alert['sum_5m'] * config.ALERT_GROWTH_PERCENTAGE
-            grew_1h = sum_1h >= last_alert['sum_1h'] * config.ALERT_GROWTH_PERCENTAGE
-            
-            # Если суммы не выросли и это не каскад - пропускаем
-            if not (grew_5m or grew_1h or is_cascade):
-                continue
+            # Каскад всегда пробивает Smart Threshold, остальное — по росту объема
+            if alert_type != "CASCADE":
+                grew_5m = sum_5m >= last_alert['sum_5m'] * config.ALERT_GROWTH_PERCENTAGE
+                grew_1h = sum_1h >= last_alert['sum_1h'] * config.ALERT_GROWTH_PERCENTAGE
+                if not (grew_5m or grew_1h):
+                    continue
 
         # --- ФОРМИРОВАНИЕ И ОТПРАВКА ---
         # Если мы дошли сюда, значит событие ВАЖНОЕ. Обновляем память.
@@ -84,6 +83,7 @@ async def process_liquidation_item(session, symbol: str, side_label: str, bot):
             side_label=side_label,
             sum_5m=sum_5m,
             sum_1h=sum_1h,
+            sum_cascade=sum_cascade,
             cascade_count=cascade_count,
             signals_24h=user_signals_24h
         )

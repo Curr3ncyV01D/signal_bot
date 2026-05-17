@@ -26,6 +26,7 @@ class LiquidationAggregator:
 
         sum_5m = 0.0
         sum_1h = 0.0
+        sum_cascade = 0.0
         cascade_count = 0
 
         # Считаем суммы и каскады с конца (от свежих к старым)
@@ -42,10 +43,11 @@ class LiquidationAggregator:
             if delta <= config.WINDOW_SQUEEZE_5M: 
                 sum_5m += value
                 if delta <= config.WINDOW_CASCADE: 
+                    sum_cascade += value
                     cascade_count += 1
 
 
-        return sum_5m, sum_1h, cascade_count
+        return sum_5m, sum_1h, sum_cascade, cascade_count
 
     def load_historical_data(self, data):
         """Загружает исторические данные из БД в оперативную память"""

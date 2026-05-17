@@ -12,6 +12,7 @@ class User(Base):
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)  # Telegram ID
     username: Mapped[str] = mapped_column(String, nullable=True)
     threshold: Mapped[float] = mapped_column(Float, default=10000.0) # Порог в долларах
+    threshold_cascade: Mapped[float] = mapped_column(Float, default=5000.0) 
     created_at: Mapped[datetime] = mapped_column(DateTime, default=get_utc_now)
     alert_cascade: Mapped[bool] = mapped_column(default=True)
     alert_volume: Mapped[bool] = mapped_column(default=True)

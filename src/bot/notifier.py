@@ -23,6 +23,7 @@ async def send_liquidation_alert(
     side_label: str, 
     sum_5m: float, 
     sum_1h: float, 
+    sum_cascade: float,
     cascade_count: int,
     signals_24h: int
 ):
@@ -34,7 +35,8 @@ async def send_liquidation_alert(
         
         # 2. Логика заголовка
         if cascade_count >= config.CASCADE_TRIGGER_COUNT:
-            header = f"⚡️ LIQ КАСКАД x{cascade_count}"
+            formatted_cas_sum = format_money(sum_cascade)
+            header = f"⚡️ LIQ КАСКАД x{cascade_count} ({formatted_cas_sum})"
         elif sum_5m > (sum_1h * config.SQUEEZE_RATIO):
             header = "🔥 QUICK SQUEEZE"
         else:
@@ -46,7 +48,7 @@ async def send_liquidation_alert(
 
         # 4. Сборка текста сообщения
         text = f"{market_color} {hbold('#' + symbol)}\n\n"
-        text += f"{header}\n\n"
+        text += f"{hbold(header)}\n\n"
         
         # Основной блок с метриками
         text += f"{pos_color} {side_label} LIQ (5m): {hbold(formatted_5m)}\n"
@@ -55,7 +57,7 @@ async def send_liquidation_alert(
         if cascade_count >= config.CASCADE_UI_DISPLAY_COUNT:
             text += f"⚡️ {hbold('LIQ КАСКАД:')} {cascade_count} подряд\n"
 
-        # Строка статистики как у донора
+        # Строка статистики
         text += f"\n🔔 {hbold('Сигналы за 24ч:')} {signals_24h}\n"
 
         # Ссылки 

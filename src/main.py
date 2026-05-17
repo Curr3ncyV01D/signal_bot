@@ -7,7 +7,7 @@ from aiogram.client.session.aiohttp import AiohttpSession
 from src.core.config import config
 from src.services import bybit_ws
 from src.database.session import async_session
-from src.database.crud import get_recent_liquidations
+from src.database.crud.liq_service import get_recent_liquidations
 from src.bot.handlers import router
 from src.services.bybit_ws import BybitListener
 from src.services.aggregator import aggregator
