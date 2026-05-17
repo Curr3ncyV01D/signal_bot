@@ -12,8 +12,4 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-RUN echo -e "#!/bin/bash\nalembic upgrade head\npython -m src.main" > /app/entrypoint.sh
-RUN chmod +x /app/entrypoint.sh
-
-# Запускаем через entrypoint
-ENTRYPOINT ["/app/entrypoint.sh"]
+CMD sh -c "alembic upgrade head && python -m src.main"
