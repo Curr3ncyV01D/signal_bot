@@ -53,13 +53,18 @@ class BybitListener:
         # Фильтруем монеты
         target_symbols = [s for s in all_symbols if s not in ignored_set]
         
-        chunk_size = 10
+        chunk_size = config.WS_CHUNK_SIZE
         symbol_chunks = [target_symbols[i:i + chunk_size] for i in range(0, len(target_symbols), chunk_size)]
         
         logger.info(f"Запуск мониторинга. Всего монет: {len(target_symbols)}. Соединений: {len(symbol_chunks)}")
 
         for i, chunk in enumerate(symbol_chunks, 1):
-            ws = WebSocket(testnet=False, channel_type="linear")
+            ws = WebSocket(
+                testnet=False, 
+                channel_type="linear",
+                ping_interval=20,
+                ping_timeout=10,
+                restart_on_error=True)
             for symbol in chunk:
                 try:
                     ws.all_liquidation_stream(symbol=symbol, callback=self.handle_message)
@@ -72,7 +77,7 @@ class BybitListener:
             sys.stdout.flush()
 
             import time
-            time.sleep(0.3)
+            time.sleep(0.5)
 
         print() # Перенос каретки на новую строку после прогресс бара
         logger.info(f"\n✅ Все {len(self.ws_connections)} соединений успешно инициализированы.")

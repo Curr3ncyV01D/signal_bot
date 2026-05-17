@@ -47,8 +47,6 @@ class UserStatsManager:
         while True:
             await asyncio.sleep(3600)
             try:
-                self._cleanup_global()
-                
                 # Удаляем совсем неактивных юзеров, чтобы словарь не рос вечно
                 for user_id in list(self._user_signals.keys()):
                     self._cleanup_user(user_id)

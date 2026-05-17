@@ -42,12 +42,15 @@ class Settings(BaseSettings):
 
     # 3. Настройки UI и Фильтров
     SQUEEZE_RATIO: float = 0.3             # Доля 5м объема от 1ч объема для "QUICK SQUEEZE"
-    MIN_LIQ_VALUE_FILTER: float = 100.0    # Отсечение рыночного шума (в долларах)
+    MIN_LIQ_VALUE_FILTER: float = 50.0    # Отсечение рыночного шума (в долларах)
 
     # 4. Временные окна для расчетов (в секундах)
     WINDOW_VOLUME_1H: int = 3600    # Окно для LIQ VOLUME
     WINDOW_SQUEEZE_5M: int = 300    # Окно для QUICK SQUEEZE
     WINDOW_CASCADE: int = 150       # Окно для счета событий каскада
+
+    # --- ПОДКЛЮЧЕНИЕ ---
+    WS_CHUNK_SIZE: int = 10                # Кол-во монет на одно WebSocket соединение
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
