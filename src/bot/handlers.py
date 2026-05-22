@@ -1,3 +1,5 @@
+import logging
+
 from aiogram import Router, types, F
 from aiogram.filters import Command
 from aiogram.utils.markdown import hbold
@@ -53,18 +55,24 @@ async def cmd_status(message: types.Message):
     # Считаем общее кол-во ликвидаций в памяти
     total_in_mem = sum(len(d) for d in aggregator.history.values())
 
-    # Считаем соединения
-    # Проверяем, инициализирован ли листенер и есть ли у него список соединений
-    conn_count = 0
-    if bybit_listener and hasattr(bybit_listener, 'ws_connections'):
-        conn_count = len(bybit_listener.ws_connections)
+    total_pool = len(bybit_listener.ws_connections)
+    active_pool = bybit_listener.get_active_connections_count()
+
+    status_emoji = "✅" if active_pool >= total_pool - 8 else "⚠️"
+    if active_pool == 0: status_emoji = "❌"
+
+    last_msg_str = "Никогда"
+    if bybit_listener.last_message_time:
+        diff = (datetime.now(timezone.utc).replace(tzinfo=None) - bybit_listener.last_message_time).total_seconds()
+        last_msg_str = f"{int(diff)} сек. назад"
     
     text = (
-        f"✅ {hbold('Система активна')}\n\n"
-        f"📡 Мониторинг пар: {hbold(active_symbols)}\n"
-        f"🧠 Событий в кэше: {hbold(total_in_mem)}\n"
-        f"🌐 Соединений (Pool): {hbold(conn_count)}\n"
-        f"🕒 Время сервера: {datetime.now(timezone.utc).replace(tzinfo=None).strftime('%H:%M:%S')} UTC"
+        f"{status_emoji} {hbold('Система активна')}\n\n"
+        f"🌐 Соединения: {hbold(active_pool)} / {hbold(total_pool)}\n"
+        f"💓 Последний сигнал API: {hbold(last_msg_str)}\n"
+        f"\n📡 Мониторинг пар: {hbold(active_symbols)}\n"
+        f"\n🧠 Событий в кэше: {hbold(total_in_mem)}\n"
+        f"\n🕒 Время сервера: {datetime.now(timezone.utc).replace(tzinfo=None).strftime('%H:%M:%S')} UTC"
     )
     await message.answer(text, parse_mode="HTML")
 

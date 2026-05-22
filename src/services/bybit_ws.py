@@ -1,6 +1,8 @@
 import logging
 import os
 import asyncio
+from datetime import datetime, timezone
+
 from pybit.unified_trading import WebSocket, HTTP
 from src.core.config import config
 
@@ -10,6 +12,7 @@ class BybitListener:
     def __init__(self, queue: asyncio.Queue, loop: asyncio.AbstractEventLoop):
         self.queue = queue
         self.loop = loop
+        self.last_message_time = None
         
         if config.PROXY_URL:
             os.environ['HTTP_PROXY'] = config.PROXY_URL
@@ -32,8 +35,21 @@ class BybitListener:
             logger.error(f"Ошибка получения тикеров: {e}")
             return ["BTCUSDT", "ETHUSDT", "SOLUSDT"]
 
+    def get_active_connections_count(self):
+        """Возвращает количество реально подключенных вебсокетов в данный момент"""
+        active_count = 0
+        for ws in self.ws_connections:
+            try:
+                if ws.is_connected():
+                    active_count += 1
+            except Exception as e:
+                logger.error(f"Ошибка при получении количества вебсокетов: {e}")
+        return active_count
+
     def handle_message(self, message):
         """Общий обработчик для всех соединений"""
+        self.last_message_time = datetime.now(timezone.utc).replace(tzinfo=None)
+
         if "data" not in message:
             return
         data = message.get("data")
