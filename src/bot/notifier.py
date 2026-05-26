@@ -24,8 +24,7 @@ async def send_liquidation_alert(
     sum_5m: float, 
     sum_1h: float, 
     sum_cascade: float,
-    cascade_count: int,
-    signals_24h: int
+    cascade_count: int
 ):
     """Формирует и отправляет сводное сообщение пользователю"""
     try:
@@ -56,9 +55,6 @@ async def send_liquidation_alert(
         
         if cascade_count >= config.CASCADE_UI_DISPLAY_COUNT:
             text += f"⚡️ {hbold('LIQ КАСКАД:')} {cascade_count} подряд\n"
-
-        # Строка статистики
-        text += f"\n🔔 {hbold('Сигналы за 24ч:')} {signals_24h}\n"
 
         # Ссылки 
         links = (

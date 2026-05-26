@@ -1,10 +1,10 @@
 import logging
+import asyncio
 from datetime import datetime, timezone
 from src.core.config import config
 from src.database.crud.user_service import get_active_users
 from src.bot.notifier import send_liquidation_alert
 from src.services.aggregator import aggregator
-from src.services.statistics import stats_manager
 
 logger = logging.getLogger(__name__)
 
@@ -71,10 +71,6 @@ async def process_liquidation_item(session, symbol: str, side_label: str, bot):
             'sum_5m': sum_5m,
             'sum_1h': sum_1h
         }
-
-        # Статистика отправки сигналов за 24 часа
-        stats_manager.add_signal(user.id)
-        user_signals_24h = stats_manager.get_count_24h(user.id)
         
         await send_liquidation_alert(
             bot=bot,
@@ -84,8 +80,7 @@ async def process_liquidation_item(session, symbol: str, side_label: str, bot):
             sum_5m=sum_5m,
             sum_1h=sum_1h,
             sum_cascade=sum_cascade,
-            cascade_count=cascade_count,
-            signals_24h=user_signals_24h
+            cascade_count=cascade_count
         )
 
 async def cleanup_alert_history_task():

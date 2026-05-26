@@ -14,7 +14,6 @@ from src.services.aggregator import aggregator
 from src.services.analyzer import cleanup_alert_history_task
 from src.services.worker import database_worker
 from src.services.retention import retention_policy_worker
-from src.services.statistics import stats_manager
 
 async def main():
     logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -56,9 +55,6 @@ async def main():
     # Retention Policy (Очистка устаревших данных из БД)
     retention_task = asyncio.create_task(retention_policy_worker(hours=4, interval_hours=4))
 
-    # Очистка личной статистики
-    stats_task = asyncio.create_task(stats_manager.global_cleanup_task())
-    
     # Очистка аггрегатора
     aggregator_task = asyncio.create_task(aggregator.cleanup_task())
 
@@ -102,7 +98,7 @@ async def main():
         await on_shutdown(
             bot, 
             listener, 
-            [worker_task, retention_task, stats_task, aggregator_task, alert_cleanup_task]
+            [worker_task, retention_task, aggregator_task, alert_cleanup_task]
         )
 
 async def on_shutdown(bot: Bot, listener: BybitListener, tasks: list[asyncio.Task]):

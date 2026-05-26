@@ -68,9 +68,15 @@ class LiquidationAggregator:
         while True:
             await asyncio.sleep(60) # Проверяем раз в минуту
             now = datetime.now(timezone.utc).replace(tzinfo=None)
+            total_removed = 0
+
             for symbol, events in self.history.items():
                 # Пока в начале очереди есть старые элементы - удаляем их
                 while events and (now - events[0][0]).total_seconds() > config.WINDOW_1H_SEC:
                     events.popleft()
+                    total_removed += 1
+            
+            if total_removed > 0:
+                logger.info(f"Очищение оперативной памяти: Успешно удалено {total_removed} устаревших событий.")
 
 aggregator = LiquidationAggregator()
