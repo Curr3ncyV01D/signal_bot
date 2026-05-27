@@ -49,8 +49,10 @@ class Settings(BaseSettings):
     WINDOW_SQUEEZE_5M: int = 300           # Окно для QUICK SQUEEZE
     WINDOW_CASCADE: int = 150              # Окно для счета событий каскада
 
+    MIN_TRADE_VALUE_FOR_CVD: float = 200.0 # Порог сделки для подсчета Кумулитвной Дельты
+    
     # --- ПОДКЛЮЧЕНИЕ ---
-    WS_CHUNK_SIZE: int = 20                # Кол-во монет на одно WebSocket соединение
+    WS_CHUNK_SIZE: int = 10                # Кол-во монет на одно WebSocket соединение
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 

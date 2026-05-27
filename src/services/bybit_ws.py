@@ -8,23 +8,24 @@ from src.core.config import config
 
 logger = logging.getLogger(__name__)
 
+# Fallback-значение, если в конфиге забыли указать
+MIN_TRADE = getattr(config, 'MIN_TRADE_VALUE_FOR_CVD', 200.0)
+
 class BybitListener:
     def __init__(self, queue: asyncio.Queue, loop: asyncio.AbstractEventLoop):
         self.queue = queue
         self.loop = loop
         self.last_message_time = None
         
-        if config.PROXY_URL:
+        if getattr(config, 'PROXY_URL', None):
             os.environ['HTTP_PROXY'] = config.PROXY_URL
             os.environ['HTTPS_PROXY'] = config.PROXY_URL
             logger.info("Bybit Listener использует прокси")
         
         self.http = HTTP(testnet=False)
-        # Список для хранения всех открытых вебсокетов
         self.ws_connections = []
 
     def get_all_usdt_symbols(self):
-        """Получает список всех актуальных USDT-пар"""
         try:
             response = self.http.get_instruments_info(category="linear", status="Trading")
             return [
@@ -33,43 +34,74 @@ class BybitListener:
             ]
         except Exception as e:
             logger.error(f"Ошибка получения тикеров: {e}")
-            return ["BTCUSDT", "ETHUSDT", "SOLUSDT"]
+            return ["BTCUSDT", "ETHUSDT"]
 
     def get_active_connections_count(self):
-        """Возвращает количество реально подключенных вебсокетов в данный момент"""
         active_count = 0
         for ws in self.ws_connections:
             try:
                 if ws.is_connected():
                     active_count += 1
             except Exception as e:
-                logger.error(f"Ошибка при получении количества вебсокетов: {e}")
+                pass
         return active_count
 
-    def handle_message(self, message):
-        """Общий обработчик для всех соединений"""
-        self.last_message_time = datetime.now(timezone.utc).replace(tzinfo=None)
+    # --- СПЕЦИАЛИЗИРОВАННЫЕ ОБРАБОТЧИКИ (Фильтрация до очереди) ---
 
-        if "data" not in message:
-            return
+    def handle_liquidation(self, message):
+        """Обработка ликвидаций (Stage 1)"""
+        self.last_message_time = datetime.now(timezone.utc).replace(tzinfo=None)
         data = message.get("data")
         
+        if not data: return
+        
+        # Оборачиваем в type: liquidation, чтобы Воркер понял
         if isinstance(data, list):
             for item in data:
-                self.loop.call_soon_threadsafe(self.queue.put_nowait, item)
+                self.loop.call_soon_threadsafe(self.queue.put_nowait, {"type": "liquidation", "data": item})
         else:
-            self.loop.call_soon_threadsafe(self.queue.put_nowait, data)
+            self.loop.call_soon_threadsafe(self.queue.put_nowait, {"type": "liquidation", "data": data})
+
+    def handle_ticker(self, message):
+        """Обработка тикеров: Открытый интерес (OI), Цена, Фандинг"""
+        self.last_message_time = datetime.now(timezone.utc).replace(tzinfo=None)
+        data = message.get("data")
+        topic = message.get("topic", "")
+        
+        if data:
+            # Оборачиваем в type: ticker
+            self.loop.call_soon_threadsafe(self.queue.put_nowait, {"type": "ticker", "topic": topic, "data": data})
+
+    def handle_trade(self, message):
+        """Обработка публичных сделок (CVD). Жесткая фильтрация!"""
+        self.last_message_time = datetime.now(timezone.utc).replace(tzinfo=None)
+        data = message.get("data", [])
+        topic = message.get("topic", "")
+        
+        filtered_trades = []
+        for item in data:
+            try:
+                price = float(item.get("p", 0))
+                qty = float(item.get("v", 0))
+                # Отсекаем "шум" мелких роботов
+                if price * qty >= MIN_TRADE:
+                    filtered_trades.append(item)
+            except (ValueError, TypeError):
+                continue
+                
+        if filtered_trades:
+            self.loop.call_soon_threadsafe(self.queue.put_nowait, {"type": "trade", "topic": topic, "data": filtered_trades})
+
+    # -------------------------------------------------------------
 
     def start(self):
         import sys
 
         all_symbols = self.get_all_usdt_symbols()
-        ignored_set = set(config.IGNORED_SYMBOLS)
-        
-        # Фильтруем монеты
+        ignored_set = set(getattr(config, 'IGNORED_SYMBOLS', []))
         target_symbols = [s for s in all_symbols if s not in ignored_set]
         
-        chunk_size = config.WS_CHUNK_SIZE
+        chunk_size = getattr(config, 'WS_CHUNK_SIZE', 25)
         symbol_chunks = [target_symbols[i:i + chunk_size] for i in range(0, len(target_symbols), chunk_size)]
         
         logger.info(f"Запуск мониторинга. Всего монет: {len(target_symbols)}. Соединений: {len(symbol_chunks)}")
@@ -80,10 +112,17 @@ class BybitListener:
                 channel_type="linear",
                 ping_interval=20,
                 ping_timeout=10,
-                restart_on_error=True)
+                restart_on_error=True
+            )
+            
             for symbol in chunk:
                 try:
-                    ws.all_liquidation_stream(symbol=symbol, callback=self.handle_message)
+                    # ПОДПИСКА 1: Ликвидации
+                    ws.all_liquidation_stream(symbol=symbol, callback=self.handle_liquidation)
+                    # ПОДПИСКА 2: Тикеры (OI, Price)
+                    ws.ticker_stream(symbol=symbol, callback=self.handle_ticker)
+                    # ПОДПИСКА 3: Сделки (CVD)
+                    ws.trade_stream(symbol=symbol, callback=self.handle_trade)
                 except Exception as e:
                     logger.error(f"Ошибка подписки на {symbol}: {e}")
             
@@ -93,26 +132,15 @@ class BybitListener:
             sys.stdout.flush()
 
             import time
-            time.sleep(0.5)
+            time.sleep(1.5) # Пауза, чтобы не словить бан по IP за спам коннектами
 
-        print() # Перенос каретки на новую строку после прогресс бара
-        logger.info(f"\n✅ Все {len(self.ws_connections)} соединений успешно инициализированы.")
-        
-        logger.info(
-            f"BybitListener запущен: подписались на {len(target_symbols)} пар. "
-            f"Пропущено (blacklist): {len(all_symbols) - len(target_symbols)}"
-        )
+        print() 
+        logger.info(f"\n✅ Все {len(self.ws_connections)} соединений успешно инициализированы (Multi-stream Mode).")
 
     def stop(self):
-        """Метод для корректной остановки всех соединений"""
         for ws in self.ws_connections:
             try:
                 ws.exit()
             except:
                 pass
         logger.info("Все WebSocket соединения закрыты.")
-
-bybit_listener: 'BybitListener' = None
-
-
-# Инициализируем в main.py

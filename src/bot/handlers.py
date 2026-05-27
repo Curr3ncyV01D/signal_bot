@@ -16,6 +16,11 @@ router = Router()
 class SettingsStates(StatesGroup):
     waiting_for_threshold = State()
     waiting_for_cascade_threshold = State()
+    waiting_for_oi_thresholds = State()
+
+@router.callback_query(F.data == "ignore")
+async def ignore_callback(callback: types.CallbackQuery):
+    await callback.answer()
 
 @router.message(Command("start"))
 async def cmd_start(message: types.Message):
@@ -43,27 +48,27 @@ async def cmd_settings(message: types.Message):
         await message.answer(text, reply_markup=get_settings_kb(user), parse_mode="HTML")
         
 @router.message(Command("status"))
-async def cmd_status(message: types.Message):
-    from src.services.aggregator import aggregator
-    from src.services.bybit_ws import bybit_listener
+async def cmd_status(
+    message: types.Message, 
+    listener,           # Aiogram автоматически прокинет сюда BybitListener
+    liq_aggregator      # Aiogram автоматически прокинет сюда LiquidationAggregator
+):
     from datetime import datetime, timezone
 
     await message.delete()
 
-    active_symbols = len(aggregator.history)
+    active_symbols = len(liq_aggregator.history)
+    total_in_mem = sum(len(d) for d in liq_aggregator.history.values())
 
-    # Считаем общее кол-во ликвидаций в памяти
-    total_in_mem = sum(len(d) for d in aggregator.history.values())
-
-    total_pool = len(bybit_listener.ws_connections)
-    active_pool = bybit_listener.get_active_connections_count()
+    total_pool = len(listener.ws_connections)
+    active_pool = listener.get_active_connections_count()
 
     status_emoji = "✅" if active_pool >= total_pool - 8 else "⚠️"
     if active_pool == 0: status_emoji = "❌"
 
     last_msg_str = "Никогда"
-    if bybit_listener.last_message_time:
-        diff = (datetime.now(timezone.utc).replace(tzinfo=None) - bybit_listener.last_message_time).total_seconds()
+    if listener.last_message_time:
+        diff = (datetime.now(timezone.utc).replace(tzinfo=None) - listener.last_message_time).total_seconds()
         last_msg_str = f"{int(diff)} сек. назад"
     
     text = (
@@ -165,22 +170,78 @@ async def process_cascade_threshold(message: types.Message, state: FSMContext):
 
 @router.callback_query(F.data.startswith("toggle_"))
 async def toggle_settings(callback: types.CallbackQuery):
-    # Извлекаем опцию настройки уведомления из callback_data
     setting_type = callback.data.replace("toggle_", "") 
     
     async with async_session() as session:
         user = await session.get(User, callback.from_user.id)
         
-        # Инвертируем выбранную настройку
+        # Stage 1
         if setting_type == "cascade":
             user.alert_cascade = not user.alert_cascade
         elif setting_type == "volume":
             user.alert_volume = not user.alert_volume
         elif setting_type == "squeeze":
             user.alert_squeeze = not user.alert_squeeze
+        # Stage 2
+        elif setting_type == "oi":
+            user.alert_oi = not user.alert_oi
+        elif setting_type == "rsi":
+            user.alert_rsi = not user.alert_rsi
+        elif setting_type == "cvd":
+            user.alert_cvd = not user.alert_cvd
             
         await session.commit()
-        
-        # Обновляем только кнопки, не переотправляя сообщение
         await callback.message.edit_reply_markup(reply_markup=get_settings_kb(user))
         await callback.answer("Настройка сохранена")
+
+@router.callback_query(F.data == "menu_oi_thresholds")
+async def start_set_oi_thresholds(callback: types.CallbackQuery, state: FSMContext):
+    text = (
+        "📊 <b>Настройка порогов Открытого Интереса (OI)</b>\n\n"
+        "Введите 2 числа через пробел:\n"
+        "1. <b>Процент изменения</b> (например, 5.0)\n"
+        "2. <b>Объем в долларах</b> (например, 500000)\n\n"
+        "<i>Пример ввода:</i> <code>5.0 500000</code>"
+    )
+    await callback.message.answer(text, parse_mode="HTML")
+    await state.set_state(SettingsStates.waiting_for_oi_thresholds)
+    await callback.answer()
+
+@router.message(SettingsStates.waiting_for_oi_thresholds)
+async def process_oi_thresholds(message: types.Message, state: FSMContext):
+    try:
+        # Разбиваем сообщение на две части и заменяем запятые на точки
+        parts = message.text.replace(',', '.').split()
+        if len(parts) != 2:
+            raise ValueError
+        
+        new_percent = float(parts[0])
+        new_value = float(parts[1])
+        
+        if new_percent <= 0 or new_value <= 0:
+            return await message.answer("❌ Числа должны быть больше нуля. Попробуйте еще раз:")
+            
+    except ValueError:
+        return await message.answer(
+            "❌ Некорректный ввод!\n"
+            "Пожалуйста, введите два числа через пробел. Пример: 5.0 500000"
+        )
+    
+    try:
+        async with async_session() as session:
+            user = await session.get(User, message.from_user.id)
+            if user:
+                user.threshold_oi_percent = new_percent
+                user.threshold_oi_value = new_value
+                await session.commit()
+                await state.clear()
+                
+                formatted_value = f"${new_value/1_000_000:.1f}M" if new_value >= 1_000_000 else f"${new_value:,.0f}"
+                await message.answer(f"✅ Пороги ОИ изменены!\nПроцент: <b>{new_percent}%</b>\nОбъем: <b>{formatted_value}</b>", parse_mode="HTML")
+            else:
+                await message.answer("❌ Ошибка: пользователь не найден.")
+                await state.clear()
+    except Exception as e:
+        logging.error(f"Ошибка при сохранении порогов ОИ: {e}")
+        await message.answer("❌ Произошла ошибка. Попробуйте позже.")
+        await state.clear()

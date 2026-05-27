@@ -5,14 +5,15 @@ from aiogram import Bot, Dispatcher
 from aiogram.client.session.aiohttp import AiohttpSession
 
 from src.core.config import config
-from src.services import bybit_ws
 from src.database.session import async_session
 from src.database.crud.liq_service import get_recent_liquidations
 from src.bot.handlers import router
 from src.services.bybit_ws import BybitListener
-from src.services.aggregator import aggregator
+from src.services.aggregators.liq_aggregator import LiquidationAggregator
+from src.services.aggregators.market_aggregator import MarketAggregator
+from src.services.aggregators.trade_aggregator import TradeAggregator
 from src.services.analyzer import cleanup_alert_history_task
-from src.services.worker import database_worker
+from src.services.worker import DataWorker
 from src.services.retention import retention_policy_worker
 
 async def main():
@@ -29,35 +30,44 @@ async def main():
     else:
         logging.info("🌐 Запуск без прокси (прямое соединение)")
     
-    # Инициализация бота
+    # 1. Инициализация бота
     bot = Bot(token=config.BOT_TOKEN, session=session)
     dp = Dispatcher()
     dp.include_router(router)
 
-    # Инициализация инфраструктуры данных
+    # 2. Инициализируем агрегаторы
+    liq_aggregator = LiquidationAggregator()
+    market_aggregator = MarketAggregator() 
+    trade_aggregator = TradeAggregator()
+
+
+    # 3. Инициализация инфраструктуры данных
     queue = asyncio.Queue()
     loop = asyncio.get_running_loop()
 
-    # Прогрев Кэша
+    # 4. Прогрев Кэша
     logging.info("Прогрев оперативной памяти из базы данных...")
     async with async_session() as session:
         historical_data = await get_recent_liquidations(session, minutes=60)
-        aggregator.load_historical_data(historical_data)
+        liq_aggregator.load_historical_data(historical_data)
     
-    # Producer (Bybit)
+    # 5. Инициализируем Диспетчер-Воркер
+    worker = DataWorker(
+        bot=bot, 
+        liq_aggregator=liq_aggregator,
+        market_aggregator=market_aggregator,
+        trade_aggregator=trade_aggregator)
+    worker_task = asyncio.create_task(worker.run(queue))
+
+    # 6. Producer (Bybit)
     listener = BybitListener(queue, loop)
-    bybit_ws.bybit_listener = listener
     listener.start()
 
-    # Consumer (Worker)
-    worker_task = asyncio.create_task(database_worker(queue, bot))
-
+    # 7. Фоновые задачи
     # Retention Policy (Очистка устаревших данных из БД)
     retention_task = asyncio.create_task(retention_policy_worker(hours=4, interval_hours=4))
-
     # Очистка аггрегатора
-    aggregator_task = asyncio.create_task(aggregator.cleanup_task())
-
+    aggregator_task = asyncio.create_task(liq_aggregator.cleanup_task())
     # Очистка истории алертов
     alert_cleanup_task = asyncio.create_task(cleanup_alert_history_task())        
 
@@ -76,7 +86,14 @@ async def main():
     logging.info("Система запущена в модульном режиме.")
 
     try:
-        polling_task = asyncio.create_task(dp.start_polling(bot))
+        polling_task = asyncio.create_task(
+            dp.start_polling(
+                bot, 
+                listener=listener,
+                liq_aggregator=liq_aggregator,
+                market_aggregator=market_aggregator,
+                trade_aggregator=trade_aggregator))
+
         stop_task = asyncio.create_task(stop_event.wait())
         
         done, pending = await asyncio.wait(

@@ -18,6 +18,8 @@ services:
       - "127.0.0.1:5432:5432"
   bot:
     build: .
+    volumes:
+      - .:/app
     container_name: bybit_bot_app
     restart: always
     depends_on:
