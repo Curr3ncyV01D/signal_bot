@@ -9,10 +9,7 @@ from src.services.analyzer import process_liquidation_item
 logger = logging.getLogger(__name__)
 
 class DataWorker:
-    def __init__(self, bot: Bot,
-    liq_aggregator, 
-    market_aggregator, 
-    trade_aggregator):
+    def __init__(self, bot: Bot, liq_aggregator, market_aggregator, trade_aggregator):
         self.bot = bot
         self.liq_aggregator = liq_aggregator
         self.market_aggregator = market_aggregator
@@ -30,26 +27,36 @@ class DataWorker:
                     await self._handle_liquidation(data)
                 
                 elif msg_type == "ticker":
-                    # data здесь — это список или объект тикера
-                    # Bybit V5 ticker шлет: 'lastPrice', 'openInterestValue', 'fundingRate'
-                    symbol = data.get("s")
-                    price = float(data.get("lastPrice", 0))
-                    oi = float(data.get("openInterestValue", 0))
-                    funding = float(data.get("fundingRate", 0))
+                    symbol = data.get("symbol") or data.get("s")
+                    
+                    if not symbol:
+                        queue.task_done()
+                        continue
+
+                    # Извлекаем значения только если они есть в пакете
+                    price = float(data["lastPrice"]) if "lastPrice" in data and data["lastPrice"] else None
+                    oi = float(data["openInterestValue"]) if "openInterestValue" in data and data["openInterestValue"] else None
+                    funding = float(data["fundingRate"]) if "fundingRate" in data and data["fundingRate"] else None
+
                     self.market_aggregator.update(symbol, price, oi, funding)
+                    
+                    # ДЕБАГ: Раскомментируй строку ниже, если хочешь увидеть поток тикеров в консоли
+                    logger.debug(f"Ticker update for {symbol}: P:{price} OI:{oi}")
 
                 elif msg_type == "trade":
-                    # data здесь — список сделок
                     symbol = msg.get("topic", "").split(".")[-1]
-                    self.trade_aggregator.add_trades(symbol, data)
+                    if symbol:
+                        self.trade_aggregator.add_trades(symbol, data)
 
                 queue.task_done()
             except Exception as e:
-                logger.error(f"Ошибка воркера: {e}")
-                queue.task_done()
+                logger.error(f"Критическая ошибка воркера: {e}", exc_info=True)
+                try:
+                    queue.task_done()
+                except:
+                    pass
 
     async def _handle_liquidation(self, item: dict):
-        """Логика обработки ликвидаций"""
         symbol = item.get("s") or item.get("symbol")
         raw_side = item.get("S") or item.get("side")
         
@@ -65,12 +72,17 @@ class DataWorker:
             return
 
         side_label = "LONG" if raw_side == "Buy" else "SHORT"
-        
-        # 1. Добавляем в инстанс агрегатора (DI)
         self.liq_aggregator.add_event(symbol, value, side_label)
 
-        # 2. Работа с БД и Анализатором
         async with async_session() as session:
             await save_liquidation(session, item)
-            # Передаем инстанс агрегатора в анализатор
-            await process_liquidation_item(session, symbol, side_label, self.bot, self.liq_aggregator, self.market_aggregator, self.trade_aggregator)
+            # Запускаем анализ и обогащение
+            await process_liquidation_item(
+                session=session,
+                symbol=symbol,
+                side_label=side_label,
+                bot=self.bot,
+                liq_aggregator=self.liq_aggregator,
+                market_aggregator=self.market_aggregator,
+                trade_aggregator=self.trade_aggregator
+            )

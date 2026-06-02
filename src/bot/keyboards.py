@@ -16,7 +16,7 @@ def get_settings_kb(user: User) -> InlineKeyboardMarkup:
     cvd_btn = "✅" if user.alert_cvd else "❌"
 
     # --- БЛОК ЛИКВИДАЦИЙ ---
-    builder.row(InlineKeyboardButton(text="--- ЛИКВИДАЦИИ ---", callback_data="ignore"))
+    builder.row(InlineKeyboardButton(text="-- ❓ Справка: ЛИКВИДАЦИИ --", callback_data="help_liq"))
     
     # Тумблеры ликвидаций (в один ряд)
     builder.row(
@@ -32,7 +32,7 @@ def get_settings_kb(user: User) -> InlineKeyboardMarkup:
     )
 
     # --- БЛОК АНАЛИТИКИ ---
-    builder.row(InlineKeyboardButton(text="--- АНАЛИТИКА ---", callback_data="ignore"))
+    builder.row(InlineKeyboardButton(text="-- ❓ Справка: АНАЛИТИКА  --", callback_data="help_analytics"))
     
     # Тумблеры аналитики (в один ряд)
     builder.row(
@@ -49,4 +49,10 @@ def get_settings_kb(user: User) -> InlineKeyboardMarkup:
     # Кнопка закрытия
     builder.row(InlineKeyboardButton(text="⬅️ Закрыть", callback_data="close_message"))
 
+    return builder.as_markup()
+
+def get_back_to_settings_kb() -> InlineKeyboardMarkup:
+    """Клавиатура для возврата из справки обратно в настройки"""
+    builder = InlineKeyboardBuilder()
+    builder.row(InlineKeyboardButton(text="⬅️ Назад к настройкам", callback_data="back_to_settings"))
     return builder.as_markup()

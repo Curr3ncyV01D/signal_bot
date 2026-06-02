@@ -6,103 +6,164 @@ from src.core.config import config
 
 logger = logging.getLogger(__name__)
 
-def format_money(value: float) -> str:
-    """Форматирует число в красивый вид: 1500 -> $1.5K, 1500000 -> $1.50M"""
-    abs_val = abs(value)
-    if abs_val >= 1_000_000_000:
-        res = f"${abs_val / 1_000_000_000:.2f}B"
-    elif abs_val >= 1_000_000:
-        res = f"${abs_val / 1_000_000:.2f}M"
-    elif abs_val >= 1_000:
-        res = f"${abs_val / 1_000:.1f}K"
-    else:
-        res = f"${abs_val:.0f}"
-    return f"-{res}" if value < 0 else res
-
-def get_trend_emoji(val: float) -> str:
-    """🟢 для роста, 🔴 для падения, ⚪ для флета"""
-    return "🟢" if val > 0 else "🔴" if val < 0 else "⚪"
-
-async def send_liquidation_alert(
-    bot: Bot, 
-    user_id: int, 
-    symbol: str, 
-    side_label: str, 
-    alert_title: str,
-    sum_5m: float, 
-    sum_1h: float, 
-    sum_cascade: float,
-    cascade_count: int,
-    alert_type: str,
-    oi_pct: float,
-    oi_val: float,
-    price_pct: float,
-    total_oi: float,
-    funding: float,
-    delta_5m: float,  # Чистая дельта за 5м (покупки минус продажи)
-    delta_30m: float, # Чистая дельта за 30м (покупки минус продажи)
-    rsi: float | None = None
-):
-    """Формирует и отправляет красивое аналитическое сообщение пользователю"""
-    try:
-        # 1. Цветовая индикация стороны ликвидации (Buy ордер закрывает Short и наоборот)
-        liq_color = "🔴" if side_label == "LONG" else "🟢"
+class AlertFormatter:
+    """Профессиональный конструктор уведомлений (SOLID)"""
+    
+    def __init__(self, data: dict):
+        self.data = data
+        self.symbol = data.get("symbol", "UNKNOWN")
+        self.side_label = data.get("side_label", "UNKNOWN")
         
-        # 2. Оформление заголовка под тип сигнала
-        fire_emoji = "🔥🔥" if alert_type in ["CASCADE", "OI_PUMP"] else ""
-        text = f"{liq_color} {hbold('#' + symbol)} {fire_emoji}\n\n"
-        text += f"{hbold(alert_title)}\n\n"
-        
-        # 3. Блок Открытого Интереса и Цены (с динамическими трендами)
-        oi_sign = "+" if oi_pct > 0 else ""
-        oi_str = f"{oi_sign}{oi_pct:.2f}% ({format_money(oi_val)})"
-        text += f"{get_trend_emoji(oi_pct)} {hbold('OI:')} {oi_str}\n"
-        
-        price_sign = "+" if price_pct > 0 else ""
-        text += f"{get_trend_emoji(price_pct)} {hbold('Price:')} {price_sign}{price_pct:.2f}%\n"
-
-        # 4. Блок CVD (Дельты объемов маркет-ордеров)
-        # Умный вывод: если дельта >, пишем More Buys, если <, то More Sells
-        if delta_5m >= 0:
-            text += f"🟢 {hbold('More Buys (5m):')} {format_money(delta_5m)}\n"
+    @staticmethod
+    def format_money(value: float | None) -> str:
+        if value is None:
+            return "$0"
+        abs_val = abs(value)
+        if abs_val >= 1_000_000_000:
+            res = f"${abs_val / 1_000_000_000:.2f}B"
+        elif abs_val >= 1_000_000:
+            res = f"${abs_val / 1_000_000:.2f}M"
+        elif abs_val >= 1_000:
+            res = f"${abs_val / 1_000:.1f}K"
         else:
-            text += f"🔴 {hbold('More Sells (5m):')} {format_money(abs(delta_5m))}\n"
+            res = f"${abs_val:.0f}"
+        return f"-{res}" if value < 0 else res
 
-        if delta_30m >= 0:
-            text += f"🟢 {hbold('More Buys (30m):')} {format_money(delta_30m)}\n"
-        else:
-            text += f"🔴 {hbold('More Sells (30m):')} {format_money(abs(delta_30m))}\n"
+    @staticmethod
+    def get_trend_emoji(val: float | None) -> str:
+        if val is None or val == 0: return "⚪"
+        return "🟢" if val > 0 else "🔴"
+    
+    @staticmethod
+    def get_liq_emoji(side: str) -> str:
+        """Независимая функция для цвета ликвидаций: Шорт = 🔴, Лонг = 🟢"""
+        return "🔴" if side == "SHORT" else "🟢"
 
-        # 5. Блок Ликвидаций (Stage 1)
-        text += f"{liq_color} {hbold(side_label + ' LIQ (5min):')} {format_money(sum_5m)}\n"
+    def _header(self) -> str:
+        """Сборка заголовка с маркерами аномалий"""
+        alert_type = self.data.get("alert_type")
+        alert_title = self.data.get("alert_title", "LIQUIDATION ALERT")
+        fire = "🔥🔥" if alert_type in ["CASCADE", "OI_PUMP"] else ""
         
-        # Если это каскад — выводим каскадную строку
-        if alert_type == "CASCADE" or cascade_count >= config.CASCADE_TRIGGER_COUNT:
-            formatted_cas_sum = format_money(sum_cascade)
-            text += f"⚡️ {hbold('LIQ КАСКАД:')} {cascade_count} подряд ({formatted_cas_sum})\n"
+        oi_pct = self.data.get("oi_pct")
+        if oi_pct is None:
+            header_emoji = "⚪"
         else:
-            text += f"📊 {hbold(side_label + ' LIQ 1H:')} {format_money(sum_1h)}\n"
+            header_emoji = "🟢" if oi_pct > 0 else "🔴" if oi_pct < 0 else "⚪"
 
-        text += "\n"
+        return f"{header_emoji} {hbold('#' + self.symbol)} {fire}\n{hbold(alert_title)}\n\n"
 
-        # 6. Блок Технических Индикаторов (RSI, Funding, Total OI)
-        if rsi is not None:
-            # Предупреждающий эмодзи для зон перекупленности/перепроданности
+    def _market_block(self) -> str:
+        """Блок ОИ и цены с экстремальными маркерами"""
+        if not self.data.get("show_oi"): 
+            return ""
+        
+        oi_pct = self.data.get("oi_pct")
+        price_pct = self.data.get("price_pct")
+        oi_val = self.data.get("oi_val")
+
+        # Маркеры экстремальных значений (❗️ и ‼️)
+        oi_pct_marker = " ❗️" if oi_pct is not None and abs(oi_pct) >= 10 else ""
+        oi_val_marker = " ‼️" if oi_val is not None and abs(oi_val) >= 5_000_000 else " ❗️" if oi_val is not None and abs(oi_val) >= 1_000_000 else ""
+        price_marker = " ❗️" if price_pct is not None and abs(price_pct) >= 10 else ""
+
+        # Отображение "Холодного старта" (часики)
+        oi_display = f"{oi_pct:+.2f}%" if oi_pct is not None else "⌛"
+        price_display = f"{price_pct:+.2f}%" if price_pct is not None else "⌛"
+        price_arrow = "↗️" if (price_pct or 0) > 0 else "↘️" if (price_pct or 0) < 0 else ""
+
+        oi_str = f"{oi_display}{oi_pct_marker}"
+        if oi_val is not None and oi_val != 0:
+            oi_str += f" ({self.format_money(oi_val)}{oi_val_marker})"
+
+        res = f"{self.get_trend_emoji(oi_pct)} {hbold('OI:')} {oi_str}\n"
+        res += f"{self.get_trend_emoji(price_pct)} {hbold('Price:')} {price_display}{price_marker} {price_arrow}\n"
+        return res
+
+    def _cvd_block(self) -> str:
+        """Блок дельты (More Buys / More Sells)"""
+        if not self.data.get("show_cvd"): 
+            return ""
+        
+        d5 = self.data.get("delta_5m")
+        d30 = self.data.get("delta_30m")
+        
+        res = ""
+        for period, val in [("5m", d5), ("30m", d30)]:
+            if val is None:
+                res += f"📊 {hbold(f'CVD ({period}):')} ⌛\n"
+            elif val >= 0:
+                res += f"🟢 {hbold(f'More Buys ({period}):')} {self.format_money(val)}\n"
+            else:
+                res += f"🔴 {hbold(f'More Sells ({period}):')} {self.format_money(abs(val))}\n"
+        return res
+
+    def _liq_block(self) -> str:
+        """Блок ликвидаций с Ratio и строгой цветовой схемой"""
+        sum_5m = self.data.get("sum_5m", 0.0)
+        sum_1h = self.data.get("sum_1h", 0.0)
+        sum_cas = self.data.get("sum_cascade", 0.0)
+        count_cas = self.data.get("cascade_count", 0)
+        threshold_cas = self.data.get("threshold_cascade", 5000.0)
+
+        side_5m = self.side_label
+        side_1h = self.data.get("side_label_1h", self.side_label)
+
+        emoji_5m = self.get_liq_emoji(side_5m)
+        emoji_1h = self.get_liq_emoji(side_1h)
+
+        cascade_emoji = "🌋" if sum_cas >= (threshold_cas * 2) else "⚡️"
+
+        # Ликвидация 5m (цвет смайлика совпадает с типом ликвидации)
+        res = f"{emoji_5m} {hbold(f'{side_5m} LIQ (5m):')} {self.format_money(sum_5m)}\n"
+        
+        # Ликвидация 1H или Каскад
+        if self.data.get("alert_type") == "CASCADE" or count_cas >= getattr(config, 'CASCADE_TRIGGER_COUNT', 10):
+            res += f"{cascade_emoji} {hbold('LIQ КАСКАД:')} {count_cas} шт ({self.format_money(sum_cas)})\n"
+        else:
+            res += f"{emoji_1h} {hbold(f'{side_1h} LIQ 1H:')} {self.format_money(sum_1h)}\n"
+        return res
+
+    def _indicators_block(self) -> str:
+        """Технические индикаторы (RSI, Funding) с экстремумами"""
+        rsi = self.data.get("rsi")
+        funding = self.data.get("funding", 0.0)
+        total_oi = self.data.get("total_oi", 0.0)
+        
+        res = "\n"
+        if self.data.get("show_rsi") and rsi is not None:
             rsi_emoji = "⚠️" if rsi >= 70 or rsi <= 30 else "📉"
-            text += f"{rsi_emoji} {hbold('RSI (5m):')} {rsi}\n"
+            rsi_status = " 🔥" if rsi >= 80 or rsi <= 20 else ""
+            res += f"{rsi_emoji} {hbold('RSI (5m):')} {rsi}{rsi_status}\n"
             
-        # Индикация знака фандинга (отрицательный фандинг подсвечиваем)
-        fund_emoji = "🔴" if funding < 0 else "🟢"
-        text += f"{fund_emoji} {hbold('Funding:')} {funding:.4f}%\n"
-        text += f"📊 {hbold('Total OI:')} {format_money(total_oi)}\n"
+        fund_abs = abs(funding) if funding else 0
+        fund_marker = " ‼️" if fund_abs >= 1.0 else " ❗️" if fund_abs >= 0.5 else ""
+        fund_emoji = "🔴" if funding and funding < 0 else "🟢"
+        
+        res += f"{fund_emoji} {hbold('Funding:')} {(funding or 0):.4f}%{fund_marker}\n"
+        
+        if self.data.get("show_oi"):
+            res += f"📶 {hbold('Total OI:')} {self.format_money(total_oi)}\n"
+        return res
 
-        # 7. Ссылки
-        links = (
-            f"<a href='https://www.tradingview.com/chart/?symbol=BYBIT:{symbol}.P'><i>📈 TradingView</i></a> | "
-            f"<a href='https://www.bybit.com/trade/usdt/{symbol}'><i>🏛 Bybit</i></a>")
-        text += f"\n🔹 {links}"
+    def compile_text(self) -> str:
+        """Итоговая сборка сообщения"""
+        return (
+            self._header() +
+            self._market_block() +
+            self._cvd_block() +
+            self._liq_block() +
+            self._indicators_block() +
+            f"\n🔹 <a href='https://www.tradingview.com/chart/?symbol=BYBIT:{self.symbol}.P'><i>TradingView</i></a> | "
+            f"<a href='https://www.bybit.com/trade/usdt/{self.symbol}'><i>Bybit</i></a>"
+        )
 
-        # 8. Отправка
+async def send_liquidation_alert(bot: Bot, user_id: int, **kwargs):
+    """Единая точка входа для отправки алертов"""
+    try:
+        formatter = AlertFormatter(kwargs)
+        text = formatter.compile_text()
+
         await bot.send_message(
             chat_id=user_id,
             text=text,
@@ -111,4 +172,4 @@ async def send_liquidation_alert(
             link_preview_options=LinkPreviewOptions(is_disabled=True)
         )
     except Exception as e:
-        logger.error(f"Ошибка при отправке сообщения пользователю {user_id}: {e}", exc_info=True)
+        logger.error(f"Ошибка Notifier для {user_id}: {e}", exc_info=True)

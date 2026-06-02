@@ -2,12 +2,11 @@ import asyncio
 import logging
 import signal
 from aiogram import Bot, Dispatcher
-from aiogram.client.session.aiohttp import AiohttpSession
 
 from src.core.config import config
 from src.database.session import async_session
 from src.database.crud.liq_service import get_recent_liquidations
-from src.bot.handlers import router
+from src.bot.handlers import main_router as router
 from src.services.bybit_ws import BybitListener
 from src.services.aggregators.liq_aggregator import LiquidationAggregator
 from src.services.aggregators.market_aggregator import MarketAggregator
@@ -15,6 +14,7 @@ from src.services.aggregators.trade_aggregator import TradeAggregator
 from src.services.analyzer import cleanup_alert_history_task
 from src.services.worker import DataWorker
 from src.services.retention import retention_policy_worker
+from src.services.warmup import warmup_system
 
 async def main():
     logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -30,47 +30,55 @@ async def main():
     else:
         logging.info("🌐 Запуск без прокси (прямое соединение)")
     
-    # 1. Инициализация бота
+    # Инициализация бота
     bot = Bot(token=config.BOT_TOKEN, session=session)
     dp = Dispatcher()
     dp.include_router(router)
 
-    # 2. Инициализируем агрегаторы
+    # Инициализация инфраструктуры данных (SOLID & DI)
     liq_aggregator = LiquidationAggregator()
-    market_aggregator = MarketAggregator() 
+    market_aggregator = MarketAggregator()
     trade_aggregator = TradeAggregator()
 
-
-    # 3. Инициализация инфраструктуры данных
     queue = asyncio.Queue()
     loop = asyncio.get_running_loop()
 
-    # 4. Прогрев Кэша
-    logging.info("Прогрев оперативной памяти из базы данных...")
-    async with async_session() as session:
-        historical_data = await get_recent_liquidations(session, minutes=60)
-        liq_aggregator.load_historical_data(historical_data)
-    
-    # 5. Инициализируем Диспетчер-Воркер
-    worker = DataWorker(
-        bot=bot, 
-        liq_aggregator=liq_aggregator,
-        market_aggregator=market_aggregator,
-        trade_aggregator=trade_aggregator)
-    worker_task = asyncio.create_task(worker.run(queue))
-
-    # 6. Producer (Bybit)
+    # 1. Получаем список монет для DEV/PROD режима до старта WS 
     listener = BybitListener(queue, loop)
+    all_symbols = listener.get_all_usdt_symbols()
+    ignored_set = set(config.IGNORED_SYMBOLS)
+    target_symbols = [s for s in all_symbols if s not in ignored_set]
+    if config.DEV_MODE:
+        target_symbols = target_symbols[:config.DEV_SYMBOL_LIMIT]
+
+    # 2. Прогрев ликвидаций из БД 
+    logging.info("Прогрев ликвидаций из базы данных...")
+    async with async_session() as session_db:
+        historical_data = await get_recent_liquidations(session_db, minutes=60)
+        liq_aggregator.load_historical_data(historical_data)
+
+    # 3. Принудительный прогрев ОИ и RSI из Bybit API 
+    await warmup_system(market_aggregator, target_symbols)
+
+    # 4. Передаем прогретые монеты в листенер и запускаем сокеты 
+    listener.target_symbols = target_symbols
     listener.start()
 
-    # 7. Фоновые задачи
-    # Retention Policy (Очистка устаревших данных из БД)
-    retention_task = asyncio.create_task(retention_policy_worker(hours=4, interval_hours=4))
-    # Очистка аггрегатора
+    # 5. Запускаем Диспетчер-Воркер с внедрением всех трех агрегаторов 
+    worker = DataWorker(
+        bot=bot, 
+        liq_aggregator=liq_aggregator, 
+        market_aggregator=market_aggregator, 
+        trade_aggregator=trade_aggregator 
+    )
+    worker_task = asyncio.create_task(worker.run(queue))
+
+    # 6. Запускаем фоновые задачи очистки 
+    retention_task = asyncio.create_task(retention_policy_worker(hours=4))
     aggregator_task = asyncio.create_task(liq_aggregator.cleanup_task())
-    # Очистка истории алертов
     alert_cleanup_task = asyncio.create_task(cleanup_alert_history_task())        
 
+    # Передаем зависимости в Polling для команды /status 
     stop_event = asyncio.Event()
 
     def signal_handler():
@@ -89,16 +97,16 @@ async def main():
         polling_task = asyncio.create_task(
             dp.start_polling(
                 bot, 
-                listener=listener,
-                liq_aggregator=liq_aggregator,
-                market_aggregator=market_aggregator,
-                trade_aggregator=trade_aggregator))
-
+                listener=listener, 
+                liq_aggregator=liq_aggregator, 
+                data_queue=queue 
+            )
+        )
         stop_task = asyncio.create_task(stop_event.wait())
         
         done, pending = await asyncio.wait(
-            [polling_task, stop_task],
-            return_when=asyncio.FIRST_COMPLETED
+            [polling_task, stop_task], 
+            return_when=asyncio.FIRST_COMPLETED 
         )
         
         if polling_task in pending:
@@ -121,23 +129,23 @@ async def main():
 async def on_shutdown(bot: Bot, listener: BybitListener, tasks: list[asyncio.Task]):
     logging.info("Завершение работы...")
     
-    # Массово останавливаем всех воркеров
     for task in tasks:
         task.cancel()
+    
+    # Даем время сокетам aiohttp закрыться 
+    await asyncio.sleep(0.5)
     
     try:
         await asyncio.gather(*tasks, return_exceptions=True)
     except asyncio.CancelledError:
         pass
 
-    # Закрываем WebSocket
     if listener:
         try:
-            listener.stop() 
+            listener.stop()
         except Exception as e:
             logging.error(f"Ошибка при закрытии WebSocket: {e}")
 
-    # Закрываем сессию бота
     await bot.session.close()
     logging.info("Все соединения закрыты.")
 

@@ -6,3 +6,4 @@ pydantic-settings==2.14.1
 python-dotenv==1.2.2
 aiohttp-socks==0.11.0
 alembic==1.18.4
+pandas==3.0.3

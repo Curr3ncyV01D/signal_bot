@@ -24,6 +24,7 @@ class BybitListener:
         
         self.http = HTTP(testnet=False)
         self.ws_connections = []
+        self.target_symbols = []
 
     def get_all_usdt_symbols(self):
         try:
@@ -96,10 +97,24 @@ class BybitListener:
 
     def start(self):
         import sys
+        import time
 
-        all_symbols = self.get_all_usdt_symbols()
-        ignored_set = set(getattr(config, 'IGNORED_SYMBOLS', []))
-        target_symbols = [s for s in all_symbols if s not in ignored_set]
+        # Если монеты уже прогреты и прокинуты из main.py — используем их 
+        if self.target_symbols:
+            target_symbols = self.target_symbols
+        else:
+            all_symbols = self.get_all_usdt_symbols()
+            ignored_set = set(getattr(config, 'IGNORED_SYMBOLS', []))
+            target_symbols = [s for s in all_symbols if s not in ignored_set]
+            if config.DEV_MODE:
+                target_symbols = target_symbols[:config.DEV_SYMBOL_LIMIT]
+                logger.warning(f"🚧 DEV MODE: Мониторинг ограничен до {len(target_symbols)} пар.")
+
+        # --- ЛОГИКА ЗАДЕРЖКИ ---
+        if config.DEV_MODE:
+            connection_delay = config.WS_DELAY_DEV 
+        else:
+            connection_delay = config.WS_DELAY_PROD
         
         chunk_size = getattr(config, 'WS_CHUNK_SIZE', 25)
         symbol_chunks = [target_symbols[i:i + chunk_size] for i in range(0, len(target_symbols), chunk_size)]
@@ -132,10 +147,10 @@ class BybitListener:
             sys.stdout.flush()
 
             import time
-            time.sleep(1.5) # Пауза, чтобы не словить бан по IP за спам коннектами
+            time.sleep(connection_delay) # Пауза, чтобы не словить бан по IP за спам коннектами
 
         print() 
-        logger.info(f"\n✅ Все {len(self.ws_connections)} соединений успешно инициализированы (Multi-stream Mode).")
+        logger.info(f"\n✅ Все {len(self.ws_connections)} соединений успешно инициализированы.")
 
     def stop(self):
         for ws in self.ws_connections:

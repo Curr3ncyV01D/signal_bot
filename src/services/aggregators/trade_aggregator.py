@@ -45,7 +45,9 @@ class TradeAggregator:
     def get_cvd_metrics(self, symbol: str, minutes: int = 5):
         """Считает More Buys/Sells за последние N минут."""
         hist = self.buckets.get(symbol, [])
-        if not hist: return 0.0, 0.0, 0.0
+        
+        if len(hist) < minutes:
+            return None, None, None
         
         # Берем последние N минутных бакетов
         target_buckets = list(hist)[-minutes:]
