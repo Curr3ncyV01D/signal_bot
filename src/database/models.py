@@ -13,6 +13,10 @@ class User(Base):
     username: Mapped[str] = mapped_column(String, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=get_utc_now)
 
+    # --- Подписка и Триал (Этап 3) ---
+    subscription_end: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, default=None)
+    is_trial_used: Mapped[bool] = mapped_column(Boolean, default=False)
+
     # Ликвидации
     threshold: Mapped[float] = mapped_column(Float, default=10000.0) # Порог в долларах
     threshold_cascade: Mapped[float] = mapped_column(Float, default=5000.0) 
@@ -22,12 +26,13 @@ class User(Base):
 
     # Открытый интерес (OI)
     alert_oi: Mapped[bool] = mapped_column(Boolean, default=True)
-    threshold_oi_percent: Mapped[float] = mapped_column(Float, default=5.0) # От 5%
-    threshold_oi_value: Mapped[float] = mapped_column(Float, default=500000.0) # От $0.5M
+    threshold_oi_percent: Mapped[float] = mapped_column(Float, default=5.0)
+    threshold_oi_value: Mapped[float] = mapped_column(Float, default=500000.0)
 
     # CVD и RSI
     alert_cvd: Mapped[bool] = mapped_column(Boolean, default=True)
     alert_rsi: Mapped[bool] = mapped_column(Boolean, default=True)
+
 
 class Liquidation(Base):
     __tablename__ = "liquidations"

@@ -15,6 +15,7 @@ from src.services.analyzer import cleanup_alert_history_task
 from src.services.worker import DataWorker
 from src.services.retention import retention_policy_worker
 from src.services.warmup import warmup_system
+from src.services.bouncer import bouncer_worker
 
 async def main():
     logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -73,10 +74,11 @@ async def main():
     )
     worker_task = asyncio.create_task(worker.run(queue))
 
-    # 6. Запускаем фоновые задачи очистки 
+    # 6. Запускаем фоновые задачи очистки и Вышибалу
     retention_task = asyncio.create_task(retention_policy_worker(hours=4))
     aggregator_task = asyncio.create_task(liq_aggregator.cleanup_task())
     alert_cleanup_task = asyncio.create_task(cleanup_alert_history_task())        
+    bouncer_task = asyncio.create_task(bouncer_worker(bot, interval_minutes=15))
 
     # Передаем зависимости в Polling для команды /status 
     stop_event = asyncio.Event()
@@ -123,7 +125,7 @@ async def main():
         await on_shutdown(
             bot, 
             listener, 
-            [worker_task, retention_task, aggregator_task, alert_cleanup_task]
+            [worker_task, retention_task, aggregator_task, alert_cleanup_task, bouncer_task]
         )
 
 async def on_shutdown(bot: Bot, listener: BybitListener, tasks: list[asyncio.Task]):

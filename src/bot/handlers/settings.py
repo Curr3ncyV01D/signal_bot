@@ -6,8 +6,8 @@ from aiogram.fsm.context import FSMContext
 
 from src.database.models import User
 from src.database.session import async_session
-from src.database.crud.user_service import get_or_create_user
-from src.bot.keyboards import get_settings_kb, get_back_to_settings_kb
+from src.database.functions import get_utc_now
+from src.bot.keyboards import get_settings_kb, get_back_to_settings_kb, get_start_kb
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -23,15 +23,19 @@ def format_large_number(num: float) -> str:
     elif num >= 1_000: return f"${num/1_000:.1f}K"
     return f"${num:.0f}"
 
-@router.callback_query(F.data == "close_message")
-async def close_message(callback: types.CallbackQuery):
-    await callback.message.delete()
-    await callback.answer()
-
 async def render_settings_menu(event: types.Message | types.CallbackQuery, user: User):
     """Единая функция для отрисовки меню настроек (из команды или кнопки 'Назад')"""
+    now = get_utc_now()
+    
+    # Формируем статус подписки
+    if user.subscription_end and user.subscription_end > now:
+        sub_status = f"✅ Активна до {user.subscription_end.strftime('%d.%m.%Y %H:%M')} UTC"
+    else:
+        sub_status = "❌ Нет активной подписки"
+
     text = (
         f"⚙️ <b>Личный кабинет и настройки</b>\n\n"
+        f"👑 <b>Подписка:</b> {sub_status}\n\n"
         f"<b>📊 Фильтры ликвидаций:</b>\n"
         f"🔸 Порог объема: <b>${user.threshold:,.0f}</b>\n"
         f"🔸 Порог каскада: <b>${user.threshold_cascade:,.0f}</b>\n\n"
@@ -55,6 +59,33 @@ async def cmd_settings(message: types.Message):
         if not user:
             return await message.answer("❌ Ошибка при получении профиля. Нажмите /start")
     await render_settings_menu(message, user)
+
+@router.callback_query(F.data == "open_settings")
+async def process_open_settings(callback: types.CallbackQuery):
+    """Переход в настройки из главного меню"""
+    async with async_session() as session:
+        user = await session.get(User, callback.from_user.id)
+        if not user:
+            return await callback.answer("Ошибка профиля", show_alert=True)
+    await render_settings_menu(callback, user)
+    await callback.answer()
+
+@router.callback_query(F.data == "back_to_main")
+async def process_back_to_main(callback: types.CallbackQuery):
+    """Возврат в главное меню из настроек"""
+    async with async_session() as session:
+        user = await session.get(User, callback.from_user.id)
+        if not user:
+            return await callback.answer("Ошибка профиля", show_alert=True)
+    
+    text = (
+        f"👋 Добро пожаловать, {callback.from_user.full_name}!\n\n"
+        f"Я профессиональный терминал для мониторинга ликвидаций на Bybit.\n"
+        f"Вы будете получать уведомления, когда на рынке начнутся сильные движения.\n\n"
+        f"👇 Выберите действие ниже:"
+    )
+    await callback.message.edit_text(text, reply_markup=get_start_kb(user), parse_mode="HTML")
+    await callback.answer()
 
 @router.callback_query(F.data == "back_to_settings")
 async def back_to_settings(callback: types.CallbackQuery):
