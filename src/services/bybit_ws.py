@@ -26,16 +26,19 @@ class BybitListener:
         self.ws_connections = []
         self.target_symbols = []
 
-    def get_all_usdt_symbols(self):
+    def get_all_usdt_symbols(self) -> list[str]:
+        """Получает список всех активных USDT-пар с Bybit."""
         try:
-            response = self.http.get_instruments_info(category="linear", status="Trading")
-            return [
-                item['symbol'] for item in response['result']['list'] 
-                if item['symbol'].endswith('USDT')
+            resp = self.http.get_instruments_info(category="linear")
+            symbols = [
+                item["symbol"] 
+                for item in resp.get("result", {}).get("list", []) 
+                if item["symbol"].endswith("USDT") and item["status"] == "Trading"
             ]
+            return symbols
         except Exception as e:
-            logger.error(f"Ошибка получения тикеров: {e}")
-            return ["BTCUSDT", "ETHUSDT"]
+            logger.error(f"Ошибка получения списка символов: {e}")
+            return []
 
     def get_active_connections_count(self):
         active_count = 0
@@ -95,9 +98,8 @@ class BybitListener:
 
     # -------------------------------------------------------------
 
-    def start(self):
+    async def start(self):
         import sys
-        import time
 
         # Если монеты уже прогреты и прокинуты из main.py — используем их 
         if self.target_symbols:
@@ -146,8 +148,7 @@ class BybitListener:
             sys.stdout.write(f"\r📡 Подключение вебсокетов: [{'=' * (i * 20 // len(symbol_chunks)):<20}] {i}/{len(symbol_chunks)}")
             sys.stdout.flush()
 
-            import time
-            time.sleep(connection_delay) # Пауза, чтобы не словить бан по IP за спам коннектами
+            await asyncio.sleep(connection_delay) # Пауза, чтобы не словить бан по IP за спам коннектами
 
         print() 
         logger.info(f"\n✅ Все {len(self.ws_connections)} соединений успешно инициализированы.")

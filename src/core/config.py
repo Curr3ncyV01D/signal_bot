@@ -7,6 +7,7 @@ class Settings(BaseSettings):
     BOT_TOKEN: str
     PRIVATE_CHANNEL_ID: str
     DB_URL: str
+    GUIDE_URL: str = "https://google.com"
 
     # Список игнорируемых монет (например, ["BTCUSDT", "ETHUSDT"])
     # Если в .env ничего не указано, список будет пустым
@@ -48,7 +49,7 @@ class Settings(BaseSettings):
 
     # 3. Настройки UI и Фильтров
     SQUEEZE_RATIO: float = 0.3                   # Доля 5м объема от 1ч объема для "QUICK SQUEEZE"
-    MIN_LIQ_VALUE_FILTER: float = 100.0           # Отсечение рыночного шума (в долларах)
+    MIN_LIQ_VALUE_FILTER: float = 100.0          # Отсечение рыночного шума (в долларах)
     MIN_TRADE_VALUE_FOR_CVD: float = 200.0       # Порог сделки для подсчета Кумулитвной Дельты
 
     # 4. Временные окна для расчетов (в секундах)

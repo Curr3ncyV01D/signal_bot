@@ -2,11 +2,15 @@ import asyncio
 import logging
 import signal
 from aiogram import Bot, Dispatcher
+from sqlalchemy import select
 
 from src.core.config import config
+from src.core.security import SecurityManager
 from src.database.session import async_session
+from src.database.models import User
 from src.database.crud.liq_service import get_recent_liquidations
 from src.bot.handlers import main_router as router
+from src.bot.middlewares.block_middleware import BlockMiddleware
 from src.services.bybit_ws import BybitListener
 from src.services.aggregators.liq_aggregator import LiquidationAggregator
 from src.services.aggregators.market_aggregator import MarketAggregator
@@ -34,6 +38,7 @@ async def main():
     # Инициализация бота
     bot = Bot(token=config.BOT_TOKEN, session=session)
     dp = Dispatcher()
+    dp.update.outer_middleware(BlockMiddleware(async_session))
     dp.include_router(router)
 
     # Инициализация инфраструктуры данных (SOLID & DI)
@@ -43,6 +48,14 @@ async def main():
 
     queue = asyncio.Queue()
     loop = asyncio.get_running_loop()
+
+    # 0. Инициализация кеша безопасности (заблокированные пользователи)
+    async with async_session() as session_db:
+        blocked_query = select(User.id).where(User.is_blocked == True)
+        blocked_result = await session_db.execute(blocked_query)
+        for user_id in blocked_result.scalars():
+            SecurityManager.block(user_id)
+    logging.info(f"🛡️ SecurityManager инициализирован: {len(SecurityManager.blocked_users)} заблокированных пользователей.")
 
     # 1. Получаем список монет для DEV/PROD режима до старта WS 
     listener = BybitListener(queue, loop)
@@ -63,7 +76,7 @@ async def main():
 
     # 4. Передаем прогретые монеты в листенер и запускаем сокеты 
     listener.target_symbols = target_symbols
-    listener.start()
+    await listener.start()
 
     # 5. Запускаем Диспетчер-Воркер с внедрением всех трех агрегаторов 
     worker = DataWorker(

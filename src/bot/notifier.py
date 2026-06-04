@@ -1,10 +1,15 @@
+import asyncio
 import logging
 from aiogram import Bot
-from aiogram.utils.markdown import hbold
+from aiogram.utils.markdown import hbold, hlink
 from aiogram.types import LinkPreviewOptions
+from aiogram.exceptions import TelegramRetryAfter, TelegramForbiddenError
 from src.core.config import config
 
 logger = logging.getLogger(__name__)
+
+# Глобальный семафор для контроля FloodWait (~25 сообщений в секунду)
+broadcaster_semaphore = asyncio.Semaphore(25)
 
 class AlertFormatter:
     """Профессиональный конструктор уведомлений (SOLID)"""
@@ -36,7 +41,6 @@ class AlertFormatter:
     
     @staticmethod
     def get_liq_emoji(side: str) -> str:
-        """Независимая функция для цвета ликвидаций: Шорт = 🔴, Лонг = 🟢"""
         return "🔴" if side == "SHORT" else "🟢"
 
     def _header(self) -> str:
@@ -67,7 +71,6 @@ class AlertFormatter:
         oi_val_marker = " ‼️" if oi_val is not None and abs(oi_val) >= 5_000_000 else " ❗️" if oi_val is not None and abs(oi_val) >= 1_000_000 else ""
         price_marker = " ❗️" if price_pct is not None and abs(price_pct) >= 10 else ""
 
-        # Отображение "Холодного старта" (часики)
         oi_display = f"{oi_pct:+.2f}%" if oi_pct is not None else "⌛"
         price_display = f"{price_pct:+.2f}%" if price_pct is not None else "⌛"
         price_arrow = "↗️" if (price_pct or 0) > 0 else "↘️" if (price_pct or 0) < 0 else ""
@@ -99,7 +102,7 @@ class AlertFormatter:
         return res
 
     def _liq_block(self) -> str:
-        """Блок ликвидаций с Ratio и строгой цветовой схемой"""
+        """Блок ликвидаций"""
         sum_5m = self.data.get("sum_5m", 0.0)
         sum_1h = self.data.get("sum_1h", 0.0)
         sum_cas = self.data.get("sum_cascade", 0.0)
@@ -114,10 +117,8 @@ class AlertFormatter:
 
         cascade_emoji = "🌋" if sum_cas >= (threshold_cas * 2) else "⚡️"
 
-        # Ликвидация 5m (цвет смайлика совпадает с типом ликвидации)
         res = f"{emoji_5m} {hbold(f'{side_5m} LIQ (5m):')} {self.format_money(sum_5m)}\n"
         
-        # Ликвидация 1H или Каскад
         if self.data.get("alert_type") == "CASCADE" or count_cas >= getattr(config, 'CASCADE_TRIGGER_COUNT', 10):
             res += f"{cascade_emoji} {hbold('LIQ КАСКАД:')} {count_cas} шт ({self.format_money(sum_cas)})\n"
         else:
@@ -146,6 +147,19 @@ class AlertFormatter:
             res += f"📶 {hbold('Total OI:')} {self.format_money(total_oi)}\n"
         return res
 
+    def _footer(self) -> str:
+        """Блок ссылок и инструкции"""
+        # Ссылки на биржи
+        links = (
+            f"🔹 <a href='https://www.tradingview.com/chart/?symbol=BYBIT:{self.symbol}.P'><i>TradingView</i></a> | "
+            f"<a href='https://www.bybit.com/trade/usdt/{self.symbol}'><i>Bybit</i></a>"
+        )
+        
+        # Ссылка на инструкцию (Telegraph)
+        guide = f"\n\n📖 {hlink('Как читать этот сигнал?', config.GUIDE_URL)}"
+        
+        return f"\n{links}{guide}"
+
     def compile_text(self) -> str:
         """Итоговая сборка сообщения"""
         return (
@@ -154,22 +168,32 @@ class AlertFormatter:
             self._cvd_block() +
             self._liq_block() +
             self._indicators_block() +
-            f"\n🔹 <a href='https://www.tradingview.com/chart/?symbol=BYBIT:{self.symbol}.P'><i>TradingView</i></a> | "
-            f"<a href='https://www.bybit.com/trade/usdt/{self.symbol}'><i>Bybit</i></a>"
+            self._footer()
         )
 
 async def send_liquidation_alert(bot: Bot, user_id: int, **kwargs):
-    """Единая точка входа для отправки алертов"""
-    try:
-        formatter = AlertFormatter(kwargs)
-        text = formatter.compile_text()
+    """Единая точка входа для отправки алертов с защитой от FloodWait"""
+    async with broadcaster_semaphore:
+        try:
+            formatter = AlertFormatter(kwargs)
+            text = formatter.compile_text()
 
-        await bot.send_message(
-            chat_id=user_id,
-            text=text,
-            parse_mode="HTML",
-            protect_content=True,
-            link_preview_options=LinkPreviewOptions(is_disabled=True)
-        )
-    except Exception as e:
-        logger.error(f"Ошибка Notifier для {user_id}: {e}", exc_info=True)
+            await bot.send_message(
+                chat_id=user_id,
+                text=text,
+                parse_mode="HTML",
+                protect_content=True,
+                link_preview_options=LinkPreviewOptions(is_disabled=True)
+            )
+            # Принудительная задержка для соблюдения лимитов Telegram (30/сек)
+            await asyncio.sleep(0.04)
+            
+        except TelegramRetryAfter as e:
+            logger.warning(f"Flood limit reached. Sleep for {e.retry_after}s")
+            await asyncio.sleep(e.retry_after)
+            # Рекурсивная попытка после паузы
+            return await send_liquidation_alert(bot, user_id, **kwargs)
+        except TelegramForbiddenError:
+            logger.info(f"User {user_id} blocked the bot. Skipping.")
+        except Exception as e:
+            logger.error(f"Ошибка Notifier для {user_id}: {e}")

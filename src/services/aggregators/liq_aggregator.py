@@ -64,19 +64,44 @@ class LiquidationAggregator:
         logger.info(f"Оперативная память прогрета: загружено {count} записей.")
 
     async def cleanup_task(self):
-        """Фоновая задача: удаляет из памяти всё, что старше 1 часа, чтобы не забивать ОЗУ"""
+        """
+        Фоновая задача: удаляет старые данные и логирует процесс для отладки.
+        """
+        logger.info("✅ Фоновая очистка Aggregator запущена.")
+        
         while True:
-            await asyncio.sleep(60) # Проверяем раз в минуту
-            now = datetime.now(timezone.utc).replace(tzinfo=None)
-            total_removed = 0
+            try:
+                await asyncio.sleep(60) 
+                
+                now = datetime.now(timezone.utc).replace(tzinfo=None)
+                total_removed = 0
 
-            for symbol, events in self.history.items():
-                # Пока в начале очереди есть старые элементы - удаляем их
-                while events and (now - events[0][0]).total_seconds() > config.WINDOW_1H_SEC:
-                    events.popleft()
-                    total_removed += 1
+                # 1. Итерируемся по КОПИИ списка ключей (list(...)), 
+                # чтобы избежать RuntimeError при удалении ключей из словаря в цикле
+                for symbol in list(self.history.keys()):
+                    events = self.history[symbol]
+
+                    # 2. Удаляем старые события из начала очереди (пока они старше часа)
+                    while events and (now - events[0][0]).total_seconds() > config.WINDOW_VOLUME_1H:
+                        events.popleft()
+                        total_removed += 1
+                    
+                    # 3. Если по символу больше нет данных, удаляем сам ключ, 
+                    # чтобы не раздувать словарь (Garbage Collection)
+                    if not events:
+                        del self.history[symbol]
+                
+                # Логируем результат, только если были удаления
+                if total_removed > 15:
+                    # Считаем общее кол-во оставшихся событий для мониторинга ОЗУ
+                    total_remaining = sum(len(d) for d in self.history.values())
+                    logger.info(
+                        f"🧹 [GC] Aggregator очищен: удалено {total_removed} событий. "
+                        f"Осталось в кэше: {total_remaining} по {len(self.history)} тикерам."
+                    )
+
+            except Exception as e:
+                logger.error(f"❌ Ошибка в cleanup_task агрегатора: {e}", exc_info=True)
+                await asyncio.sleep(10)
             
-            if total_removed > 0:
-                logger.info(f"Очищение оперативной памяти: Успешно удалено {total_removed} устаревших событий.")
-
 aggregator = LiquidationAggregator()

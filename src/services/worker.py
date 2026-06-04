@@ -8,6 +8,9 @@ from src.services.analyzer import process_liquidation_item
 
 logger = logging.getLogger(__name__)
 
+# Семафор для ограничения одновременных задач анализа (защита от OOM)
+worker_semaphore = asyncio.Semaphore(100)
+
 class DataWorker:
     def __init__(self, bot: Bot, liq_aggregator, market_aggregator, trade_aggregator):
         self.bot = bot
@@ -24,7 +27,8 @@ class DataWorker:
                 data = msg.get("data")
 
                 if msg_type == "liquidation":
-                    await self._handle_liquidation(data)
+                    # Запускаем обработку ликвидации в фоновой задаче, чтобы не блокировать поток данных
+                    asyncio.create_task(self._handle_liquidation(data))
                 
                 elif msg_type == "ticker":
                     symbol = data.get("symbol") or data.get("s")
@@ -57,7 +61,8 @@ class DataWorker:
                     pass
 
     async def _handle_liquidation(self, item: dict):
-        symbol = item.get("s") or item.get("symbol")
+        async with worker_semaphore:
+            symbol = item.get("s") or item.get("symbol")
         raw_side = item.get("S") or item.get("side")
         
         try:

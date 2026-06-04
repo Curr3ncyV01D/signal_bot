@@ -37,7 +37,7 @@ async def process_join_request(request: types.ChatJoinRequest):
                 text = (
                     "❌ <b>Ваша заявка на вступление отклонена.</b>\n\n"
                     "У вас нет активной подписки или пробного периода. "
-                    "Пожалуйста, перейдите в бота и нажмите /start для приобритения подписки."
+                    "Пожалуйста, перейдите в бота и нажмите /start для приобретения подписки."
                 )
                 await request.bot.send_message(
                     chat_id=request.from_user.id,

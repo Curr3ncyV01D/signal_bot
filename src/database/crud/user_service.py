@@ -1,11 +1,15 @@
 import logging
 from datetime import timedelta
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, and_
+from sqlalchemy import select, and_, func
 from src.database.models import User
 from src.database.functions import get_utc_now
 
 logger = logging.getLogger(__name__)
+
+# Кеш активных пользователей для рассылки (обновляется раз в минуту)
+_active_users_cache = []
+_last_cache_update = None
 
 async def get_or_create_user(session: AsyncSession, user_id: int, username: str | None) -> User | None:
     """Регистрация или получение пользователя."""
@@ -27,21 +31,34 @@ async def get_or_create_user(session: AsyncSession, user_id: int, username: str 
         return await session.get(User, user_id)
 
 async def get_active_users(session: AsyncSession) -> list[User]:
-    """Получает пользователей с АКТИВНОЙ подпиской для рассылки алертов."""
+    """Получает пользователей с АКТИВНОЙ подпиской для рассылки алертов (с кешированием)."""
+    global _active_users_cache, _last_cache_update
+    
+    now = get_utc_now()
+    
+    # Если кеш свежий (меньше 60 секунд) — отдаем его
+    if _last_cache_update and (now - _last_cache_update).total_seconds() < 60:
+        return _active_users_cache
+
     try:
-        now = get_utc_now()
-        # Пользователь активен, если дата окончания подписки больше текущей
         query = select(User).where(
             and_(
                 User.subscription_end.is_not(None),
-                User.subscription_end > now
+                User.subscription_end > now,
+                User.is_blocked == False
             )
         )
         result = await session.execute(query)
-        return list(result.scalars().all())
+        users = list(result.scalars().all())
+        
+        # Обновляем кеш
+        _active_users_cache = users
+        _last_cache_update = now
+        
+        return users
     except Exception as e:
         logger.error(f"Ошибка при получении активных пользователей: {e}")
-        return []
+        return _active_users_cache # Возвращаем старый кеш при ошибке БД
 
 async def activate_trial(session: AsyncSession, user_id: int) -> tuple[bool, str]:
     """Активирует пробный период на 24 часа. Возвращает (успех, сообщение)."""
@@ -55,8 +72,6 @@ async def activate_trial(session: AsyncSession, user_id: int) -> tuple[bool, str
             
         now = get_utc_now()
         
-        # Если вдруг есть текущая активная подписка (например, купил, а потом нажал триал) - плюсуем к ней.
-        # Иначе отсчитываем 24 часа от текущего момента.
         if user.subscription_end and user.subscription_end > now:
             user.subscription_end = user.subscription_end + timedelta(hours=24)
         else:
@@ -96,3 +111,46 @@ async def clear_expired_subscription(session: AsyncSession, user_id: int) -> Non
     except Exception as e:
         await session.rollback()
         logger.error(f"Ошибка при обнулении подписки {user_id}: {e}")
+
+async def get_users_count(session: AsyncSession) -> int:
+    """Возвращает общее количество пользователей в БД (для расчета страниц)."""
+    try:
+        query = select(func.count(User.id))
+        result = await session.execute(query)
+        return result.scalar() or 0
+    except Exception as e:
+        logger.error(f"Ошибка при подсчете пользователей: {e}")
+        return 0
+
+async def get_users_page(session: AsyncSession, limit: int = 10, offset: int = 0) -> list[User]:
+    """Получает страницу пользователей с сортировкой от новых к старым."""
+    try:
+        query = select(User).order_by(User.created_at.desc()).limit(limit).offset(offset)
+        result = await session.execute(query)
+        return list(result.scalars().all())
+    except Exception as e:
+        logger.error(f"Ошибка при получении страницы пользователей: {e}")
+        return []
+
+async def toggle_user_block(session: AsyncSession, user_id: int) -> bool | None:
+    """Инвертирует статус блокировки."""
+    try:
+        user = await session.get(User, user_id)
+        if not user:
+            return None
+        
+        user.is_blocked = not user.is_blocked
+        await session.commit()
+        return user.is_blocked
+    except Exception as e:
+        await session.rollback()
+        logger.error(f"Ошибка при смене статуса блокировки для {user_id}: {e}")
+        return None
+
+async def get_user_by_id(session: AsyncSession, user_id: int) -> User | None:
+    """Получает полную информацию о пользователе для карточки админа."""
+    try:
+        return await session.get(User, user_id)
+    except Exception as e:
+        logger.error(f"Ошибка при получении пользователя {user_id}: {e}")
+        return None
