@@ -76,6 +76,7 @@ class DataWorker:
         if not symbol or value <= config.MIN_LIQ_VALUE_FILTER or symbol in config.IGNORED_SYMBOLS:
             return
 
+        # Если Bybit прислал Buy - это LONG, если Sell - это SHORT
         side_label = "LONG" if raw_side == "Buy" else "SHORT"
         self.liq_aggregator.add_event(symbol, value, side_label)
 

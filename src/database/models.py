@@ -15,16 +15,16 @@ class User(Base):
     is_admin: Mapped[bool] = mapped_column(Boolean, default=False)
     is_blocked: Mapped[bool] = mapped_column(Boolean, default=False)
 
-    # --- Подписка и Триал (Этап 3) ---
+    # --- Подписка и Триал ---
     subscription_end: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, default=None)
     is_trial_used: Mapped[bool] = mapped_column(Boolean, default=False)
 
-    # Ликвидации
-    threshold: Mapped[float] = mapped_column(Float, default=10000.0) # Порог в долларах
+    # Ликвидации (Аналитика)
+    threshold: Mapped[float] = mapped_column(Float, default=10000.0) 
     threshold_cascade: Mapped[float] = mapped_column(Float, default=5000.0) 
-    alert_cascade: Mapped[bool] = mapped_column(default=True)
-    alert_volume: Mapped[bool] = mapped_column(default=True)
-    alert_squeeze: Mapped[bool] = mapped_column(default=True)
+    alert_cascade: Mapped[bool] = mapped_column(Boolean, default=True)
+    alert_volume: Mapped[bool] = mapped_column(Boolean, default=True)
+    alert_squeeze: Mapped[bool] = mapped_column(Boolean, default=True)
 
     # Открытый интерес (OI)
     alert_oi: Mapped[bool] = mapped_column(Boolean, default=True)
@@ -36,9 +36,39 @@ class User(Base):
     alert_rsi: Mapped[bool] = mapped_column(Boolean, default=True)
 
 
+class ChannelSettings(Base):
+    __tablename__ = "channel_settings"
+    
+    # Всегда id=1 для глобальных настроек
+    id: Mapped[int] = mapped_column(primary_key=True, default=1)
+    
+    # Главный тумблер канала
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+
+    # Ликвидация
+    threshold: Mapped[float] = mapped_column(Float, default=100000.0) # Пороги выше для канала
+    threshold_cascade: Mapped[float] = mapped_column(Float, default=50000.0)
+    alert_cascade: Mapped[bool] = mapped_column(Boolean, default=True)
+    alert_volume: Mapped[bool] = mapped_column(Boolean, default=True)
+    alert_squeeze: Mapped[bool] = mapped_column(Boolean, default=True)
+
+    # Открытый интерес (OI)
+    alert_oi: Mapped[bool] = mapped_column(Boolean, default=True)
+    threshold_oi_percent: Mapped[float] = mapped_column(Float, default=10.0)
+    threshold_oi_value: Mapped[float] = mapped_column(Float, default=1000000.0)
+
+    # CVD и RSI
+    alert_cvd: Mapped[bool] = mapped_column(Boolean, default=True)
+    alert_rsi: Mapped[bool] = mapped_column(Boolean, default=True)
+
+    # Технические поля канала
+    dashboard_message_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    last_summary_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
 class Liquidation(Base):
     __tablename__ = "liquidations"
-    
+
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     symbol: Mapped[str] = mapped_column(String(20), index=True) # Тикер, например BTCUSDT
     side: Mapped[str] = mapped_column(String(10)) # Buy или Sell

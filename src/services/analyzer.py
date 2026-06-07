@@ -3,6 +3,7 @@ import asyncio
 from datetime import datetime, timezone, timedelta
 from src.core.config import config
 from src.database.crud.user_service import get_active_users
+from src.database.crud.channel_service import ChannelService
 from src.bot.notifier import send_liquidation_alert
 from src.services.indicators.rsi import rsi_indicator
 
@@ -22,6 +23,9 @@ async def process_liquidation_item(
 ):
     """Принимает решение об отправке уведомления и выполняет рассылку через gather"""
     
+    # 0. Получаем настройки канала (кешированные)
+    channel_settings = ChannelService.get_cached_settings()
+
     # 1. Мгновенно получаем всю статистику из оперативной памяти
     sum_5m, sum_1h, sum_cas, count_cas = liq_aggregator.get_metrics(symbol, side_label)
     m_data = market_aggregator.get_market_data(symbol, window_minutes=5)
@@ -36,9 +40,10 @@ async def process_liquidation_item(
     # Список задач на отправку
     alert_tasks = []
 
+    # РАССЫЛКА ПОЛЬЗОВАТЕЛЯМ
     for user in users:
-        payload = _check_user_triggers(
-            user=user,
+        payload = _check_triggers(
+            target=user,
             symbol=symbol,
             side_label=side_label,
             sum_5m=sum_5m,
@@ -48,65 +53,88 @@ async def process_liquidation_item(
             m_data=m_data,
             delta_5m=delta_5m,
             delta_30m=delta_30m,
-            market_aggregator=market_aggregator
+            market_aggregator=market_aggregator,
+            is_channel=False
         )
         
         if payload:
             alert_tasks.append(send_liquidation_alert(bot, user.id, **payload))
 
+    # ОТПРАВКА В КАНАЛ (Независимый блок)
+    if channel_settings and channel_settings.is_active:
+        channel_payload = _check_triggers(
+            target=channel_settings,
+            symbol=symbol,
+            side_label=side_label,
+            sum_5m=sum_5m,
+            sum_1h=sum_1h,
+            sum_cas=sum_cas,
+            count_cas=count_cas,
+            m_data=m_data,
+            delta_5m=delta_5m,
+            delta_30m=delta_30m,
+            market_aggregator=market_aggregator,
+            is_channel=True
+        )
+        
+        if channel_payload:
+            alert_tasks.append(send_liquidation_alert(bot, config.PRIVATE_CHANNEL_ID, **channel_payload))
+
     # Массовая отправка алертов (внутри send_liquidation_alert уже есть семафор и throttling)
     if alert_tasks:
         await asyncio.gather(*alert_tasks, return_exceptions=True)
 
-def _check_user_triggers(
-    user, symbol, side_label, sum_5m, sum_1h, sum_cas, count_cas, 
-    m_data, delta_5m, delta_30m, market_aggregator
+def _check_triggers(
+    target, symbol, side_label, sum_5m, sum_1h, sum_cas, count_cas, 
+    m_data, delta_5m, delta_30m, market_aggregator, is_channel: bool = False
 ):
-    """Вынесенная логика проверки условий для конкретного юзера"""
+    """Универсальная логика проверки условий для пользователя или канала"""
     now = datetime.now(timezone.utc).replace(tzinfo=None)
     
     # --- 1. ТРИГГЕРЫ (Базовые условия пробития порогов) ---
     is_cascade = (count_cas >= config.CASCADE_TRIGGER_COUNT and 
-                sum_cas >= user.threshold_cascade)
+                sum_cas >= target.threshold_cascade)
     
-    is_vol_5m = sum_5m >= user.threshold
-    is_vol_1h = sum_1h >= (user.threshold * config.VOLUME_MULTIPLIER)
+    is_vol_5m = sum_5m >= target.threshold
+    is_vol_1h = sum_1h >= (target.threshold * config.VOLUME_MULTIPLIER)
     
     is_oi_pump = False
-    if m_data and user.alert_oi:
+    if m_data and target.alert_oi:
         if m_data['oi_change_pct'] is not None and m_data['oi_change_value'] is not None:
-            if (m_data['oi_change_pct'] >= user.threshold_oi_percent and 
-                abs(m_data['oi_change_value']) >= user.threshold_oi_value):
+            if (m_data['oi_change_pct'] >= target.threshold_oi_percent and 
+                abs(m_data['oi_change_value']) >= target.threshold_oi_value):
                 is_oi_pump = True
 
-    # Если ни один порог не пробит — мгновенно скипаем юзера
+    # Если ни один порог не пробит — мгновенно скипаем
     if not (is_cascade or is_vol_5m or is_vol_1h or is_oi_pump):
         return None
 
-    # --- 2. ОПРЕДЕЛЕНИЕ ТИПА (Для заголовка и фильтров юзера) ---
+    # --- 2. ОПРЕДЕЛЕНИЕ ТИПА (Для заголовка и фильтров) ---
     if is_cascade:
         alert_type = "CASCADE"
         alert_title = f"⚡️ LIQ КАСКАД x{count_cas}"
-        is_allowed = user.alert_cascade
+        is_allowed = target.alert_cascade
     elif is_oi_pump:
         alert_type = "OI_PUMP"
         alert_title = "📈 OI PUMP"
-        is_allowed = user.alert_oi
+        is_allowed = target.alert_oi
     elif sum_5m > (sum_1h * config.SQUEEZE_RATIO):
         alert_type = "SQUEEZE"
         alert_title = "🔥 QUICK SQUEEZE"
-        is_allowed = user.alert_squeeze
+        is_allowed = target.alert_squeeze
     else:
         alert_type = "VOLUME"
         alert_title = "📊 LIQ VOLUME"
-        is_allowed = user.alert_volume
+        is_allowed = target.alert_volume
 
     # --- 3. ФИЛЬТРАЦИЯ ПО НАСТРОЙКАМ ---
     if not is_allowed:
         return None
 
     # --- 4. АНТИ-СПАМ (Smart Threshold) ---
-    history_key = (user.id, symbol, side_label)
+    # Для канала используем специальный ID -1, для юзеров - их Telegram ID
+    target_id = "CHANNEL" if is_channel else target.id
+    history_key = (target_id, symbol, side_label)
     last_alert = user_alert_history.get(history_key)
 
     if last_alert:
@@ -120,7 +148,7 @@ def _check_user_triggers(
 
     # --- 5. МГНОВЕННЫЙ ЛОКАЛЬНЫЙ РАСЧЕТ RSI (БЕЗ СЕТИ!) ---
     rsi_val = None
-    if user.alert_rsi:
+    if target.alert_rsi:
         # Забираем историю цен из агрегатора
         local_prices = list(market_aggregator.rsi_prices.get(symbol, []))
         # Считаем RSI локально в процессоре
@@ -141,7 +169,7 @@ def _check_user_triggers(
         "sum_1h": sum_1h,
         "sum_cascade": sum_cas,
         "cascade_count": count_cas,
-        "threshold_cascade": user.threshold_cascade,
+        "threshold_cascade": target.threshold_cascade,
         "oi_pct": m_data['oi_change_pct'] if m_data else None,
         "oi_val": m_data['oi_change_value'] if m_data else 0.0,
         "price_pct": m_data['price_change_pct'] if m_data else None,
@@ -150,9 +178,9 @@ def _check_user_triggers(
         "delta_5m": delta_5m,
         "delta_30m": delta_30m,
         "rsi": rsi_val,
-        "show_oi": user.alert_oi,
-        "show_cvd": user.alert_cvd,
-        "show_rsi": user.alert_rsi
+        "show_oi": target.alert_oi,
+        "show_cvd": target.alert_cvd,
+        "show_rsi": target.alert_rsi
     }
 
 async def cleanup_alert_history_task():

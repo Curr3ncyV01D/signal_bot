@@ -9,6 +9,7 @@ from src.core.security import SecurityManager
 from src.database.session import async_session
 from src.database.models import User
 from src.database.crud.liq_service import get_recent_liquidations
+from src.database.crud.channel_service import ChannelService
 from src.bot.handlers import main_router as router
 from src.bot.middlewares.block_middleware import BlockMiddleware
 from src.services.bybit_ws import BybitListener
@@ -20,6 +21,22 @@ from src.services.worker import DataWorker
 from src.services.retention import retention_policy_worker
 from src.services.warmup import warmup_system
 from src.services.bouncer import bouncer_worker
+from src.services.dashboard import dashboard_worker
+
+async def lag_detector():
+    """Детектор блокировки Event Loop"""
+    import time
+    logger.info("🕵️ Детектор лагов запущен.")
+    while True:
+        start_time = time.time()
+        await asyncio.sleep(1) # Засыпаем ровно на 1 секунду
+        delay = time.time() - start_time - 1
+        
+        # Если бот проспал дольше 1 секунды, значит процессор был заблокирован тяжелой задачей
+        if delay > 0.5:
+            logger.warning(f"⚠️ ВНИМАНИЕ! Event Loop заблокирован. Задержка: {delay:.3f} сек.")
+        elif delay > 2.0:
+            logger.error(f"🚨 КРИТИЧЕСКИЙ ЛАГ! Бот 'висел' {delay:.3f} сек. PING может отвалиться!")
 
 async def main():
     logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -71,6 +88,9 @@ async def main():
         historical_data = await get_recent_liquidations(session_db, minutes=60)
         liq_aggregator.load_historical_data(historical_data)
 
+        await ChannelService.get_settings(session_db)
+        logging.info("⚙️ Настройки канала успешно загружены в кэш.")
+
     # 3. Принудительный прогрев ОИ и RSI из Bybit API 
     await warmup_system(market_aggregator, target_symbols)
 
@@ -88,10 +108,12 @@ async def main():
     worker_task = asyncio.create_task(worker.run(queue))
 
     # 6. Запускаем фоновые задачи очистки и Вышибалу
+    lag_detector_task = asyncio.create_task(lag_detector())
     retention_task = asyncio.create_task(retention_policy_worker(hours=4))
     aggregator_task = asyncio.create_task(liq_aggregator.cleanup_task())
     alert_cleanup_task = asyncio.create_task(cleanup_alert_history_task())        
     bouncer_task = asyncio.create_task(bouncer_worker(bot, interval_minutes=15))
+    dashboard_task = asyncio.create_task(dashboard_worker(bot, liq_aggregator, market_aggregator))
 
     # Передаем зависимости в Polling для команды /status 
     stop_event = asyncio.Event()
@@ -114,6 +136,8 @@ async def main():
                 bot, 
                 listener=listener, 
                 liq_aggregator=liq_aggregator, 
+                market_aggregator=market_aggregator,
+                trade_aggregator=trade_aggregator,
                 data_queue=queue 
             )
         )
@@ -138,7 +162,7 @@ async def main():
         await on_shutdown(
             bot, 
             listener, 
-            [worker_task, retention_task, aggregator_task, alert_cleanup_task, bouncer_task]
+            [lag_detector_task, worker_task, retention_task, aggregator_task, alert_cleanup_task, bouncer_task, dashboard_task]
         )
 
 async def on_shutdown(bot: Bot, listener: BybitListener, tasks: list[asyncio.Task]):

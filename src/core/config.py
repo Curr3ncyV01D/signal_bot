@@ -63,7 +63,7 @@ class Settings(BaseSettings):
     OI_WINDOW_MINUTES: int = 5                   # Окно анализа Открытого Интереса в минутах
     
     # --- ПОДКЛЮЧЕНИЕ ---
-    WS_CHUNK_SIZE: int = 50                      # Кол-во монет на одно WebSocket соединение
+    WS_CHUNK_SIZE: int = 25                      # Кол-во монет на одно WebSocket соединение
     WS_DELAY_PROD: float = 1.5                   # Задержка между запросами в Bybit
     WS_DELAY_DEV: float = 0.8                    # Задержка между запросами в Bybit в режиме разработке
 

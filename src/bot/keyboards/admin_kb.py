@@ -7,6 +7,7 @@ def get_admin_main_kb() -> InlineKeyboardMarkup:
     """Стартовая клавиатура админки"""
     builder = InlineKeyboardBuilder()
     builder.row(InlineKeyboardButton(text="👥 Список пользователей", callback_data="admin_page_1"))
+    builder.row(InlineKeyboardButton(text="📢 Настройки канала", callback_data="admin_channel_settings"))
 
     Kb_Helper.add_common_buttons(builder)
 
@@ -58,4 +59,47 @@ def get_user_manage_kb(user_id: int, is_blocked: bool) -> InlineKeyboardMarkup:
 
     Kb_Helper.add_common_buttons(builder)
     
+    return builder.as_markup()
+
+def get_admin_channel_kb(settings) -> InlineKeyboardMarkup:
+    """Клавиатура управления настройками канала"""
+    builder = InlineKeyboardBuilder()
+    
+    # Главный тумблер
+    status_btn = "🟢 Постинг ВКЛЮЧЕН" if settings.is_active else "🔴 Постинг ВЫКЛЮЧЕН"
+    builder.row(InlineKeyboardButton(text=status_btn, callback_data="admin_chan_toggle_active"))
+
+    # Тумблеры ликвидаций
+    cas = "✅" if settings.alert_cascade else "❌"
+    vol = "✅" if settings.alert_volume else "❌"
+    sqz = "✅" if settings.alert_squeeze else "❌"
+    builder.row(
+        InlineKeyboardButton(text=f"{cas} Каскад", callback_data="admin_chan_toggle_cascade"),
+        InlineKeyboardButton(text=f"{vol} Объем", callback_data="admin_chan_toggle_volume"),
+        InlineKeyboardButton(text=f"{sqz} Сквиз", callback_data="admin_chan_toggle_squeeze")
+    )
+
+    # Тумблеры аналитики
+    oi = "✅" if settings.alert_oi else "❌"
+    rsi = "✅" if settings.alert_rsi else "❌"
+    cvd = "✅" if settings.alert_cvd else "❌"
+    builder.row(
+        InlineKeyboardButton(text=f"{oi} OI", callback_data="admin_chan_toggle_oi"),
+        InlineKeyboardButton(text=f"{rsi} RSI", callback_data="admin_chan_toggle_rsi"),
+        InlineKeyboardButton(text=f"{cvd} CVD", callback_data="admin_chan_toggle_cvd")
+    )
+
+    # Пороги
+    builder.row(
+        InlineKeyboardButton(text="💰 Порог объема ($)", callback_data="admin_chan_set_vol"),
+        InlineKeyboardButton(text="⚡ Порог каскада ($)", callback_data="admin_chan_set_cas")
+    )
+    builder.row(
+        InlineKeyboardButton(text="⚙️ Пороги OI (% и $)", callback_data="admin_chan_set_oi")
+    )
+
+    # Управление дэшбордом
+    builder.row(InlineKeyboardButton(text="🔄 Перезапустить Дэшборд", callback_data="admin_chan_restart_dash"))
+    
+    builder.row(InlineKeyboardButton(text="🔙 Назад", callback_data="admin_main"))
     return builder.as_markup()

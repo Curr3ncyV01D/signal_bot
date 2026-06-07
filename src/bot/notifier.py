@@ -49,11 +49,8 @@ class AlertFormatter:
         alert_title = self.data.get("alert_title", "LIQUIDATION ALERT")
         fire = "🔥🔥" if alert_type in ["CASCADE", "OI_PUMP"] else ""
         
-        oi_pct = self.data.get("oi_pct")
-        if oi_pct is None:
-            header_emoji = "⚪"
-        else:
-            header_emoji = "🟢" if oi_pct > 0 else "🔴" if oi_pct < 0 else "⚪"
+        side = self.data.get("side_label")
+        header_emoji = "🟢" if side == "SHORT" else "🔴" 
 
         return f"{header_emoji} {hbold('#' + self.symbol)} {fire}\n{hbold(alert_title)}\n\n"
 

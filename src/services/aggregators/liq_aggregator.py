@@ -49,6 +49,41 @@ class LiquidationAggregator:
 
         return sum_5m, sum_1h, sum_cascade, cascade_count
 
+    def get_top_liquidations(self, window_minutes: int = 15, limit: int = 10) -> dict:
+        """
+        Возвращает топ монет по объему ликвидаций за указанное окно.
+        """
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        window_seconds = window_minutes * 60
+        
+        longs_map = {}
+        shorts_map = {}
+
+        # Итерируемся по копии ключей, чтобы избежать ошибок при изменении словаря из других потоков
+        for symbol in list(self.history.keys()):
+            try:
+                events = self.history.get(symbol, [])
+                for date, value, side in reversed(events):
+                    if (now - date).total_seconds() > window_seconds:
+                        break
+                    
+                    if side == "LONG":
+                        longs_map[symbol] = longs_map.get(symbol, 0.0) + value
+                    elif side == "SHORT":
+                        shorts_map[symbol] = shorts_map.get(symbol, 0.0) + value
+            except Exception as e:
+                logger.error(f"Ошибка агрегации ликвидаций для {symbol}: {e}")
+                continue
+
+        # Сортируем и берем топ
+        top_longs = sorted(longs_map.items(), key=lambda x: x[1], reverse=True)[:limit]
+        top_shorts = sorted(shorts_map.items(), key=lambda x: x[1], reverse=True)[:limit]
+
+        return {
+            "longs": top_longs,
+            "shorts": top_shorts
+        }
+
     def load_historical_data(self, data):
         """Загружает исторические данные из БД в оперативную память"""
         count = 0
@@ -57,7 +92,7 @@ class LiquidationAggregator:
                 self.history[liq.symbol] = deque()
             
             # Определяем side_label (как в воркере)
-            side_label = "SHORT" if liq.side == "Buy" else "LONG"
+            side_label = "LONG" if liq.side == "Buy" else "SHORT"
             
             self.history[liq.symbol].append((liq.timestamp, liq.value, side_label))
             count += 1
@@ -103,5 +138,3 @@ class LiquidationAggregator:
             except Exception as e:
                 logger.error(f"❌ Ошибка в cleanup_task агрегатора: {e}", exc_info=True)
                 await asyncio.sleep(10)
-            
-aggregator = LiquidationAggregator()

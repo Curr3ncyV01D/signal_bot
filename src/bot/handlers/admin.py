@@ -4,18 +4,30 @@ import re
 from aiogram import Router, types, F, Bot
 from aiogram.filters import Command
 from aiogram.exceptions import TelegramForbiddenError
+from aiogram.fsm.state import State, StatesGroup
+from aiogram.fsm.context import FSMContext
+from aiogram.utils.markdown import hbold
 
+from src.core.config import config
 from src.database.session import async_session
+from src.database.crud.channel_service import ChannelService 
 from src.database.crud.user_service import get_users_count, get_users_page, get_user_by_id, toggle_user_block
 from src.core.security import SecurityManager
 from src.bot.filters.admin import IsAdminFilter
-from src.bot.keyboards import get_admin_main_kb, get_users_list_kb, get_user_manage_kb
+from src.bot.keyboards import get_admin_main_kb, get_users_list_kb, get_user_manage_kb, get_admin_channel_kb
+from src.bot.utils.dashboard_formatter import DashboardFormatter
+from aiogram.types import LinkPreviewOptions
 
 logger = logging.getLogger(__name__)
 
 router = Router()
 router.message.filter(IsAdminFilter())
 router.callback_query.filter(IsAdminFilter())
+
+class AdminChannelStates(StatesGroup):
+    waiting_for_volume = State()
+    waiting_for_cascade = State()
+    waiting_for_oi = State()
 
 USERS_PER_PAGE = 10
 
@@ -156,3 +168,185 @@ async def process_admin_toggle_block(callback: types.CallbackQuery, bot: Bot):
     
     action = "заблокирован" if new_status else "разблокирован"
     await callback.answer(f"Пользователь {action}!", show_alert=True)
+
+
+async def render_channel_settings(message_or_call, session):
+    """Хелпер для отрисовки меню настроек канала"""
+    settings = await ChannelService.get_settings(session)
+    
+    def fmt_num(num):
+        if num >= 1_000_000: return f"${num/1_000_000:.1f}M"
+        elif num >= 1_000: return f"${num/1_000:.1f}K"
+        return f"${num:.0f}"
+
+    text = (
+        f"📢 <b>Настройки VIP-Канала</b>\n\n"
+        f"<b>Статус постинга:</b> {'🟢 АКТИВЕН' if settings.is_active else '🔴 ОТКЛЮЧЕН'}\n\n"
+        f"<b>📊 Фильтры ликвидаций:</b>\n"
+        f"🔸 Порог объема: <b>{fmt_num(settings.threshold)}</b>\n"
+        f"🔸 Порог каскада: <b>{fmt_num(settings.threshold_cascade)}</b>\n\n"
+        f"<b>📈 Фильтры аналитики (OI):</b>\n"
+        f"🔸 Мин. рост OI: <b>{settings.threshold_oi_percent}%</b> и <b>{fmt_num(settings.threshold_oi_value)}</b>\n\n"
+        f"<i>Здесь вы настраиваете глобальные фильтры. Сигналы ниже этих значений в канал не попадут.</i>"
+    )
+    markup = get_admin_channel_kb(settings)
+    
+    if isinstance(message_or_call, types.Message):
+        await message_or_call.answer(text, reply_markup=markup, parse_mode="HTML")
+    else:
+        try:
+            await message_or_call.message.edit_text(text, reply_markup=markup, parse_mode="HTML")
+        except Exception as e:
+            if "message is not modified" in str(e).lower():
+                return
+            logger.error(f"Ошибка при обновлении меню настроек: {e}")
+
+@router.callback_query(F.data == "admin_channel_settings")
+async def process_admin_channel_settings(callback: types.CallbackQuery):
+    async with async_session() as session:
+        await render_channel_settings(callback, session)
+    await callback.answer()
+
+@router.callback_query(F.data.startswith("admin_chan_toggle_"))
+async def process_admin_chan_toggle(callback: types.CallbackQuery):
+    """Универсальный обработчик всех тумблеров канала"""
+    action = callback.data.replace("admin_chan_toggle_", "")
+    
+    async with async_session() as session:
+        settings = await ChannelService.get_settings(session)
+        
+        # Меняем нужный флаг
+        if action == "active": settings.is_active = not settings.is_active
+        elif action == "cascade": settings.alert_cascade = not settings.alert_cascade
+        elif action == "volume": settings.alert_volume = not settings.alert_volume
+        elif action == "squeeze": settings.alert_squeeze = not settings.alert_squeeze
+        elif action == "oi": settings.alert_oi = not settings.alert_oi
+        elif action == "rsi": settings.alert_rsi = not settings.alert_rsi
+        elif action == "cvd": settings.alert_cvd = not settings.alert_cvd
+        
+        # Обновляем через сервис (он сам обновит кэш)
+        await ChannelService.update_settings(session, **{
+            "is_active": settings.is_active,
+            "alert_cascade": settings.alert_cascade,
+            "alert_volume": settings.alert_volume,
+            "alert_squeeze": settings.alert_squeeze,
+            "alert_oi": settings.alert_oi,
+            "alert_rsi": settings.alert_rsi,
+            "alert_cvd": settings.alert_cvd
+        })
+        await render_channel_settings(callback, session)
+    await callback.answer("Настройка канала обновлена!")
+
+# --- ВВОД ПОРОГОВ КАНАЛА ---
+
+@router.callback_query(F.data == "admin_chan_set_vol")
+async def set_chan_vol(callback: types.CallbackQuery, state: FSMContext):
+    await callback.message.answer("Введите глобальный порог объема для канала (в $):")
+    await state.set_state(AdminChannelStates.waiting_for_volume)
+    await callback.answer()
+
+@router.message(AdminChannelStates.waiting_for_volume)
+async def process_chan_vol(message: types.Message, state: FSMContext):
+    try:
+        val = float(message.text.replace(',', '.').replace('$', '').replace(' ', ''))
+        async with async_session() as session:
+            await ChannelService.update_settings(session, threshold=val)
+            await render_channel_settings(message, session)
+        await state.clear()
+    except ValueError:
+        await message.answer("❌ Введите корректное число.")
+
+@router.callback_query(F.data == "admin_chan_set_cas")
+async def set_chan_cas(callback: types.CallbackQuery, state: FSMContext):
+    await callback.message.answer("Введите глобальный порог каскада для канала (в $):")
+    await state.set_state(AdminChannelStates.waiting_for_cascade)
+    await callback.answer()
+
+@router.message(AdminChannelStates.waiting_for_cascade)
+async def process_chan_cas(message: types.Message, state: FSMContext):
+    try:
+        val = float(message.text.replace(',', '.').replace('$', '').replace(' ', ''))
+        async with async_session() as session:
+            await ChannelService.update_settings(session, threshold_cascade=val)
+            await render_channel_settings(message, session)
+        await state.clear()
+    except ValueError:
+        await message.answer("❌ Введите корректное число.")
+
+@router.callback_query(F.data == "admin_chan_set_oi")
+async def set_chan_oi(callback: types.CallbackQuery, state: FSMContext):
+    await callback.message.answer("Введите пороги ОИ для канала (Процент и Сумма через пробел, например: 10 1000000):")
+    await state.set_state(AdminChannelStates.waiting_for_oi)
+    await callback.answer()
+
+@router.message(AdminChannelStates.waiting_for_oi)
+async def process_chan_oi(message: types.Message, state: FSMContext):
+    try:
+        parts = message.text.replace(',', '.').replace('%', '').replace('$', '').split()
+        if len(parts) != 2: raise ValueError
+        pct, val = float(parts[0]), float(parts[1])
+        
+        async with async_session() as session:
+            await ChannelService.update_settings(session, threshold_oi_percent=pct, threshold_oi_value=val)
+            await render_channel_settings(message, session)
+        await state.clear()
+    except ValueError:
+        await message.answer("❌ Введите два числа через пробел (например: 10 1000000).")
+
+@router.callback_query(F.data == "admin_chan_restart_dash")
+async def process_restart_dash(
+    callback: types.CallbackQuery, 
+    bot: Bot, 
+    liq_aggregator, 
+    market_aggregator
+):
+    """
+    Создает новое сообщение дэшборда в канале, закрепляет его и сохраняет ID.
+    """
+    try:
+        # 0. Пытаемся удалить старое сообщение дэшборда
+        settings = ChannelService.get_cached_settings()
+        if settings.dashboard_message_id:
+            try:
+                await bot.delete_message(
+                    chat_id=config.PRIVATE_CHANNEL_ID,
+                    message_id=settings.dashboard_message_id
+                )
+            except Exception as e:
+                logger.warning(f"Не удалось удалить старое сообщение дэшборда: {e}")
+
+        # 1. Собираем актуальные данные из агрегаторов
+        liq_data = liq_aggregator.get_top_liquidations(window_minutes=15)
+        market_data = market_aggregator.get_market_rankings(window_minutes=15)
+        combined_data = {**liq_data, **market_data}
+        
+        # 2. Генерируем текст дэшборда
+        text = DashboardFormatter.compile_dashboard(combined_data, window_minutes=15)
+        
+        # 3. Отправляем новое сообщение в канал
+        msg = await bot.send_message(
+            chat_id=config.PRIVATE_CHANNEL_ID,
+            text=text,
+            parse_mode="HTML",
+            link_preview_options=LinkPreviewOptions(is_disabled=True)
+        )
+        
+        # 4. Закрепляем его
+        await bot.pin_chat_message(
+            chat_id=config.PRIVATE_CHANNEL_ID,
+            message_id=msg.message_id
+        )
+        
+        # 5. Сохраняем ID в базу данных
+        async with async_session() as session:
+            await ChannelService.set_dashboard_id(session, msg.message_id)
+            
+        await callback.answer("✅ Дэшборд успешно запущен и закреплен!", show_alert=True)
+        
+        # 6. Обновляем меню админки
+        async with async_session() as session:
+            await render_channel_settings(callback, session)
+            
+    except Exception as e:
+        logger.error(f"Ошибка при перезапуске дэшборда: {e}", exc_info=True)
+        await callback.answer(f"❌ Ошибка: {e}", show_alert=True)

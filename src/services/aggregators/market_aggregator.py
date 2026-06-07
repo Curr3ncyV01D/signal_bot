@@ -1,6 +1,7 @@
 import logging
 from collections import deque
 from datetime import datetime, timezone
+from src.services.indicators.rsi import rsi_indicator
 
 logger = logging.getLogger(__name__)
 
@@ -100,4 +101,105 @@ class MarketAggregator:
             "oi_change_pct": round(oi_change_pct, 2),
             "oi_change_value": round(oi_change_value, 2),
             "price_change_pct": round(price_change_pct, 2)
+        }
+
+    def get_market_rankings(self, window_minutes: int = 15, oi_limit: int = 20) -> dict:
+        """
+        Генерирует рыночные рейтинги (OI, RSI, BTC).
+        """
+        now = datetime.now(timezone.utc).timestamp()
+        target_ts = now - (window_minutes * 60)
+        
+        total_oi_current = 0.0
+        total_oi_old = 0.0
+        oi_data = []
+
+        # 1. Агрегация OI по всем монетам
+        for symbol in list(self.snapshots.keys()):
+            try:
+                current_snap = self.snapshots.get(symbol)
+                if not current_snap:
+                    continue
+                    
+                hist = self.history.get(symbol, [])
+                if not hist:
+                    continue
+                
+                # Ищем старую запись, наиболее близкую к target_ts (<=)
+                old_record = None
+                for rec in reversed(hist):
+                    if rec[0] <= target_ts:
+                        old_record = rec
+                        break
+                
+                if old_record:
+                    current_oi = current_snap["oi"]
+                    old_oi = old_record[2]
+                    
+                    oi_pct = ((current_oi - old_oi) / old_oi * 100) if old_oi > 0 else 0.0
+                    oi_delta = current_oi - old_oi
+                    
+                    total_oi_current += current_oi
+                    total_oi_old += old_oi
+                    
+                    oi_data.append((symbol, round(oi_pct, 2), round(oi_delta, 2), round(current_oi, 2)))
+            except Exception as e:
+                logger.error(f"Ошибка агрегации OI для {symbol}: {e}")
+                continue
+
+        # 2. Сортировка OI
+        if not oi_data or total_oi_current == 0:
+            return {
+                "oi_up": [],
+                "oi_down": [],
+                "total_oi_current": None,
+                "total_oi_pct_change": None,
+                "rsi_overbought": [],
+                "rsi_oversold": [],
+                "btc_price": 0.0,
+                "btc_change_1h": 0.0
+            }
+
+        oi_up = sorted([d for d in oi_data if d[1] > 0], key=lambda x: x[1], reverse=True)[:oi_limit]
+        oi_down = sorted([d for d in oi_data if d[1] < 0], key=lambda x: x[1])[:oi_limit]
+        
+        total_oi_pct_change = ((total_oi_current - total_oi_old) / total_oi_old * 100) if total_oi_old > 0 else 0.0
+
+        # 3. RSI Heatmap
+        rsi_overbought = []
+        rsi_oversold = []
+        
+        for symbol in list(self.rsi_prices.keys()):
+            try:
+                prices = self.rsi_prices.get(symbol)
+                if not prices or len(prices) < 15:
+                    continue
+                    
+                rsi_val = rsi_indicator.calculate_rsi_local(list(prices), 14)
+                if rsi_val is not None:
+                    if rsi_val > 60:
+                        rsi_overbought.append((symbol, rsi_val))
+                    elif rsi_val < 30:
+                        rsi_oversold.append((symbol, rsi_val))
+            except Exception as e:
+                logger.error(f"Ошибка расчета RSI Heatmap для {symbol}: {e}")
+                continue
+        
+        rsi_overbought = sorted(rsi_overbought, key=lambda x: x[1], reverse=True)[:10]
+        rsi_oversold = sorted(rsi_oversold, key=lambda x: x[1])[:10]
+
+        # 4. Данные BTCUSDT
+        btc_data = self.get_market_data("BTCUSDT", 60)
+        btc_price = btc_data["price"] if btc_data else 0.0
+        btc_change_1h = btc_data["price_change_pct"] if btc_data and btc_data["price_change_pct"] is not None else None
+
+        return {
+            "oi_up": oi_up,
+            "oi_down": oi_down,
+            "total_oi_current": round(total_oi_current, 2),
+            "total_oi_pct_change": round(total_oi_pct_change, 2),
+            "rsi_overbought": rsi_overbought,
+            "rsi_oversold": rsi_oversold,
+            "btc_price": btc_price,
+            "btc_change_1h": btc_change_1h
         }
