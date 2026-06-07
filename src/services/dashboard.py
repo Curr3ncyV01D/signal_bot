@@ -43,7 +43,6 @@ async def dashboard_worker(bot: Bot, liq_aggregator, market_aggregator):
                         parse_mode="HTML",
                         link_preview_options=LinkPreviewOptions(is_disabled=True)
                     )
-                    logger.info(f"✅ Дэшборд обновлен (msg_id: {message_id})")
                     
                 except TelegramForbiddenError:
                     logger.error(f"❌ Бот не имеет прав для редактирования сообщений в канале {config.PRIVATE_CHANNEL_ID}. Проверьте права администратора.")
