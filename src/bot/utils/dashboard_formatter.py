@@ -66,7 +66,7 @@ class DashboardFormatter:
             lines = []
             
             # 1. & 2. Заголовки
-            lines.append(f"💥 {hbold(f'📊 Статистика за · {window_minutes}м')}")
+            lines.append(f"{hbold(f'📊 Статистика за · {window_minutes}м')}")
             lines.append(f"⏱️ {cls.get_time_header(window_minutes)}")
             
             # 3. Инфо об обновлении
@@ -74,7 +74,7 @@ class DashboardFormatter:
             lines.append("") # Разделитель
             
             # 4. Long liquidations
-            lines.append(f"🟢 {hbold('🟢 Ликвидации LONG: (Топ-10)')}")
+            lines.append(f"🟢 {hbold('Ликвидации LONG: (Топ-10)')}")
             longs = data.get("longs", [])
             if longs:
                 for i, (symbol, val) in enumerate(longs, 1):
@@ -84,7 +84,7 @@ class DashboardFormatter:
             lines.append("")
             
             # 5. Short liquidations
-            lines.append(f"🔴 {hbold('🔴 Ликвидации SHORT: (Топ-10)')}")
+            lines.append(f"🔴 {hbold('Ликвидации SHORT: (Топ-10)')}")
             shorts = data.get("shorts", [])
             if shorts:
                 for i, (symbol, val) in enumerate(shorts, 1):
@@ -94,8 +94,7 @@ class DashboardFormatter:
             lines.append("")
             
             # 6. Top Open Interest Header
-            lines.append(f"💥 {hbold(f'💥 Топ Открытого Интереса · {window_minutes}м')}")
-            lines.append("")
+            lines.append(f"💥 {hbold(f'Топ Открытого Интереса · {window_minutes}м')}")
             
             # 7. OI UP
             lines.append(f"🟢 {hbold('OI UP: (Топ-20)')}")
@@ -130,14 +129,14 @@ class DashboardFormatter:
                 total_pct = cls.format_percent(data.get("total_oi_pct_change", 0.0))
                 lines.append(f"📊 {hbold('Total OI:')} {total_oi} ({total_pct} vs window start)")
             else:
-                lines.append(f"📊 {hbold('Total OI:')} <i>Данные собираются... ⌛</i>")
+                lines.append(f"📊 {hbold('Total OI:')}   <i>Данные собираются... ⌛</i>")
             lines.append("")
             
             # 10. RSI Heatmap
-            lines.append(f"🧭 {hbold('🧭 Тепловая карта RSI · 5м (RSI14)')}")
+            lines.append(f"🧭 {hbold('Тепловая карта RSI · 1 час (RSI14)')}")
             
             # Overbought
-            lines.append(f"🟢 {hbold('RSI above 60 (Топ-10)')}")
+            lines.append(f"🟢 {hbold('RSI выше 80 (Топ-10)')}")
             overbought = data.get("rsi_overbought", [])
             if overbought:
                 for i, (symbol, val) in enumerate(overbought, 1):
@@ -146,7 +145,7 @@ class DashboardFormatter:
                 lines.append("<i>Данные собираются... ⌛</i>")
                 
             # Oversold
-            lines.append(f"🔴 {hbold('RSI below 30 (Топ-10)')}")
+            lines.append(f"🔴 {hbold('RSI ниже 20 (Топ-10)')}")
             oversold = data.get("rsi_oversold", [])
             if oversold:
                 for i, (symbol, val) in enumerate(oversold, 1):
@@ -162,7 +161,7 @@ class DashboardFormatter:
             btc_link = hlink(f"${btc_price:,.0f}", btc_url)
             
             btc_change_str = cls.format_percent(btc_change) if btc_change is not None else "Сбор данных %..."
-            lines.append(f"🔴 ₿ {hbold('BTC:')} {btc_link} ({btc_change_str} vs prev hour close)")
+            lines.append(f"🟡 ₿ {hbold('BTC:')} {btc_link} ({btc_change_str} vs предыдущий час закрытия)")
             lines.append("")
             
             # 12. Next update

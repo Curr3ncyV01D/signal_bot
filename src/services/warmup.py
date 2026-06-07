@@ -52,7 +52,7 @@ async def warmup_system(market_aggregator, target_symbols: list[str]) -> None:
                     "category": "linear",
                     "symbol": symbol,
                     "interval": config.RSI_KLINE_INTERVAL,
-                    "limit": 30
+                    "limit": 50
                 }
                 try:
                     async with session.get(url_kline, params=params, proxy=proxy) as resp:
@@ -65,10 +65,11 @@ async def warmup_system(market_aggregator, target_symbols: list[str]) -> None:
                                 
                                 # Заполняем rsi_prices в агрегаторе напрямую
                                 from collections import deque
-                                market_aggregator.rsi_prices[symbol] = deque(prices, maxlen=30)
+                                market_aggregator.rsi_prices[symbol] = deque(prices, maxlen=50)
                                 # Фиксируем ID текущего бара
                                 now = datetime.now(timezone.utc).timestamp()
-                                market_aggregator.rsi_bars[symbol] = int(now // 300)
+                                # Часовой бар для RSI 1H
+                                market_aggregator.rsi_bars[symbol] = int(now // 3600)
                 except Exception:
                     pass # Игнорируем точечные сбои сети
 

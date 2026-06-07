@@ -59,7 +59,7 @@ class Settings(BaseSettings):
 
     # 5. Настройки аналитики
     RSI_PERIOD: int = 14                         #
-    RSI_KLINE_INTERVAL: str = "5"                # Интервал свечей в минутах
+    RSI_KLINE_INTERVAL: str = "60"               # Интервал свечей в минутах
     OI_WINDOW_MINUTES: int = 5                   # Окно анализа Открытого Интереса в минутах
     
     # --- ПОДКЛЮЧЕНИЕ ---

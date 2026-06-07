@@ -38,12 +38,12 @@ class MarketAggregator:
             snap = self.snapshots[symbol]
             self.history[symbol].append((now, snap["price"], snap["oi"]))
 
-        # 2. НОВОЕ: Логика формирования 5-минутных свечей для RSI в ОЗУ
+        # 2. НОВОЕ: Логика формирования часовых свечей для RSI в ОЗУ
         if price is not None and price > 0:
-            now_bar = int(now // 300) # ID текущего 5-минутного интервала
+            now_bar = int(now // 3600) # ID текущего часового интервала
             
             if symbol not in self.rsi_prices:
-                self.rsi_prices[symbol] = deque(maxlen=30) # Храним 30 цен закрытия
+                self.rsi_prices[symbol] = deque(maxlen=50) # Храним 50 цен закрытия
                 self.rsi_bars[symbol] = now_bar
                 self.rsi_prices[symbol].append(price)
             elif self.rsi_bars[symbol] != now_bar:
@@ -51,7 +51,7 @@ class MarketAggregator:
                 self.rsi_prices[symbol].append(price)
                 self.rsi_bars[symbol] = now_bar
             else:
-                # Мы внутри того же 5-минутного бара. Обновляем текущую "живую" цену закрытия
+                # Мы внутри того же часового бара. Обновляем текущую "живую" цену закрытия
                 if self.rsi_prices[symbol]:
                     self.rsi_prices[symbol][-1] = price
 
@@ -177,9 +177,9 @@ class MarketAggregator:
                     
                 rsi_val = rsi_indicator.calculate_rsi_local(list(prices), 14)
                 if rsi_val is not None:
-                    if rsi_val > 60:
+                    if rsi_val > 80:
                         rsi_overbought.append((symbol, rsi_val))
-                    elif rsi_val < 30:
+                    elif rsi_val < 20:
                         rsi_oversold.append((symbol, rsi_val))
             except Exception as e:
                 logger.error(f"Ошибка расчета RSI Heatmap для {symbol}: {e}")
