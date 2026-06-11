@@ -70,23 +70,6 @@ async def process_open_settings(callback: types.CallbackQuery):
     await render_settings_menu(callback, user)
     await callback.answer()
 
-@router.callback_query(F.data == "back_to_main")
-async def process_back_to_main(callback: types.CallbackQuery):
-    """Возврат в главное меню из настроек"""
-    async with async_session() as session:
-        user = await session.get(User, callback.from_user.id)
-        if not user:
-            return await callback.answer("Ошибка профиля", show_alert=True)
-    
-    text = (
-        f"👋 Добро пожаловать, {callback.from_user.full_name}!\n\n"
-        f"Я профессиональный терминал для мониторинга ликвидаций на Bybit.\n"
-        f"Вы будете получать уведомления, когда на рынке начнутся сильные движения.\n\n"
-        f"👇 Выберите действие ниже:"
-    )
-    await callback.message.edit_text(text, reply_markup=get_start_kb(user), parse_mode="HTML")
-    await callback.answer()
-
 @router.callback_query(F.data == "back_to_settings")
 async def back_to_settings(callback: types.CallbackQuery):
     async with async_session() as session:

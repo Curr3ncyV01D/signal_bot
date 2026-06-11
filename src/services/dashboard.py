@@ -36,13 +36,19 @@ async def dashboard_worker(bot: Bot, liq_aggregator, market_aggregator):
                     text = DashboardFormatter.compile_dashboard(combined_data, window_minutes=15)
                     
                     # 4. Редактируем сообщение
-                    await bot.edit_message_text(
-                        chat_id=config.PRIVATE_CHANNEL_ID,
-                        message_id=message_id,
-                        text=text,
-                        parse_mode="HTML",
-                        link_preview_options=LinkPreviewOptions(is_disabled=True)
+                    await asyncio.wait_for(
+                        bot.edit_message_text(
+                            chat_id=config.PRIVATE_CHANNEL_ID,
+                            message_id=message_id,
+                            text=text,
+                            parse_mode="HTML",
+                            link_preview_options=LinkPreviewOptions(is_disabled=True)
+                        ),
+                        timeout=10.0
                     )
+                    
+                except asyncio.TimeoutError:
+                    logger.warning("⚠️ Таймаут при редактировании дэшборда (10 сек).")
                     
                 except TelegramForbiddenError:
                     logger.error(f"❌ Бот не имеет прав для редактирования сообщений в канале {config.PRIVATE_CHANNEL_ID}. Проверьте права администратора.")

@@ -28,6 +28,23 @@ async def cmd_start(message: types.Message):
     )
     await message.answer(text, reply_markup=get_start_kb(user), parse_mode="HTML")
 
+@router.callback_query(F.data == "back_to_main")
+async def process_back_to_main(callback: types.CallbackQuery):
+    """Возврат в главное меню из настроек"""
+    async with async_session() as session:
+        user = await session.get(User, callback.from_user.id)
+        if not user:
+            return await callback.answer("Ошибка профиля", show_alert=True)
+    
+    text = (
+        f"👋 Добро пожаловать, {callback.from_user.full_name}!\n\n"
+        f"Я профессиональный терминал для мониторинга ликвидаций на Bybit.\n"
+        f"Вы будете получать уведомления, когда на рынке начнутся сильные движения.\n\n"
+        f"👇 Выберите действие ниже:"
+    )
+    await callback.message.edit_text(text, reply_markup=get_start_kb(user), parse_mode="HTML")
+    await callback.answer()
+
 @router.callback_query(F.data == "activate_trial")
 async def process_activate_trial(callback: types.CallbackQuery):
     """Обработка нажатия на кнопку получения триала"""
@@ -73,7 +90,8 @@ async def process_get_channel_link(callback: types.CallbackQuery):
             name=f"Sub_{callback.from_user.id}",
             creates_join_request=True
         )
-        await callback.message.answer(f"👉 Ваша ссылка для входа в канал:\n{invite_link.invite_link}")
+        await callback.message.answer(f"👉 Ваша ссылка для входа в канал:\n{invite_link.invite_link}",
+        reply_markup=get_channel_link_kb())
         await callback.answer()
     except Exception as e:
         logger.error(f"Ошибка выдачи ссылки: {e}")

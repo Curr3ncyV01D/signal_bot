@@ -158,10 +158,18 @@ class DashboardFormatter:
             btc_price = data.get("btc_price", 0.0)
             btc_change = data.get("btc_change_1h")
             btc_url = "https://www.bybit.com/trade/usdt/BTCUSDT"
-            btc_link = hlink(f"${btc_price:,.0f}", btc_url)
             
-            btc_change_str = cls.format_percent(btc_change) if btc_change is not None else "Сбор данных %..."
-            lines.append(f"🟡 ₿ {hbold('BTC:')} {btc_link} ({btc_change_str} vs предыдущий час закрытия)")
+            if btc_price == 0 or btc_price is None:
+                lines.append(f"🔴 ₿ {hbold('BTC:')} <i>Данные собираются... ⌛</i>")
+            elif btc_change is None or btc_change == 0:
+                btc_price_formatted = f"${btc_price:,.0f}"
+                btc_link = hlink(btc_price_formatted, btc_url)
+                lines.append(f"🔴 ₿ {hbold('BTC:')} {btc_link} (Анализ динамики... ⌛)")
+            else:
+                btc_price_formatted = f"${btc_price:,.0f}"
+                btc_link = hlink(btc_price_formatted, btc_url)
+                btc_change_formatted = cls.format_percent(btc_change)
+                lines.append(f"🟡 ₿ {hbold('BTC:')} {btc_link} ({btc_change_formatted} vs prev hour close)")
             lines.append("")
             
             # 12. Next update
@@ -169,7 +177,7 @@ class DashboardFormatter:
             next_minutes = (now.minute // 15 + 1) * 15
             next_time = now.replace(minute=0, second=0, microsecond=0) + timedelta(minutes=next_minutes)
             
-            lines.append(f"⏭️ {hbold('⏭ Следующее обновление:')} {next_time.strftime('%H:%M')}")
+            lines.append(f"⏭️ {hbold('Следующее обновление:')} {next_time.strftime('%H:%M')}")
             
             return "\n".join(lines)
             

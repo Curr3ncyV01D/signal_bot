@@ -22,6 +22,8 @@ from src.services.retention import retention_policy_worker
 from src.services.warmup import warmup_system
 from src.services.bouncer import bouncer_worker
 from src.services.dashboard import dashboard_worker
+from src.services.payment_worker import payment_checker_worker
+from src.services.cryptopay import cryptopay
 
 async def lag_detector():
     """Детектор блокировки Event Loop"""
@@ -114,6 +116,7 @@ async def main():
     alert_cleanup_task = asyncio.create_task(cleanup_alert_history_task())        
     bouncer_task = asyncio.create_task(bouncer_worker(bot, interval_minutes=15))
     dashboard_task = asyncio.create_task(dashboard_worker(bot, liq_aggregator, market_aggregator))
+    payment_task = asyncio.create_task(payment_checker_worker(bot))
 
     # Передаем зависимости в Polling для команды /status 
     stop_event = asyncio.Event()
@@ -162,7 +165,7 @@ async def main():
         await on_shutdown(
             bot, 
             listener, 
-            [lag_detector_task, worker_task, retention_task, aggregator_task, alert_cleanup_task, bouncer_task, dashboard_task]
+            [lag_detector_task, worker_task, retention_task, aggregator_task, alert_cleanup_task, bouncer_task, dashboard_task, payment_task]
         )
 
 async def on_shutdown(bot: Bot, listener: BybitListener, tasks: list[asyncio.Task]):
@@ -185,6 +188,7 @@ async def on_shutdown(bot: Bot, listener: BybitListener, tasks: list[asyncio.Tas
         except Exception as e:
             logging.error(f"Ошибка при закрытии WebSocket: {e}")
 
+    await cryptopay.close()
     await bot.session.close()
     logging.info("Все соединения закрыты.")
 

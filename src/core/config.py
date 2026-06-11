@@ -9,6 +9,17 @@ class Settings(BaseSettings):
     DB_URL: str
     GUIDE_URL: str = "https://google.com"
 
+    # CryptoPay
+    CRYPTOPAY_TOKEN: str
+    CRYPTOPAY_TESTNET: bool = False
+
+    # Тарифы подписки (дней: цена_usdt)
+    TARIFFS: dict[int, float] = {
+        30: 20.0,
+        60: 40.0,
+        150: 100.0
+    }
+
     # Список игнорируемых монет (например, ["BTCUSDT", "ETHUSDT"])
     # Если в .env ничего не указано, список будет пустым
     IGNORED_SYMBOLS: list[str] = [] 
@@ -33,7 +44,7 @@ class Settings(BaseSettings):
 
     # Режим разработчика
     DEV_MODE: bool = False
-    DEV_SYMBOL_LIMIT: int = 220
+    DEV_SYMBOL_LIMIT: int = 0
 
     # --- БИЗНЕС-ЛОГИКА (Магические числа) ---
     

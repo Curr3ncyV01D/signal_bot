@@ -1,6 +1,6 @@
 from datetime import datetime
 from .functions import get_utc_now
-from sqlalchemy import BigInteger, String, Float, DateTime, Boolean
+from sqlalchemy import BigInteger, String, Float, DateTime, Boolean, ForeignKey, Integer
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 class Base(DeclarativeBase):
@@ -15,9 +15,11 @@ class User(Base):
     is_admin: Mapped[bool] = mapped_column(Boolean, default=False)
     is_blocked: Mapped[bool] = mapped_column(Boolean, default=False)
 
-    # --- Подписка и Триал ---
+    # --- Подписка и Кошелёк ---
     subscription_end: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, default=None)
     is_trial_used: Mapped[bool] = mapped_column(Boolean, default=False)
+    balance: Mapped[float] = mapped_column(Float, default=0.0)
+    referrer_id: Mapped[int | None] = mapped_column(BigInteger, ForeignKey("users.id"), nullable=True)
 
     # Ликвидации (Аналитика)
     threshold: Mapped[float] = mapped_column(Float, default=10000.0) 
@@ -76,3 +78,26 @@ class Liquidation(Base):
     qty: Mapped[float] = mapped_column(Float)   # Количество монет
     value: Mapped[float] = mapped_column(Float, index=True) # Объем в $ (price * qty)
     timestamp: Mapped[datetime] = mapped_column(DateTime, default=get_utc_now, index=True)
+
+
+class Transaction(Base):
+    __tablename__ = "transactions"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.id"), index=True, nullable=False)
+    amount: Mapped[float] = mapped_column(Float, nullable=False)
+    type: Mapped[str] = mapped_column(String(20), nullable=False) # DEPOSIT, WITHDRAW, REWARD
+    description: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=get_utc_now, index=True, nullable=False)
+
+
+class Invoice(Base):
+    __tablename__ = "invoices"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.id"), index=True, nullable=False)
+    amount: Mapped[float] = mapped_column(Float, nullable=False)
+    tariff_days: Mapped[int] = mapped_column(Integer, nullable=False)
+    crypto_pay_id: Mapped[str] = mapped_column(String(100), unique=True, index=True, nullable=False)
+    status: Mapped[str] = mapped_column(String(20), default="PENDING", nullable=False) # PENDING, PAID, EXPIRED
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=get_utc_now, index=True, nullable=False)

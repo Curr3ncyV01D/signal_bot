@@ -108,6 +108,12 @@ class BybitListener:
             all_symbols = self.get_all_usdt_symbols()
             ignored_set = set(getattr(config, 'IGNORED_SYMBOLS', []))
             target_symbols = [s for s in all_symbols if s not in ignored_set]
+            
+            # Принудительно добавляем BTCUSDT для дэшборда (даже если он в ignored)
+            if "BTCUSDT" not in target_symbols:
+                target_symbols.append("BTCUSDT")
+                logger.info("✅ BTCUSDT принудительно добавлен в список подписок для дэшборда.")
+                
             if config.DEV_MODE:
                 target_symbols = target_symbols[:config.DEV_SYMBOL_LIMIT]
                 logger.warning(f"🚧 DEV MODE: Мониторинг ограничен до {len(target_symbols)} пар.")
