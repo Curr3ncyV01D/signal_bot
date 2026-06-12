@@ -18,7 +18,7 @@ async def warmup_system(market_aggregator, target_symbols: list[str]) -> None:
     url_tickers = "https://api.bybit.com/v5/market/tickers"
     params_tickers = {"category": "linear"}
     
-    # 1. ШАГ: Мгновенный прогрев ОИ, Цены и Фандинга (1 запрос на весь рынок!)
+    # 1. ШАГ: Мгновенный прогрев ОИ, Цены и Фандинга
     async with aiohttp.ClientSession() as session:
         try:
             async with session.get(url_tickers, params=params_tickers, proxy=proxy) as resp:

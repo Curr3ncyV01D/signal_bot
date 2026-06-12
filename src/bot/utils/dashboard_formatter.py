@@ -160,11 +160,11 @@ class DashboardFormatter:
             btc_url = "https://www.bybit.com/trade/usdt/BTCUSDT"
             
             if btc_price == 0 or btc_price is None:
-                lines.append(f"🔴 ₿ {hbold('BTC:')} <i>Данные собираются... ⌛</i>")
+                lines.append(f"⌛ ₿ {hbold('BTC:')} <i>Ожидание тикера... ⌛</i>")
             elif btc_change is None or btc_change == 0:
                 btc_price_formatted = f"${btc_price:,.0f}"
                 btc_link = hlink(btc_price_formatted, btc_url)
-                lines.append(f"🔴 ₿ {hbold('BTC:')} {btc_link} (Анализ динамики... ⌛)")
+                lines.append(f"⌛ ₿ {hbold('BTC:')} {btc_link} (Анализ динамики... ⌛)")
             else:
                 btc_price_formatted = f"${btc_price:,.0f}"
                 btc_link = hlink(btc_price_formatted, btc_url)
