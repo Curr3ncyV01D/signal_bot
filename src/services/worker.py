@@ -31,17 +31,24 @@ class DataWorker:
                     asyncio.create_task(self._handle_liquidation(data))
                 
                 elif msg_type == "ticker":
-                    symbol = data.get("symbol") or data.get("s")
+                    # Bybit V5 присылает данные в поле "data", которое может быть списком
+                    if isinstance(data, list) and len(data) > 0:
+                        item = data[0]
+                    else:
+                        item = data
+
+                    symbol = item.get("symbol") or item.get("s")
                     
                     if not symbol:
                         queue.task_done()
                         continue
 
                     # Извлекаем значения только если они есть в пакете
-                    price = float(data["lastPrice"]) if "lastPrice" in data and data["lastPrice"] else None
-                    oi = float(data["openInterestValue"]) if "openInterestValue" in data and data["openInterestValue"] else None
-                    funding = float(data["fundingRate"]) if "fundingRate" in data and data["fundingRate"] else None
+                    price = float(item["lastPrice"]) if "lastPrice" in item and item["lastPrice"] else None
+                    oi = float(item["openInterestValue"]) if "openInterestValue" in item and item["openInterestValue"] else None
+                    funding = float(item["fundingRate"]) if "fundingRate" in item and item["fundingRate"] else None
 
+                    # ТИКЕРЫ: Записываем в агрегатор ДАЖЕ ЕСЛИ символ в IGNORED_SYMBOLS (нужно для BTC в дэшборде)
                     self.market_aggregator.update(symbol, price, oi, funding)
                     
                     # ДЕБАГ: Раскомментируй строку ниже, если хочешь увидеть поток тикеров в консоли

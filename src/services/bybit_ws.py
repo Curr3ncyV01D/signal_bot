@@ -25,6 +25,8 @@ class BybitListener:
         self.http = HTTP(testnet=False)
         self.ws_connections = []
         self.target_symbols = []
+        self._start_count = 0
+        self._launch_context = "primary"
 
     def get_all_usdt_symbols(self) -> list[str]:
         """Получает список всех активных USDT-пар с Bybit."""
@@ -103,7 +105,7 @@ class BybitListener:
 
         # Если монеты уже прогреты и прокинуты из main.py — используем их 
         if self.target_symbols:
-            target_symbols = self.target_symbols
+            target_symbols = list(self.target_symbols)
         else:
             all_symbols = self.get_all_usdt_symbols()
             ignored_set = set(getattr(config, 'IGNORED_SYMBOLS', []))
@@ -116,7 +118,7 @@ class BybitListener:
         # ПРИНУДИТЕЛЬНО добавляем BTCUSDT
         if "BTCUSDT" not in target_symbols:
             target_symbols.append("BTCUSDT")
-            logger.info("✅ BTCUSDT принудительно добавлен в список подписок для дэшбоарда.")
+        self.target_symbols = target_symbols
 
         # --- ЛОГИКА ЗАДЕРЖКИ ---
         if config.DEV_MODE:
@@ -126,8 +128,13 @@ class BybitListener:
         
         chunk_size = getattr(config, 'WS_CHUNK_SIZE', 25)
         symbol_chunks = [target_symbols[i:i + chunk_size] for i in range(0, len(target_symbols), chunk_size)]
-        
-        logger.info(f"Запуск мониторинга. Всего монет: {len(target_symbols)}. Соединений: {len(symbol_chunks)}")
+
+        if self._start_count == 0:
+            logger.info(f"Первичный запуск мониторинга. Всего монет: {len(target_symbols)}. Соединений: {len(symbol_chunks)}")
+        elif self._launch_context == "listing_restart":
+            logger.info(f"Перезапуск мониторинга по листингу. Всего монет: {len(target_symbols)}. Соединений: {len(symbol_chunks)}")
+        else:
+            logger.info(f"Повторный запуск мониторинга. Всего монет: {len(target_symbols)}. Соединений: {len(symbol_chunks)}")
 
         for i, chunk in enumerate(symbol_chunks, 1):
             ws = WebSocket(
@@ -158,6 +165,15 @@ class BybitListener:
 
         print() 
         logger.info(f"\n✅ Все {len(self.ws_connections)} соединений успешно инициализированы.")
+        self._start_count += 1
+        self._launch_context = "normal"
+
+    async def restart(self, new_symbols: list[str]):
+        logger.info("Обновление списка символов: выполняется перезапуск WebSocket-подключений.")
+        self.stop()
+        self.target_symbols = list(new_symbols)
+        self._launch_context = "listing_restart"
+        await self.start()
 
     def stop(self):
         for ws in self.ws_connections:
@@ -165,4 +181,5 @@ class BybitListener:
                 ws.exit()
             except:
                 pass
+        self.ws_connections.clear()
         logger.info("Все WebSocket соединения закрыты.")

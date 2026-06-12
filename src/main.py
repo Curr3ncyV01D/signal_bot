@@ -24,21 +24,8 @@ from src.services.bouncer import bouncer_worker
 from src.services.dashboard import dashboard_worker
 from src.services.payment_worker import payment_checker_worker
 from src.services.cryptopay import cryptopay
-
-async def lag_detector():
-    """Детектор блокировки Event Loop"""
-    import time
-    logger.info("🕵️ Детектор лагов запущен.")
-    while True:
-        start_time = time.time()
-        await asyncio.sleep(1) # Засыпаем ровно на 1 секунду
-        delay = time.time() - start_time - 1
-        
-        # Если бот проспал дольше 1 секунды, значит процессор был заблокирован тяжелой задачей
-        if delay > 0.5:
-            logger.warning(f"⚠️ ВНИМАНИЕ! Event Loop заблокирован. Задержка: {delay:.3f} сек.")
-        elif delay > 2.0:
-            logger.error(f"🚨 КРИТИЧЕСКИЙ ЛАГ! Бот 'висел' {delay:.3f} сек. PING может отвалиться!")
+from src.services.symbol_sync import build_target_symbols, symbol_sync_worker
+from src.utils import lag_detector
 
 async def main():
     logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -78,11 +65,8 @@ async def main():
 
     # 1. Получаем список монет для DEV/PROD режима до старта WS 
     listener = BybitListener(queue, loop)
-    all_symbols = listener.get_all_usdt_symbols()
-    ignored_set = set(config.IGNORED_SYMBOLS)
-    target_symbols = [s for s in all_symbols if s not in ignored_set]
-    if config.DEV_MODE:
-        target_symbols = target_symbols[:config.DEV_SYMBOL_LIMIT]
+    all_symbols = await asyncio.to_thread(listener.get_all_usdt_symbols)
+    target_symbols = build_target_symbols(all_symbols)
 
     # 2. Прогрев ликвидаций из БД 
     logging.info("Прогрев ликвидаций из базы данных...")
@@ -108,6 +92,7 @@ async def main():
         trade_aggregator=trade_aggregator 
     )
     worker_task = asyncio.create_task(worker.run(queue))
+    sync_task = asyncio.create_task(symbol_sync_worker(listener, market_aggregator))
 
     # 6. Запускаем фоновые задачи очистки и Вышибалу
     lag_detector_task = asyncio.create_task(lag_detector())
@@ -165,7 +150,7 @@ async def main():
         await on_shutdown(
             bot, 
             listener, 
-            [lag_detector_task, worker_task, retention_task, aggregator_task, alert_cleanup_task, bouncer_task, dashboard_task, payment_task]
+            [lag_detector_task, worker_task, sync_task, retention_task, aggregator_task, alert_cleanup_task, bouncer_task, dashboard_task, payment_task]
         )
 
 async def on_shutdown(bot: Bot, listener: BybitListener, tasks: list[asyncio.Task]):

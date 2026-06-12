@@ -10,22 +10,26 @@ from src.core.config import config
 from src.database.session import async_session
 from src.database.crud.user_service import get_or_create_user, activate_trial
 from src.database.models import User
-from src.bot.keyboards import get_start_kb, get_status_kb
+from src.bot.keyboards import get_start_kb, get_status_kb, get_channel_link_kb
 
 logger = logging.getLogger(__name__)
 router = Router()
+
+def get_main_menu_text(full_name: str) -> str:
+    """Текст главного меню."""
+    return (
+        f"👋 Добро пожаловать, {hbold(full_name)}!\n\n"
+        f"Я профессиональный терминал для мониторинга ликвидаций на Bybit.\n"
+        f"Вы будете получать уведомления, когда на рынке начнутся сильные движения.\n\n"
+        f"👇 Выберите действие ниже:"
+    )
 
 @router.message(Command("start"))
 async def cmd_start(message: types.Message):
     async with async_session() as session:
         user = await get_or_create_user(session, message.from_user.id, message.from_user.username)
     
-    text = (
-        f"👋 Добро пожаловать, {hbold(message.from_user.full_name)}!\n\n"
-        f"Я профессиональный терминал для мониторинга ликвидаций на Bybit.\n"
-        f"Вы будете получать уведомления, когда на рынке начнутся сильные движения.\n\n"
-        f"👇 Выберите действие ниже:"
-    )
+    text = get_main_menu_text(message.from_user.full_name)
     await message.answer(text, reply_markup=get_start_kb(user), parse_mode="HTML")
 
 @router.callback_query(F.data == "back_to_main")
@@ -36,12 +40,7 @@ async def process_back_to_main(callback: types.CallbackQuery):
         if not user:
             return await callback.answer("Ошибка профиля", show_alert=True)
     
-    text = (
-        f"👋 Добро пожаловать, {callback.from_user.full_name}!\n\n"
-        f"Я профессиональный терминал для мониторинга ликвидаций на Bybit.\n"
-        f"Вы будете получать уведомления, когда на рынке начнутся сильные движения.\n\n"
-        f"👇 Выберите действие ниже:"
-    )
+    text = get_main_menu_text(callback.from_user.full_name)
     await callback.message.edit_text(text, reply_markup=get_start_kb(user), parse_mode="HTML")
     await callback.answer()
 
@@ -56,9 +55,12 @@ async def process_activate_trial(callback: types.CallbackQuery):
         return await callback.answer(msg, show_alert=True)
         
     await callback.answer("Успешно!", show_alert=False)
-    
-    # Обновляем клавиатуру (кнопка триала пропадет, появится "Зайти в канал")
-    await callback.message.edit_reply_markup(reply_markup=get_start_kb(user))
+
+    await callback.message.edit_text(
+        get_main_menu_text(callback.from_user.full_name),
+        reply_markup=get_start_kb(user),
+        parse_mode="HTML"
+    )
     
     try:
         invite_link = await callback.bot.create_chat_invite_link(
@@ -67,7 +69,8 @@ async def process_activate_trial(callback: types.CallbackQuery):
             creates_join_request=True
         )
         await callback.message.answer(
-            f"🎉 <b>Триал активирован на 24 часа!</b>\n\n"
+            f"🎉 <b>Пробный период успешно активирован!</b>\n\n"
+            f"К вашему доступу добавлены <b>24 часа</b>.\n\n"
             f"Подайте заявку на вступление в закрытый канал по ссылке ниже. "
             f"Бот автоматически её одобрит.\n\n👉 {invite_link.invite_link}",
             parse_mode="HTML"

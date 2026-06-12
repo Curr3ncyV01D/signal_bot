@@ -10,10 +10,12 @@ class DashboardFormatter:
     """
 
     @staticmethod
-    def format_money(value: float) -> str:
+    def format_money(value: float | None) -> str:
         """
         Форматирует числа: до $1k -> целое, от $1k до $1M -> $150.5K, от $1M -> $1.52M.
         """
+        if value is None:
+            return "$0"
         try:
             abs_val = abs(value)
             if abs_val >= 1_000_000:
@@ -25,19 +27,21 @@ class DashboardFormatter:
             return res
         except Exception as e:
             logger.error(f"Ошибка format_money: {e}")
-            return str(value)
+            return "$0"
 
     @staticmethod
-    def format_percent(value: float) -> str:
+    def format_percent(value: float | None) -> str:
         """
         Возвращает строку вида +1.2% или -0.5%.
         """
+        if value is None:
+            return "0.0%"
         try:
             sign = "+" if value > 0 else ""
             return f"{sign}{value:.1f}%"
         except Exception as e:
             logger.error(f"Ошибка format_percent: {e}")
-            return str(value)
+            return "0.0%"
 
     @staticmethod
     def get_time_header(window_minutes: int) -> str:
@@ -126,8 +130,13 @@ class DashboardFormatter:
             total_oi_raw = data.get("total_oi_current")
             if total_oi_raw is not None and total_oi_raw > 0:
                 total_oi = cls.format_money(total_oi_raw)
-                total_pct = cls.format_percent(data.get("total_oi_pct_change", 0.0))
-                lines.append(f"📊 {hbold('Total OI:')} {total_oi} ({total_pct} vs window start)")
+                total_pct_raw = data.get("total_oi_pct_change")
+                
+                if total_pct_raw is not None:
+                    total_pct = cls.format_percent(total_pct_raw)
+                    lines.append(f"📊 {hbold('Total OI:')} {total_oi} ({total_pct} vs window start)")
+                else:
+                    lines.append(f"📊 {hbold('Total OI:')} {total_oi} (анализ динамики... ⌛)")
             else:
                 lines.append(f"📊 {hbold('Total OI:')}   <i>Данные собираются... ⌛</i>")
             lines.append("")
@@ -155,21 +164,22 @@ class DashboardFormatter:
             lines.append("")
             
             # 11. BTC Data Footer
-            btc_price = data.get("btc_price", 0.0)
-            btc_change = data.get("btc_change_1h")
+            btc_price = data.get("btc_price", 0.0) # Текущая цена
+            btc_change = data.get("btc_change_1h") # Изменение цены за 1 час
             btc_url = "https://www.bybit.com/trade/usdt/BTCUSDT"
             
-            if btc_price == 0 or btc_price is None:
-                lines.append(f"⌛ ₿ {hbold('BTC:')} <i>Ожидание тикера... ⌛</i>")
-            elif btc_change is None or btc_change == 0:
+            if btc_price > 0:
                 btc_price_formatted = f"${btc_price:,.0f}"
                 btc_link = hlink(btc_price_formatted, btc_url)
-                lines.append(f"⌛ ₿ {hbold('BTC:')} {btc_link} (Анализ динамики... ⌛)")
+                
+                if btc_change is not None:
+                    btc_change_formatted = cls.format_percent(btc_change)
+                    lines.append(f"₿ {hbold('BTC:')} {btc_link} ({btc_change_formatted} vs prev hour close)")
+                else:
+                    lines.append(f"₿ {hbold('BTC:')} {btc_link} (анализ динамики... ⌛)")
             else:
-                btc_price_formatted = f"${btc_price:,.0f}"
-                btc_link = hlink(btc_price_formatted, btc_url)
-                btc_change_formatted = cls.format_percent(btc_change)
-                lines.append(f"🟡 ₿ {hbold('BTC:')} {btc_link} ({btc_change_formatted} vs prev hour close)")
+                lines.append(f"₿ {hbold('BTC:')} <i>Ожидание тикера... ⌛</i>")
+            
             lines.append("")
             
             # 12. Next update

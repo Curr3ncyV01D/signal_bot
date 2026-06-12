@@ -12,9 +12,10 @@ def get_start_kb(user: User) -> InlineKeyboardMarkup:
     # Проверяем активна ли подписка
     has_sub = user.subscription_end and user.subscription_end > now
     
+    if not user.is_trial_used:
+        builder.row(InlineKeyboardButton(text="🎁 Пробный период на 24ч", callback_data="activate_trial"))
+
     if not has_sub:
-        if not user.is_trial_used:
-            builder.row(InlineKeyboardButton(text="🎁 Попробовать бесплатно 24ч", callback_data="activate_trial"))
         builder.row(InlineKeyboardButton(text="💳 Купить подписку", callback_data="buy_subscription"))
     else:
         builder.row(InlineKeyboardButton(text="🚀 Зайти в закрытый канал", callback_data="get_channel_link"))

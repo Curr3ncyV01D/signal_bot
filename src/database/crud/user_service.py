@@ -95,11 +95,8 @@ async def activate_trial(session: AsyncSession, user_id: int) -> tuple[bool, str
             return False, "❌ Вы уже использовали пробный период."
             
         now = get_utc_now()
-        
-        if user.subscription_end and user.subscription_end > now:
-            user.subscription_end = user.subscription_end + timedelta(hours=24)
-        else:
-            user.subscription_end = now + timedelta(hours=24)
+        trial_start = max(now, user.subscription_end or now)
+        user.subscription_end = trial_start + timedelta(hours=24)
             
         user.is_trial_used = True
         await session.commit()
