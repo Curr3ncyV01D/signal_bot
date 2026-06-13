@@ -10,6 +10,7 @@ from src.database.functions import get_utc_now
 from src.bot.keyboards.billing_kb import get_subscription_tariffs_kb
 from src.bot.keyboards import get_close_button_kb
 from src.database.models import User
+from src.utils import format_datetime
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -42,24 +43,14 @@ async def callback_process_purchase(callback: types.CallbackQuery):
         return await callback.answer("Ошибка: Тариф не найден.", show_alert=True)
         
     async with async_session() as session:
-        # Атомарная покупка (проверка баланса, списание, продление, транзакция)
-        success, new_end = await billing_service.purchase_subscription(
-            session=session,
-            user_id=user_id,
-            days=days,
-            price=price
-        )
+        success, new_end, bonus_amount = await billing_service.purchase_subscription(session, user_id, days, price)
         
         if not success:
             return await callback.answer("❌ Недостаточно средств на балансе.", show_alert=True)
 
         purchaser = await session.get(User, user_id)
-        referrer = None
-        bonus_amount = round(float(price) * (config.REFERRAL_BONUS_PERCENT / 100.0), 2)
-        if purchaser and purchaser.referrer_id and bonus_amount > 0:
-            referrer = await session.get(User, purchaser.referrer_id)
+        referrer_id = purchaser.referrer_id if purchaser else None
         
-        # 3. Выдаем ссылку на канал (если бот админ)
         try:
             invite_link = await callback.bot.create_chat_invite_link(
                 chat_id=config.PRIVATE_CHANNEL_ID,
@@ -70,20 +61,20 @@ async def callback_process_purchase(callback: types.CallbackQuery):
         except Exception as e:
             logger.error(f"Ошибка создания ссылки: {e}")
             link_text = "\n\n<i>(Ошибка: Бот не смог создать ссылку. Обратитесь к админу.)</i>"
-            
+
         text = (
             f"🎉 <b>Подписка успешно оформлена!</b>\n\n"
-            f"Тариф: {hbold(f'{days} дней')}\n"
-            f"Действует до: {hbold(new_end.strftime('%d.%m.%Y %H:%M'))}"
+            f"📅 Срок действия до: {hbold(format_datetime(new_end))}\n"
+            f"💰 Списано: {hbold(f'{price} USDT')}"
             f"{link_text}"
         )
         await callback.message.edit_text(text, parse_mode="HTML")
         await callback.answer("Поздравляем!")
 
-        if referrer:
+        if referrer_id and bonus_amount > 0:
             try:
                 await callback.bot.send_message(
-                    chat_id=referrer.id,
+                    chat_id=referrer_id,
                     text=(
                         "🤝 <b>Партнерский бонус начислен!</b>\n\n"
                         f"Ваш реферал совершил покупку, и вам начислено {hbold(f'{bonus_amount:.2f} USDT')}."
@@ -92,4 +83,4 @@ async def callback_process_purchase(callback: types.CallbackQuery):
                     reply_markup=get_close_button_kb()
                 )
             except Exception as e:
-                logger.error(f"Не удалось уведомить реферера {referrer.id} о бонусе: {e}")
+                logger.error(f"Не удалось уведомить реферера {referrer_id} о бонусе: {e}")

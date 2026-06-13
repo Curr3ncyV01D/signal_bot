@@ -188,6 +188,33 @@ async def toggle_user_block(session: AsyncSession, user_id: int) -> bool | None:
         logger.error(f"Непредвиденная ошибка при смене статуса блокировки для {user_id}: {e}")
         return None
 
+async def update_user_subscription(session: AsyncSession, user_id: int, days: int) -> User | None:
+    """
+    Обновляет срок подписки пользователя.
+    Если days > 0: устанавливает subscription_end = get_utc_now() + days.
+    Если days == 0: аннулирует подписку (subscription_end = None).
+    """
+    try:
+        user = await session.get(User, user_id)
+        if not user:
+            return None
+        
+        if days > 0:
+            user.subscription_end = get_utc_now() + timedelta(days=days)
+        else:
+            user.subscription_end = None
+            
+        await session.commit()
+        return user
+    except SQLAlchemyError as e:
+        await session.rollback()
+        logger.error(f"Ошибка БД при обновлении подписки {user_id}: {e}")
+        return None
+    except Exception as e:
+        await session.rollback()
+        logger.error(f"Непредвиденная ошибка при обновлении подписки {user_id}: {e}")
+        return None
+
 async def get_user_by_id(session: AsyncSession, user_id: int) -> User | None:
     """Получает полную информацию о пользователе для карточки админа."""
     try:

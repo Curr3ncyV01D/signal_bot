@@ -8,6 +8,7 @@ from src.core.config import config
 from src.database.session import async_session
 from src.database.crud import user_service, billing_service
 from src.services.cryptopay import cryptopay
+from src.utils import format_datetime
 from src.bot.keyboards.billing_kb import (
     get_wallet_main_kb, 
     get_deposit_amounts_kb, 
@@ -53,18 +54,25 @@ async def callback_wallet_main(callback: types.CallbackQuery):
 async def callback_tx_history(callback: types.CallbackQuery):
     """Показывает последние транзакции пользователя."""
     async with async_session() as session:
-        transactions = await billing_service.get_recent_transactions(session, callback.from_user.id, limit=10)
+        transactions = await billing_service.get_recent_transactions(session, callback.from_user.id)
 
     if not transactions:
         text = "<i> История операций пуста </i>"
     else:
         blocks: list[str] = []
         for tx in transactions:
-            tx_date = tx.created_at.strftime("%d.%m.%Y %H:%M")
-            amount = round(float(tx.amount), 2)
+            tx_date = format_datetime(tx.created_at)
+            amount = float(tx.amount)
+            
+            if amount > 0:
+                amount_str = f"🟢 +{amount:.2f}"
+            else:
+                amount_str = f"🔴 {amount:.2f}"
+                
             blocks.append(
-                f"📅 {tx_date} | {amount:.2f} USDT\n"
-                f"{tx.description or tx.type}"
+                f"{hbold('────────────────')}\n"
+                f"|📅 {tx_date} | {hbold(amount_str)} USDT\n"
+                f"└ {tx.description or tx.type}"
             )
         text = "📜 <b>История транзакций</b>\n\n" + "\n\n".join(blocks)
 

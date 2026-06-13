@@ -52,10 +52,15 @@ def get_users_list_kb(users: list[User], page: int, total_pages: int) -> InlineK
 def get_user_manage_kb(user_id: int, is_blocked: bool) -> InlineKeyboardMarkup:
     """Кнопки управления конкретным пользователем"""
     builder = InlineKeyboardBuilder()
+    
+    # Первая строка: Блокировка
     if is_blocked:
         builder.row(InlineKeyboardButton(text="✅ Разблокировать", callback_data=f"admin_toggle_{user_id}"))
     else:
         builder.row(InlineKeyboardButton(text="🛑 Заблокировать", callback_data=f"admin_toggle_{user_id}"))
+
+    # Вторая строка: Управление подпиской
+    builder.row(InlineKeyboardButton(text="📅 Изменить подписку", callback_data=f"admin_subs_{user_id}"))
 
     Kb_Helper.add_common_buttons(builder)
     

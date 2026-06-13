@@ -185,16 +185,20 @@ async def update_invoice_status(session: AsyncSession, ext_id: str, status: str)
 async def get_recent_transactions(
     session: AsyncSession,
     user_id: int,
-    limit: int = 10
+    limit: int | None = None
 ) -> list[Transaction]:
     """
     Возвращает последние транзакции пользователя.
 
     :param session: Асинхронная сессия SQLAlchemy
     :param user_id: ID пользователя
-    :param limit: Количество записей
+    :param limit: Количество записей (по умолчанию из конфига)
     :return: Список транзакций, отсортированных от новых к старым
     """
+    from src.core.config import config
+    if limit is None:
+        limit = config.TRANSACTION_HISTORY_LIMIT
+        
     try:
         query = (
             select(Transaction)
@@ -301,7 +305,7 @@ async def confirm_invoice_payment(session: AsyncSession, ext_id: str) -> bool:
         logger.error(f"Непредвиденная ошибка при подтверждении оплаты инвойса {ext_id}: {e}")
         return False
 
-async def purchase_subscription(session: AsyncSession, user_id: int, days: int, price: float) -> tuple[bool, datetime | None]:
+async def purchase_subscription(session: AsyncSession, user_id: int, days: int, price: float) -> tuple[bool, datetime | None, float]:
     """
     Атомарная покупка подписки:
     1. Проверяет баланс пользователя.
@@ -311,22 +315,23 @@ async def purchase_subscription(session: AsyncSession, user_id: int, days: int, 
     
     Все операции в одной транзакции с блокировкой строки пользователя.
     
-    :return: (успех, новая_дата_окончания)
+    :return: (успех, новая_дата_окончания, сумма_реф_бонуса)
     """
     from src.database.functions import get_utc_now
     from datetime import timedelta
     
+    bonus_amount = 0.0
     try:
         # 1. Получаем пользователя и блокируем строку
         user = await session.get(User, user_id, with_for_update=True)
         if not user:
             logger.warning(f"Попытка покупки подписки несуществующим пользователем {user_id}")
-            return False, None
+            return False, None, 0.0
             
         price = round(float(price), 2)
         if user.balance < price:
             logger.info(f"Недостаточно средств у {user_id}: {user.balance} < {price}")
-            return False, None
+            return False, None, 0.0
             
         # 2. Списываем баланс
         user.balance = round(user.balance - price, 2)
@@ -364,13 +369,13 @@ async def purchase_subscription(session: AsyncSession, user_id: int, days: int, 
         
         await session.commit()
         logger.info(f"Пользователь {user_id} успешно купил подписку на {days} дн. за {price} USDT")
-        return True, new_end
+        return True, new_end, bonus_amount
         
     except SQLAlchemyError as e:
         await session.rollback()
         logger.error(f"Ошибка БД при покупке подписки для {user_id}: {e}")
-        return False, None
+        return False, None, 0.0
     except Exception as e:
         await session.rollback()
         logger.error(f"Непредвиденная ошибка при покупке подписки для {user_id}: {e}")
-        return False, None
+        return False, None, 0.0

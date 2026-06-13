@@ -11,11 +11,20 @@ from aiogram.utils.markdown import hbold
 from src.core.config import config
 from src.database.session import async_session
 from src.database.crud.channel_service import ChannelService 
-from src.database.crud.user_service import get_users_count, get_users_page, get_user_by_id, toggle_user_block
+from src.database.crud.user_service import (
+    get_users_count, get_users_page, get_user_by_id, 
+    toggle_user_block, update_user_subscription
+)
 from src.core.security import SecurityManager
 from src.bot.filters.admin import IsAdminFilter
-from src.bot.keyboards import get_admin_main_kb, get_users_list_kb, get_user_manage_kb, get_admin_channel_kb
+from src.bot.keyboards import (
+    get_admin_main_kb, get_users_list_kb, 
+    get_user_manage_kb, get_admin_channel_kb,
+    get_close_button_kb
+)
 from src.bot.utils.dashboard_formatter import DashboardFormatter
+from src.utils import format_datetime
+from src.core.config import config
 from aiogram.types import LinkPreviewOptions
 
 logger = logging.getLogger(__name__)
@@ -28,8 +37,31 @@ class AdminChannelStates(StatesGroup):
     waiting_for_volume = State()
     waiting_for_cascade = State()
     waiting_for_oi = State()
+    waiting_for_sub_days = State()
 
 USERS_PER_PAGE = 10
+
+def _format_user_card_text(user: User) -> str:
+    """Форматирует текст карточки пользователя для админ-панели."""
+    name = f"@{user.username}" if user.username else "Нет юзернейма"
+    reg_date = format_datetime(user.created_at)
+    
+    sub_status = "❌ Нет"
+    if user.subscription_end:
+        sub_status = f"✅ До {format_datetime(user.subscription_end)}"
+        
+    trial_status = "✅ Использован" if user.is_trial_used else "❌ Не использован"
+    block_status = "🚫 ЗАБЛОКИРОВАН" if user.is_blocked else "🟢 Активен"
+    
+    return (
+        f"👤 <b>Карточка пользователя</b>\n\n"
+        f"<b>ID:</b> <code>{user.id}</code>\n"
+        f"<b>Username:</b> {name}\n"
+        f"<b>Дата регистрации:</b> {reg_date}\n\n"
+        f"<b>Подписка:</b> {sub_status}\n"
+        f"<b>Триал 24ч:</b> {trial_status}\n\n"
+        f"<b>Статус:</b> {block_status}"
+    )
 
 @router.message(Command("admin"))
 async def cmd_admin(message: types.Message):
@@ -88,33 +120,15 @@ async def process_admin_user_card(callback: types.CallbackQuery):
     
     async with async_session() as session:
         user = await get_user_by_id(session, user_id)
-        
-    if not user:
-        return await callback.answer("Пользователь не найден в БД!", show_alert=True)
-        
-    name = f"@{user.username}" if user.username else "Нет юзернейма"
-    reg_date = f"{user.created_at.strftime('%d.%m.%Y %H:%M')} UTC"
-    
-    sub_status = "❌ Нет"
-    if user.subscription_end:
-        sub_status = f"✅ До {user.subscription_end.strftime('%d.%m.%Y %H:%M')} UTC"
-        
-    trial_status = "✅ Использован" if user.is_trial_used else "❌ Не использован"
-    block_status = "🚫 ЗАБЛОКИРОВАН" if user.is_blocked else "🟢 Активен"
-    
-    text = (
-        f"👤 <b>Карточка пользователя</b>\n\n"
-        f"<b>ID:</b> <code>{user.id}</code>\n"
-        f"<b>Username:</b> {name}\n"
-        f"<b>Дата регистрации:</b> {reg_date}\n\n"
-        f"<b>Подписка:</b> {sub_status}\n"
-        f"<b>Триал 24ч:</b> {trial_status}\n\n"
-        f"<b>Статус:</b> {block_status}"
-    )
+        if not user:
+            return await callback.answer("Пользователь не найден в БД!", show_alert=True)
+            
+        text = _format_user_card_text(user)
+        is_blocked = user.is_blocked
     
     await callback.message.answer(
         text, 
-        reply_markup=get_user_manage_kb(user.id, user.is_blocked),
+        reply_markup=get_user_manage_kb(user_id, is_blocked),
         parse_mode="HTML"
     )
     await callback.answer()
@@ -350,3 +364,74 @@ async def process_restart_dash(
     except Exception as e:
         logger.error(f"Ошибка при перезапуске дэшборда: {e}", exc_info=True)
         await callback.answer(f"❌ Ошибка: {e}", show_alert=True)
+
+# --- УПРАВЛЕНИЕ ПОДПИСКОЙ ---
+
+@router.callback_query(F.data.startswith("admin_subs_"))
+async def process_admin_subs_start(callback: types.CallbackQuery, state: FSMContext):
+    """Начало процесса изменения подписки"""
+    user_id = int(callback.data.split("_")[2])
+    await state.update_data(target_user_id=user_id)
+    await state.set_state(AdminChannelStates.waiting_for_sub_days)
+    
+    await callback.message.answer(
+        f"📅 <b>Изменение срока подписки</b>\n\n"
+        f"Введите количество дней (от 0 до {config.MAX_SUB_DAYS}):\n"
+        "• <b>0</b> — аннулировать подписку\n"
+        f"• <b>1-{config.MAX_SUB_DAYS}</b> — установить новый срок от текущего момента",
+        parse_mode="HTML"
+    )
+    await callback.answer()
+
+@router.message(AdminChannelStates.waiting_for_sub_days)
+async def process_admin_subs_days(message: types.Message, state: FSMContext, bot: Bot):
+    """Обработка ввода количества дней"""
+    data = await state.get_data()
+    user_id = data.get("target_user_id")
+    
+    if not message.text or not message.text.isdigit():
+        return await message.answer("❌ Введите целое число дней (например: 30).")
+        
+    days = int(message.text)
+    if days < 0 or days > config.MAX_SUB_DAYS:
+        return await message.answer(f"❌ Введите число от 0 до {config.MAX_SUB_DAYS}.")
+        
+    async with async_session() as session:
+        user = await update_user_subscription(session, user_id, days)
+        
+        if not user:
+            await state.clear()
+            return await message.answer("❌ Ошибка: пользователь не найден в базе данных.")
+            
+        card_text = _format_user_card_text(user)
+        is_blocked = user.is_blocked
+        sub_end = user.subscription_end
+
+    # Уведомление пользователя
+    try:
+        if days > 0:
+            notify_text = (
+                f"📅 <b>Ваша подписка обновлена администратором!</b>\n\n"
+                f"Новый срок действия: {hbold(format_datetime(sub_end))}"
+            )
+        else:
+            notify_text = "❌ <b>Ваша подписка была аннулирована администратором.</b>"
+            
+        await bot.send_message(user_id, notify_text, parse_mode="HTML", reply_markup=get_close_button_kb())
+    except TelegramForbiddenError:
+        logger.warning(f"Не удалось уведомить {user_id}: бот заблокирован")
+    except Exception as e:
+        logger.error(f"Ошибка уведомления {user_id}: {e}")
+        
+    # Подтверждение админу
+    status = f"установлена на {days} дн." if days > 0 else "аннулирована"
+    await message.answer(f"✅ Подписка пользователя {user_id} {status}!")
+    
+    # Возврат к карточке пользователя
+    await message.answer(
+        card_text, 
+        reply_markup=get_user_manage_kb(user_id, is_blocked),
+        parse_mode="HTML"
+    )
+    
+    await state.clear()
