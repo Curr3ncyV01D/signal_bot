@@ -9,6 +9,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.utils.markdown import hbold
 
 from src.core.config import config
+from src.database.models import User
 from src.database.session import async_session
 from src.database.crud.channel_service import ChannelService 
 from src.database.crud.user_service import (
