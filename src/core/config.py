@@ -13,13 +13,6 @@ class Settings(BaseSettings):
     CRYPTOPAY_TOKEN: str
     CRYPTOPAY_TESTNET: bool = False
 
-    # Тарифы подписки (дней: цена_usdt)
-    TARIFFS: dict[int, float] = {
-        30: 20.0,
-        60: 40.0,
-        150: 100.0
-    }
-
     # Список игнорируемых монет (например, ["BTCUSDT", "ETHUSDT"])
     # Если в .env ничего не указано, список будет пустым
     IGNORED_SYMBOLS: list[str] = [] 
@@ -47,7 +40,21 @@ class Settings(BaseSettings):
     DEV_SYMBOL_LIMIT: int = 0
 
     # --- БИЗНЕС-ЛОГИКА (Магические числа) ---
+    # -- Платёжная система --
+
+    # Тарифы подписки (дней: цена_usdt)
+    TARIFFS: dict[int, float] = {
+        30: 20.0,
+        60: 40.0,
+        150: 100.0
+    }
     
+    # Реферальная система
+    REFERRAL_BONUS_PERCENT: float = 15.0
+
+
+    # -- API и логика --
+
     # 1. Настройки чувствительности алертов
     ALERT_GROWTH_PERCENTAGE: float = 1.50        # Прирост +n% для нового алерта
     VOLUME_MULTIPLIER: float = 3.0               # Во сколько раз 1h порог больше 5m порога

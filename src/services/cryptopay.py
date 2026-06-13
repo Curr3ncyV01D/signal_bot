@@ -8,9 +8,10 @@ logger = logging.getLogger(__name__)
 class CryptoPayService:
     def __init__(self):
         if config.PROXY_URL:
+            from src.utils import mask_proxy_url
             os.environ['HTTP_PROXY'] = config.PROXY_URL
             os.environ['HTTPS_PROXY'] = config.PROXY_URL
-            logger.info(f"Настроен системный прокси для CryptoPay: {config.PROXY_URL}")
+            logger.info(f"Настроен системный прокси для CryptoPay: {mask_proxy_url(config.PROXY_URL)}")
         
         self.client = AioCryptoPay(
             token=config.CRYPTOPAY_TOKEN,

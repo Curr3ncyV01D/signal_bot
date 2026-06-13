@@ -10,7 +10,7 @@ from src.core.config import config
 from src.database.session import async_session
 from src.database.crud.user_service import get_or_create_user, activate_trial
 from src.database.models import User
-from src.bot.keyboards import get_start_kb, get_status_kb, get_channel_link_kb
+from src.bot.keyboards import get_start_kb, get_status_kb, get_close_button_kb
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -26,8 +26,24 @@ def get_main_menu_text(full_name: str) -> str:
 
 @router.message(Command("start"))
 async def cmd_start(message: types.Message):
+    # Парсинг реферального кода из команды (например: /start ref_12345 или /start 12345)
+    referrer_id = None
+    if message.text and len(message.text.split()) > 1:
+        ref_arg = message.text.split()[1]
+        ref_arg = ref_arg.replace("ref_", "")
+        if ref_arg.isdigit():
+            parsed_ref = int(ref_arg)
+            # Запрещаем указывать самого себя как реферера
+            if parsed_ref != message.from_user.id:
+                referrer_id = parsed_ref
+
     async with async_session() as session:
-        user = await get_or_create_user(session, message.from_user.id, message.from_user.username)
+        user = await get_or_create_user(
+            session, 
+            message.from_user.id, 
+            message.from_user.username,
+            referrer_id=referrer_id
+        )
     
     text = get_main_menu_text(message.from_user.full_name)
     await message.answer(text, reply_markup=get_start_kb(user), parse_mode="HTML")
@@ -46,7 +62,7 @@ async def process_back_to_main(callback: types.CallbackQuery):
 
 @router.callback_query(F.data == "activate_trial")
 async def process_activate_trial(callback: types.CallbackQuery):
-    """Обработка нажатия на кнопку получения триала"""
+    """Обработка нажатия на кнопку получения пробного периода"""
     async with async_session() as session:
         success, msg = await activate_trial(session, callback.from_user.id)
         user = await session.get(User, callback.from_user.id)
@@ -73,15 +89,17 @@ async def process_activate_trial(callback: types.CallbackQuery):
             f"К вашему доступу добавлены <b>24 часа</b>.\n\n"
             f"Подайте заявку на вступление в закрытый канал по ссылке ниже. "
             f"Бот автоматически её одобрит.\n\n👉 {invite_link.invite_link}",
-            parse_mode="HTML"
+            parse_mode="HTML",
+            reply_markup=get_close_button_kb()
         )
     except Exception as e:
         logger.error(f"Ошибка создания ссылки в канал: {e}")
         await callback.message.answer(
-            "✅ Триал активирован!\n\n"
+            "✅ Пробный период активирован!\n\n"
             "<i>(Ошибка: Бот не имеет прав администратора в закрытом канале для создания ссылки. "
             "Пожалуйста, сообщите администратору.)</i>",
-            parse_mode="HTML"
+            parse_mode="HTML",
+            reply_markup=get_close_button_kb()
         )
 
 @router.callback_query(F.data == "get_channel_link")
@@ -94,7 +112,7 @@ async def process_get_channel_link(callback: types.CallbackQuery):
             creates_join_request=True
         )
         await callback.message.answer(f"👉 Ваша ссылка для входа в канал:\n{invite_link.invite_link}",
-        reply_markup=get_channel_link_kb())
+        reply_markup=get_close_button_kb())
         await callback.answer()
     except Exception as e:
         logger.error(f"Ошибка выдачи ссылки: {e}")

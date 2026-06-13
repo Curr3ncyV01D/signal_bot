@@ -5,6 +5,13 @@ import time
 logger = logging.getLogger(__name__)
 
 
+def mask_proxy_url(url: str | None) -> str | None:
+    """Маскирует пароль в URL прокси для безопасного логирования."""
+    if not url:
+        return url
+    import re
+    return re.sub(r'(?<=://)[^:]+:[^@]+@', '***:***@', url)
+
 async def lag_detector() -> None:
     """Детектор блокировки Event Loop."""
     logger.info("🕵️ Детектор лагов запущен.")

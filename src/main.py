@@ -36,8 +36,9 @@ async def main():
     session = None
     if config.PROXY_URL:
         from aiogram.client.session.aiohttp import AiohttpSession
+        from src.utils import mask_proxy_url
         session = AiohttpSession(proxy=config.PROXY_URL)
-        logging.info(f"📡 Запуск с прокси: {config.PROXY_URL}")
+        logging.info(f"📡 Запуск с прокси: {mask_proxy_url(config.PROXY_URL)}")
     else:
         logging.info("🌐 Запуск без прокси (прямое соединение)")
     

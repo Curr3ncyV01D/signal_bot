@@ -121,10 +121,6 @@ class MarketAggregator:
                 if not current_snap:
                     continue
                 
-                # Прибавляем к текущему общему OI в любом случае (KISS)
-                current_oi = current_snap["oi"]
-                total_oi_current += current_oi
-                    
                 hist = self.history.get(symbol, [])
                 if not hist:
                     continue
@@ -137,10 +133,12 @@ class MarketAggregator:
                         break
                 
                 if old_record:
+                    current_oi = current_snap["oi"]
                     old_oi = old_record[2]
                     oi_pct = ((current_oi - old_oi) / old_oi * 100) if old_oi > 0 else 0.0
                     oi_delta = current_oi - old_oi
                     
+                    total_oi_current += current_oi
                     total_oi_old += old_oi
                     oi_data.append((symbol, round(oi_pct, 2), round(oi_delta, 2), round(current_oi, 2)))
             except Exception as e:

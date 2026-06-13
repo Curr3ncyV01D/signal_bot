@@ -87,7 +87,7 @@ async def get_active_users(session: AsyncSession) -> list[User]:
 async def activate_trial(session: AsyncSession, user_id: int) -> tuple[bool, str]:
     """Активирует пробный период на 24 часа. Возвращает (успех, сообщение)."""
     try:
-        user = await session.get(User, user_id)
+        user = await session.get(User, user_id, with_for_update=True)
         if not user:
             return False, "Пользователь не найден. Нажмите /start."
             

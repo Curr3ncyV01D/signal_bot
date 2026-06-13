@@ -97,7 +97,6 @@ class Invoice(Base):
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.id"), index=True, nullable=False)
     amount: Mapped[float] = mapped_column(Float, nullable=False)
-    tariff_days: Mapped[int] = mapped_column(Integer, nullable=False)
-    crypto_pay_id: Mapped[str] = mapped_column(String(100), unique=True, index=True, nullable=False)
-    status: Mapped[str] = mapped_column(String(20), default="PENDING", nullable=False) # PENDING, PAID, EXPIRED
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=get_utc_now, index=True, nullable=False)
+    crypto_pay_id: Mapped[str] = mapped_column(String(50), unique=True, nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False) # PENDING, PAID, EXPIRED
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=get_utc_now, nullable=False)

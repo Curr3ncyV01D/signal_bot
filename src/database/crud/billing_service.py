@@ -1,6 +1,6 @@
 import logging
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, update
+from sqlalchemy import select, update, func
 from sqlalchemy.exc import SQLAlchemyError
 from datetime import datetime
 from src.database.models import User, Transaction, Invoice
@@ -104,7 +104,6 @@ async def create_invoice(
     session: AsyncSession,
     user_id: int,
     amount: float,
-    tariff_days: int,
     crypto_pay_id: str
 ) -> Invoice | None:
     """
@@ -113,7 +112,6 @@ async def create_invoice(
     :param session: Асинхронная сессия SQLAlchemy
     :param user_id: ID пользователя
     :param amount: Сумма инвойса
-    :param tariff_days: На сколько дней продлевается подписка
     :param crypto_pay_id: Внешний ID из CryptoPay
     :return: Объект Invoice или None при ошибке
     """
@@ -121,7 +119,6 @@ async def create_invoice(
         invoice = Invoice(
             user_id=user_id,
             amount=round(float(amount), 2),
-            tariff_days=tariff_days,
             crypto_pay_id=crypto_pay_id,
             status='PENDING'
         )
@@ -184,6 +181,63 @@ async def update_invoice_status(session: AsyncSession, ext_id: str, status: str)
         await session.rollback()
         logger.error(f"Непредвиденная ошибка в update_invoice_status {ext_id}: {e}")
         return False
+
+async def get_recent_transactions(
+    session: AsyncSession,
+    user_id: int,
+    limit: int = 10
+) -> list[Transaction]:
+    """
+    Возвращает последние транзакции пользователя.
+
+    :param session: Асинхронная сессия SQLAlchemy
+    :param user_id: ID пользователя
+    :param limit: Количество записей
+    :return: Список транзакций, отсортированных от новых к старым
+    """
+    try:
+        query = (
+            select(Transaction)
+            .where(Transaction.user_id == user_id)
+            .order_by(Transaction.created_at.desc())
+            .limit(limit)
+        )
+        result = await session.execute(query)
+        return list(result.scalars().all())
+    except SQLAlchemyError as e:
+        logger.error(f"Ошибка БД в get_recent_transactions для {user_id}: {e}")
+        return []
+    except Exception as e:
+        logger.error(f"Непредвиденная ошибка в get_recent_transactions для {user_id}: {e}")
+        return []
+
+async def get_partner_stats(session: AsyncSession, user_id: int) -> tuple[int, float]:
+    """
+    Возвращает статистику партнерской программы пользователя.
+
+    :param session: Асинхронная сессия SQLAlchemy
+    :param user_id: ID пользователя
+    :return: (количество приглашенных, сумма бонусов REWARD)
+    """
+    try:
+        invited_count_query = select(func.count(User.id)).where(User.referrer_id == user_id)
+        invited_count_result = await session.execute(invited_count_query)
+        invited_count = int(invited_count_result.scalar() or 0)
+
+        reward_sum_query = select(func.sum(Transaction.amount)).where(
+            Transaction.user_id == user_id,
+            Transaction.type == 'REWARD'
+        )
+        reward_sum_result = await session.execute(reward_sum_query)
+        total_rewards = round(float(reward_sum_result.scalar() or 0.0), 2)
+
+        return invited_count, total_rewards
+    except SQLAlchemyError as e:
+        logger.error(f"Ошибка БД в get_partner_stats для {user_id}: {e}")
+        return 0, 0.0
+    except Exception as e:
+        logger.error(f"Непредвиденная ошибка в get_partner_stats для {user_id}: {e}")
+        return 0, 0.0
 
 async def confirm_invoice_payment(session: AsyncSession, ext_id: str) -> bool:
     """
@@ -291,6 +345,22 @@ async def purchase_subscription(session: AsyncSession, user_id: int, days: int, 
             description=f"Покупка подписки на {days} дн."
         )
         session.add(tx)
+        # 5. Реферальный бонус
+        if user.referrer_id:
+            from src.core.config import config
+            bonus_amount = round(price * (config.REFERRAL_BONUS_PERCENT / 100.0), 2)
+            if bonus_amount > 0:
+                referrer = await session.get(User, user.referrer_id, with_for_update=True)
+                if referrer:
+                    referrer.balance = round(referrer.balance + bonus_amount, 2)
+                    bonus_tx = Transaction(
+                        user_id=referrer.id,
+                        amount=bonus_amount,
+                        type='REWARD',
+                        description=f"Бонус за покупку реферала {user_id}"
+                    )
+                    session.add(bonus_tx)
+                    logger.info(f"Начислен бонус {bonus_amount} USDT пользователю {referrer.id} за покупку {user_id}")
         
         await session.commit()
         logger.info(f"Пользователь {user_id} успешно купил подписку на {days} дн. за {price} USDT")

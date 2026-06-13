@@ -4,13 +4,15 @@ from aiogram import Router, types, F
 from aiogram.filters import Command
 from aiogram.utils.markdown import hbold, hcode
 
+from src.core.config import config
 from src.database.session import async_session
 from src.database.crud import user_service, billing_service
 from src.services.cryptopay import cryptopay
 from src.bot.keyboards.billing_kb import (
     get_wallet_main_kb, 
     get_deposit_amounts_kb, 
-    get_payment_link_kb
+    get_payment_link_kb,
+    get_wallet_back_kb
 )
 
 logger = logging.getLogger(__name__)
@@ -46,6 +48,56 @@ async def callback_wallet_main(callback: types.CallbackQuery):
         f"Выберите действие:"
     )
     await callback.message.edit_text(text, reply_markup=get_wallet_main_kb(user.balance), parse_mode="HTML")
+
+@router.callback_query(F.data == "tx_history")
+async def callback_tx_history(callback: types.CallbackQuery):
+    """Показывает последние транзакции пользователя."""
+    async with async_session() as session:
+        transactions = await billing_service.get_recent_transactions(session, callback.from_user.id, limit=10)
+
+    if not transactions:
+        text = "<i> История операций пуста </i>"
+    else:
+        blocks: list[str] = []
+        for tx in transactions:
+            tx_date = tx.created_at.strftime("%d.%m.%Y %H:%M")
+            amount = round(float(tx.amount), 2)
+            blocks.append(
+                f"📅 {tx_date} | {amount:.2f} USDT\n"
+                f"{tx.description or tx.type}"
+            )
+        text = "📜 <b>История транзакций</b>\n\n" + "\n\n".join(blocks)
+
+    await callback.message.edit_text(
+        text,
+        reply_markup=get_wallet_back_kb(),
+        parse_mode="HTML"
+    )
+    await callback.answer()
+
+@router.callback_query(F.data == "partner_cabinet")
+async def callback_partner_cabinet(callback: types.CallbackQuery):
+    """Показывает данные партнерской программы пользователя."""
+    bot_info = await callback.bot.get_me()
+    referral_link = f"https://t.me/{bot_info.username}?start={callback.from_user.id}"
+
+    async with async_session() as session:
+        invited_count, total_rewards = await billing_service.get_partner_stats(session, callback.from_user.id)
+
+    text = (
+        "🤝 <b>Партнерская программа</b>\n\n"
+        f"Приглашайте друзей и получайте {config.REFERRAL_BONUS_PERCENT}% от их покупок пожизненно на ваш баланс!\n\n"
+        f"🔗 <b>Ваша ссылка:</b>\n{hcode(referral_link)}\n\n"
+        f"👥 Приглашено: {hbold(str(invited_count))}\n"
+        f"💸 Заработано: {hbold(f'{total_rewards:.2f} USDT')}"
+    )
+
+    await callback.message.edit_text(
+        text,
+        reply_markup=get_wallet_back_kb(),
+        parse_mode="HTML"
+    )
+    await callback.answer()
 
 @router.callback_query(F.data == "deposit")
 async def callback_deposit(callback: types.CallbackQuery):
@@ -90,7 +142,6 @@ async def callback_create_invoice(callback: types.CallbackQuery):
             session=session,
             user_id=user_id,
             amount=amount,
-            tariff_days=0, # Просто пополнение
             crypto_pay_id=str(invoice_id)
         )
     
@@ -105,7 +156,10 @@ async def callback_create_invoice(callback: types.CallbackQuery):
 @router.callback_query(F.data.startswith("check_pay_"))
 async def callback_check_payment(callback: types.CallbackQuery):
     """Ручная проверка оплаты инвойса"""
-    invoice_id = int(callback.data.split("_")[2])
+    try:
+        invoice_id = int(callback.data.split("_")[2])
+    except (ValueError, IndexError):
+        return await callback.answer("❌ Некорректный ID счета.", show_alert=True)
     
     # Сразу отвечаем на callback, чтобы не было "query is too old"
     await callback.answer()

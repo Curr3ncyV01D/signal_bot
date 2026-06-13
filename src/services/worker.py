@@ -32,10 +32,12 @@ class DataWorker:
                 
                 elif msg_type == "ticker":
                     # Bybit V5 присылает данные в поле "data", которое может быть списком
-                    if isinstance(data, list) and len(data) > 0:
-                        item = data[0]
-                    else:
+                    if isinstance(data, list):
+                        item = data[0] if data else {}
+                    elif isinstance(data, dict):
                         item = data
+                    else:
+                        item = {}
 
                     symbol = item.get("symbol") or item.get("s")
                     

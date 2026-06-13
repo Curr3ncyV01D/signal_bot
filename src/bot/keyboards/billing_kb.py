@@ -7,6 +7,7 @@ def get_wallet_main_kb(balance: float) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     builder.row(InlineKeyboardButton(text="➕ Пополнить баланс", callback_data="deposit"))
     builder.row(InlineKeyboardButton(text="💎 Купить подписку", callback_data="buy_subscription"))
+    builder.row(InlineKeyboardButton(text="🤝 Партнерская программа", callback_data="partner_cabinet"))
     builder.row(InlineKeyboardButton(text="📜 История транзакций", callback_data="tx_history"))
     builder.row(InlineKeyboardButton(text="⬅️ Назад в меню", callback_data="back_to_main"))
     return builder.as_markup()
@@ -28,6 +29,12 @@ def get_payment_link_kb(url: str, invoice_id: int) -> InlineKeyboardMarkup:
     builder.row(InlineKeyboardButton(text="🔗 Оплатить (CryptoBot)", url=url))
     builder.row(InlineKeyboardButton(text="🔄 Проверить оплату", callback_data=f"check_pay_{invoice_id}"))
     builder.row(InlineKeyboardButton(text="⬅️ Назад", callback_data="deposit"))
+    return builder.as_markup()
+
+def get_wallet_back_kb() -> InlineKeyboardMarkup:
+    """Кнопка возврата в главное меню кошелька."""
+    builder = InlineKeyboardBuilder()
+    builder.row(InlineKeyboardButton(text="⬅️ Назад", callback_data="wallet_main"))
     return builder.as_markup()
 
 def get_subscription_tariffs_kb() -> InlineKeyboardMarkup:

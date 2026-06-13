@@ -8,6 +8,8 @@ from src.database.session import async_session
 from src.database.crud import user_service, billing_service
 from src.database.functions import get_utc_now
 from src.bot.keyboards.billing_kb import get_subscription_tariffs_kb
+from src.bot.keyboards import get_close_button_kb
+from src.database.models import User
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -28,7 +30,11 @@ async def callback_buy_subscription(callback: types.CallbackQuery):
 @router.callback_query(F.data.startswith("buy_plan_"))
 async def callback_process_purchase(callback: types.CallbackQuery):
     """Процесс покупки подписки с баланса"""
-    days = int(callback.data.split("_")[2])
+    try:
+        days = int(callback.data.split("_")[2])
+    except (ValueError, IndexError):
+        return await callback.answer("❌ Некорректные параметры тарифа.", show_alert=True)
+        
     price = config.TARIFFS.get(days)
     user_id = callback.from_user.id
     
@@ -46,6 +52,12 @@ async def callback_process_purchase(callback: types.CallbackQuery):
         
         if not success:
             return await callback.answer("❌ Недостаточно средств на балансе.", show_alert=True)
+
+        purchaser = await session.get(User, user_id)
+        referrer = None
+        bonus_amount = round(float(price) * (config.REFERRAL_BONUS_PERCENT / 100.0), 2)
+        if purchaser and purchaser.referrer_id and bonus_amount > 0:
+            referrer = await session.get(User, purchaser.referrer_id)
         
         # 3. Выдаем ссылку на канал (если бот админ)
         try:
@@ -67,3 +79,17 @@ async def callback_process_purchase(callback: types.CallbackQuery):
         )
         await callback.message.edit_text(text, parse_mode="HTML")
         await callback.answer("Поздравляем!")
+
+        if referrer:
+            try:
+                await callback.bot.send_message(
+                    chat_id=referrer.id,
+                    text=(
+                        "🤝 <b>Партнерский бонус начислен!</b>\n\n"
+                        f"Ваш реферал совершил покупку, и вам начислено {hbold(f'{bonus_amount:.2f} USDT')}."
+                    ),
+                    parse_mode="HTML",
+                    reply_markup=get_close_button_kb()
+                )
+            except Exception as e:
+                logger.error(f"Не удалось уведомить реферера {referrer.id} о бонусе: {e}")
