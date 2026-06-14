@@ -19,12 +19,13 @@ class BIFormatter:
         delta_emoji = "📈" if data['delta_24h'] >= 0 else "📉"
         
         return (
-            f"💰 {hbold('Финансовая аналитика (USDT)')}\n\n"
-            f"💵 {hbold('Оборот (DEPOSIT):')}\n"
-            f"  ├ 24ч: {hbold(data['turnover_24h'])} $ ({delta_emoji} {data['delta_24h']}%)\n"
+            f"💰 {hbold('Финансовая аналитика')}\n\n"
+            f"💱 {hbold('Оборот (DEPOSIT):')}\n"
+            f"  ├ 24ч: {hbold(data['turnover_24h'])} $ ({delta_emoji} {data['delta_24h']}% по сравнению с предыдущими 24ч)\n"
+            f"  ├ 48ч: {hbold(data['turnover_48h'])} $\n"
             f"  ├ 7д: {hbold(data['turnover_7d'])} $\n"
-            f"  └ Total: {hbold(data['turnover_total'])} $\n\n"
-            f"💎 {hbold('ARPU:')} {hbold(data['arpu'])} $ / плательщик\n"
+            f"  └ Всего: {hbold(data['turnover_total'])} $\n\n"
+            f"💎 {hbold('ARPU:')} {hbold(data['arpu'])} $ / пользователь\n\n"
             f"🎁 {hbold('Выплачено бонусов:')} {hbold(data['rewards_total'])} $\n"
             f"💳 {hbold('Всего денег во всех кошельках:')} {hbold(data['bonus_debt'])} $\n\n"
         )
@@ -42,8 +43,8 @@ class BIFormatter:
         return (
             f"👥 {hbold('Аналитика аудитории')}\n\n"
             f"📊 {hbold('Пользователи:')}\n"
-            f"  ├ VIP-активных: {hbold(data['active_vip'])}\n\n"
-            f"  └ Всего: {hbold(data['total_users'])}\n"
+            f"  ├ VIP-активных: {hbold(data['active_vip'])}\n"
+            f"  └ Всего: {hbold(data['total_users'])}\n\n"
             f"🎯 {hbold('Конверсия Trial-to-Paid:')} {hbold(data['conversion_rate'])}%\n"
             f"  ├ Использовали пробный период: {data['trial_users_count']}\n"
             f"  └ Купили после: {data['paid_from_trial_count']}\n\n"
@@ -57,7 +58,11 @@ class BIFormatter:
         cpu_bar = cls.create_progress_bar(data['cpu_usage'])
         ram_bar = cls.create_progress_bar(data['ram_usage'])
         
-        conn_status = "✅" if data['active_connections'] == data['total_connections'] else "⚠️"
+        conn_status = "✅" if data['active_connections'] >= max(1, data['total_connections'] * 3 / 4) else "⚠️"
+        if data['active_connections'] == 0: conn_status = "❌"
+
+        queue_size = data["queue_size"]
+        queue_status = "🟢" if queue_size < 50 else "🟡" if queue_size < 200 else "🔴"
         
         return (
             f"⚙️ {hbold('Техническое состояние')}\n\n"
@@ -65,11 +70,11 @@ class BIFormatter:
             f"  ├ CPU: {cpu_bar} {hbold(data['cpu_usage'])}%\n"
             f"  └ RAM: {ram_bar} {hbold(data['ram_usage'])}%\n\n"
             f"🌐 {hbold('Инфраструктура:')}\n"
-            f"  ├ Bybit WS: {conn_status} {hbold(data['active_connections'])}/{hbold(data['total_connections'])}\n"
-            f"  ├ Latency: {hbold(data['latency'])}\n"
-            f"  ├ Очередь событий: {hbold(data['queue_size'])}\n"
+            f"  ├ Соединения: {conn_status} {hbold(data['active_connections'])}/{hbold(data['total_connections'])}\n"
+            f"  ├ Последний сигнал API: {hbold(data['latency'])} назад\n"
+            f"  ├ Очередь обработки: {queue_status} {hbold(data['queue_size'])}\n"
             f"  └ Событий в кэше: {hbold(data['total_events'])}\n\n"
-            f"👮‍♂️ {hbold('Вышибала:')} {data['bouncer_hb']}\n"
-            f"🕒 {hbold('Uptime:')} {hbold(data['uptime'])}\n"
-            f"🕒 Время: {data['server_time']} UTC"
+            f"👮‍♂️ {hbold('Вышибала:')} {data['bouncer_hb']}\n\n"
+            f"💓 {hbold('Время работы:')} {hbold(data['uptime'])}\n"
+            f"🕒 Время сервера: {data['server_time']} UTC"
         )

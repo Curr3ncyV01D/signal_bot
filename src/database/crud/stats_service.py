@@ -36,6 +36,12 @@ async def get_financial_metrics(session: AsyncSession, force_refresh: bool = Fal
     )
     turnover_24h = (await session.execute(turnover_24h_query)).scalar() or 0.0
 
+    # 1.1 Оборот за 48ч (DEPOSIT)
+    turnover_48h_query = select(func.sum(Transaction.amount)).where(
+        and_(Transaction.type == 'DEPOSIT', Transaction.created_at >= two_days_ago)
+    )
+    turnover_48h = (await session.execute(turnover_48h_query)).scalar() or 0.0
+
     # 2. Оборот за предыдущие 24ч (для дельты)
     turnover_prev_24h_query = select(func.sum(Transaction.amount)).where(
         and_(
@@ -79,6 +85,7 @@ async def get_financial_metrics(session: AsyncSession, force_refresh: bool = Fal
 
     metrics = {
         "turnover_24h": round(turnover_24h, 2),
+        "turnover_48h": round(turnover_48h, 2),
         "turnover_7d": round(turnover_7d, 2),
         "turnover_total": round(turnover_total, 2),
         "delta_24h": round(delta, 1),

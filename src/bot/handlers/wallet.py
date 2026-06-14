@@ -70,8 +70,8 @@ async def callback_tx_history(callback: types.CallbackQuery):
                 amount_str = f"🔴 {amount:.2f}"
                 
             blocks.append(
-                f"{hbold('────────────────')}\n"
-                f"|📅 {tx_date} | {hbold(amount_str)} USDT\n"
+                f"{hbold('┌───────────────────────────────')}\n"
+                f"├ 📅 {tx_date} ┤ {hbold(amount_str)} USDT\n"
                 f"└ {tx.description or tx.type}"
             )
         text = "📜 <b>История транзакций</b>\n\n" + "\n\n".join(blocks)
