@@ -5,6 +5,7 @@ from .join_requests import router as join_requests_router
 from .common import router as common_router
 from .admin import router as admin_router
 from .admin_bi import router as admin_bi_router
+from .admin_broadcast import router as admin_broadcast_router
 from .wallet import router as wallet_router
 from .shop import router as shop_router
 
@@ -17,6 +18,7 @@ main_router.include_routers(
     common_router, 
     admin_router,
     admin_bi_router,
+    admin_broadcast_router,
     wallet_router,
     shop_router
 )

@@ -1,7 +1,7 @@
 import logging
 from datetime import timedelta
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, and_, func
+from sqlalchemy import select, and_, func, or_
 from sqlalchemy.exc import SQLAlchemyError
 from src.database.models import User
 from src.database.functions import get_utc_now
@@ -208,15 +208,61 @@ async def update_user_subscription(session: AsyncSession, user_id: int, days: in
         return user
     except SQLAlchemyError as e:
         await session.rollback()
-        logger.error(f"Ошибка БД при обновлении подписки {user_id}: {e}")
+        logger.error(f"Ошибка БД при обновлении подписки для {user_id}: {e}")
         return None
     except Exception as e:
         await session.rollback()
-        logger.error(f"Непредвиденная ошибка при обновлении подписки {user_id}: {e}")
+        logger.error(f"Непредвиденная ошибка при обновлении подписки для {user_id}: {e}")
         return None
 
+async def get_all_receiver_ids(session: AsyncSession) -> list[int]:
+    """Возвращает список ID всех пользователей, которые не заблокированы ботом."""
+    try:
+        query = select(User.id).where(User.is_blocked == False)
+        result = await session.execute(query)
+        return list(result.scalars().all())
+    except Exception as e:
+        logger.error(f"Ошибка при получении всех ID получателей: {e}")
+        return []
+
+async def get_vip_receiver_ids(session: AsyncSession) -> list[int]:
+    """Возвращает список ID пользователей с активной подпиской."""
+    try:
+        now = get_utc_now()
+        query = select(User.id).where(
+            and_(
+                User.subscription_end.is_not(None),
+                User.subscription_end > now,
+                User.is_blocked == False
+            )
+        )
+        result = await session.execute(query)
+        return list(result.scalars().all())
+    except Exception as e:
+        logger.error(f"Ошибка при получении VIP ID получателей: {e}")
+        return []
+
+async def get_free_receiver_ids(session: AsyncSession) -> list[int]:
+    """Возвращает список ID пользователей без активной подписки."""
+    try:
+        now = get_utc_now()
+        query = select(User.id).where(
+            and_(
+                User.is_blocked == False,
+                or_(
+                    User.subscription_end.is_(None),
+                    User.subscription_end <= now
+                )
+            )
+        )
+        result = await session.execute(query)
+        return list(result.scalars().all())
+    except Exception as e:
+        logger.error(f"Ошибка при получении Free ID получателей: {e}")
+        return []
+
 async def get_user_by_id(session: AsyncSession, user_id: int) -> User | None:
-    """Получает полную информацию о пользователе для карточки админа."""
+    """Получает пользователя по его ID."""
     try:
         return await session.get(User, user_id)
     except SQLAlchemyError as e:

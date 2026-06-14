@@ -7,6 +7,7 @@ def get_admin_main_kb() -> InlineKeyboardMarkup:
     """Стартовая клавиатура админки"""
     builder = InlineKeyboardBuilder()
     builder.row(InlineKeyboardButton(text="📊 Аналитика и метрики", callback_data="admin_bi_main"))
+    builder.row(InlineKeyboardButton(text="📣 Создать рассылку", callback_data="admin_broadcast_start"))
     builder.row(InlineKeyboardButton(text="📢 Настройки канала", callback_data="admin_channel_settings"))
     builder.row(InlineKeyboardButton(text="👥 Список пользователей", callback_data="admin_page_1"))
 
