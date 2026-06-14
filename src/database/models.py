@@ -1,7 +1,7 @@
 from datetime import datetime
 from .functions import get_utc_now
 from sqlalchemy import BigInteger, String, Float, DateTime, Boolean, ForeignKey, Integer
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 class Base(DeclarativeBase):
     pass
@@ -36,7 +36,9 @@ class User(Base):
     # CVD и RSI
     alert_cvd: Mapped[bool] = mapped_column(Boolean, default=True)
     alert_rsi: Mapped[bool] = mapped_column(Boolean, default=True)
-
+    
+    # Отношения
+    transactions: Mapped[list["Transaction"]] = relationship(back_populates="user")
 
 class ChannelSettings(Base):
     __tablename__ = "channel_settings"
@@ -89,6 +91,9 @@ class Transaction(Base):
     type: Mapped[str] = mapped_column(String(20), nullable=False) # DEPOSIT, WITHDRAW, REWARD
     description: Mapped[str | None] = mapped_column(String(255), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=get_utc_now, index=True, nullable=False)
+
+    # Отношения
+    user: Mapped["User"] = relationship(back_populates="transactions")
 
 
 class Invoice(Base):

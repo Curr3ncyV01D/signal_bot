@@ -11,6 +11,7 @@ from src.database.session import async_session
 from src.database.crud.user_service import get_or_create_user, activate_trial
 from src.database.models import User
 from src.bot.keyboards import get_start_kb, get_status_kb, get_close_button_kb
+from src.services.metrics_service import MetricsService
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -118,49 +119,43 @@ async def process_get_channel_link(callback: types.CallbackQuery):
         logger.error(f"Ошибка выдачи ссылки: {e}")
         await callback.answer("Ошибка получения ссылки. Бот не админ.", show_alert=True)
 
-def generate_status_text(listener, liq_aggregator, data_queue: asyncio.Queue) -> str:
+async def generate_status_text(listener, liq_aggregator, data_queue: asyncio.Queue) -> str:
     """Хелпер для генерации текста статуса (используется в команде и кнопке Обновить)"""
-    active_symbols = len(liq_aggregator.history)
-    total_in_mem = sum(len(d) for d in liq_aggregator.history.values())
+    stats = await MetricsService.get_system_stats(listener, liq_aggregator, data_queue)
+    latency = MetricsService.get_analytics_latency(listener)
 
-    total_pool = len(listener.ws_connections) if hasattr(listener, 'ws_connections') else 0
-    active_pool = listener.get_active_connections_count() if hasattr(listener, 'get_active_connections_count') else 0
+    active_pool = stats["active_connections"]
+    total_pool = stats["total_connections"]
 
     status_emoji = "✅" if active_pool >= max(1, total_pool * 3 / 4) else "⚠️"
     if active_pool == 0: status_emoji = "❌"
 
-    last_msg_str = "Никогда"
-    if listener and hasattr(listener, 'last_message_time') and listener.last_message_time:
-        diff = (datetime.now(timezone.utc).replace(tzinfo=None) - listener.last_message_time).total_seconds()
-        if diff < 1:
-            last_msg_str = f"{diff:.2f} сек. назад"
-        else:
-            last_msg_str = f"{int(diff)} сек. назад"
-    
-    queue_size = data_queue.qsize()
+    queue_size = stats["queue_size"]
     queue_status = "🟢" if queue_size < 50 else "🟡" if queue_size < 200 else "🔴"
 
     return (
         f"{status_emoji} {hbold('Система активна')}\n\n"
         f"🌐 Соединения: {hbold(active_pool)} / {hbold(total_pool)}\n"
-        f"💓 Последний сигнал API: {hbold(last_msg_str)}\n\n"
-        f"📡 Мониторинг пар: {hbold(active_symbols)}\n"
-        f"🧠 Событий в кэше: {hbold(total_in_mem)}\n"
-        f"{queue_status} {hbold('Очередь обработки:')} {hbold(queue_size)}\n\n"
-        f"🕒 Время сервера: {datetime.now(timezone.utc).replace(tzinfo=None).strftime('%H:%M:%S')} UTC"
+        f"💓 Последний сигнал API: {hbold(latency)} назад\n\n"
+        f"📡 Мониторинг пар: {hbold(stats['active_symbols'])}\n"
+        f"🧠 Событий в кэше: {hbold(stats['total_events'])}\n"
+        f"{queue_status} {hbold('Очередь обработки:')} {hbold(queue_size)}\n"
+        f"📊 Нагрузка: CPU {hbold(stats['cpu_usage'])}% | RAM {hbold(stats['ram_usage'])}%\n\n"
+        f"🕒 Время работы: {hbold(stats['uptime'])}\n"
+        f"🕒 Время сервера: {stats['server_time']} UTC"
     )
 
 @router.message(Command("status"))
 async def cmd_status(message: types.Message, listener, liq_aggregator, data_queue: asyncio.Queue):
     """Вызов статуса через команду"""
     await message.delete()
-    text = generate_status_text(listener, liq_aggregator, data_queue)
+    text = await generate_status_text(listener, liq_aggregator, data_queue)
     await message.answer(text, reply_markup=get_status_kb(), parse_mode="HTML")
 
 @router.callback_query(F.data == "refresh_status")
 async def process_refresh_status(callback: types.CallbackQuery, listener, liq_aggregator, data_queue: asyncio.Queue):
     """Обновление статуса по кнопке (меняет текст сообщения)"""
-    text = generate_status_text(listener, liq_aggregator, data_queue)
+    text = await generate_status_text(listener, liq_aggregator, data_queue)
     try:
         await callback.message.edit_text(text, reply_markup=get_status_kb(), parse_mode="HTML")
         await callback.answer("✅ Статус успешно обновлен!")

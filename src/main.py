@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import signal
+from datetime import datetime, timezone
 from aiogram import Bot, Dispatcher
 from sqlalchemy import select
 
@@ -28,6 +29,7 @@ from src.services.symbol_sync import build_target_symbols, symbol_sync_worker
 from src.utils import lag_detector
 
 async def main():
+    config.START_TIME = datetime.now(timezone.utc)
     logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
     logging.getLogger('pybit').setLevel(logging.WARNING)
     logging.getLogger('websocket').setLevel(logging.WARNING)
@@ -118,6 +120,13 @@ async def main():
             pass
 
     logging.info("Система запущена в модульном режиме.")
+
+    # Сохраняем ссылки в объекте бота для доступа из хендлеров (DI через bot)
+    bot.listener = listener
+    bot.liq_aggregator = liq_aggregator
+    bot.market_aggregator = market_aggregator
+    bot.trade_aggregator = trade_aggregator
+    bot.data_queue = queue
 
     try:
         polling_task = asyncio.create_task(

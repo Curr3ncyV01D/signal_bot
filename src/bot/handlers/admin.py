@@ -428,11 +428,4 @@ async def process_admin_subs_days(message: types.Message, state: FSMContext, bot
     status = f"установлена на {days} дн." if days > 0 else "аннулирована"
     await message.answer(f"✅ Подписка пользователя {user_id} {status}!")
     
-    # Возврат к карточке пользователя
-    await message.answer(
-        card_text, 
-        reply_markup=get_user_manage_kb(user_id, is_blocked),
-        parse_mode="HTML"
-    )
-    
     await state.clear()

@@ -1,7 +1,8 @@
 import logging
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, update, func
+from sqlalchemy import select, update, func, desc
 from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.orm import joinedload
 from datetime import datetime
 from src.database.models import User, Transaction, Invoice
 
@@ -181,6 +182,28 @@ async def update_invoice_status(session: AsyncSession, ext_id: str, status: str)
         await session.rollback()
         logger.error(f"Непредвиденная ошибка в update_invoice_status {ext_id}: {e}")
         return False
+
+
+
+async def get_all_deposits(session: AsyncSession) -> list[Transaction]:
+    """
+    Возвращает список всех депозитов с данными пользователей.
+    """
+    try:
+        query = (
+            select(Transaction)
+            .options(joinedload(Transaction.user))
+            .where(Transaction.type == 'DEPOSIT')
+            .order_by(desc(Transaction.created_at))
+        )
+        result = await session.execute(query)
+        return list(result.scalars().all())
+    except SQLAlchemyError as e:
+        logger.error(f"Ошибка БД в get_all_deposits: {e}")
+        return []
+    except Exception as e:
+        logger.error(f"Непредвиденная ошибка в get_all_deposits: {e}")
+        return []
 
 async def get_recent_transactions(
     session: AsyncSession,

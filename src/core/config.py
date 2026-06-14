@@ -1,8 +1,12 @@
 import json
+from datetime import datetime
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import field_validator
 
 class Settings(BaseSettings):
+    # === 0. СИСТЕМНЫЕ МЕТРИКИ (Internal) ===
+    START_TIME: datetime | None = None
+
     # === 1. ОСНОВНЫЕ НАСТРОЙКИ (Infrastructure) ===
     BOT_TOKEN: str
     DB_URL: str
