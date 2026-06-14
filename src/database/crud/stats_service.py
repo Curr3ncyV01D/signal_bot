@@ -1,6 +1,6 @@
 import time
 from datetime import datetime, timedelta
-from sqlalchemy import select, func, and_, desc
+from sqlalchemy import select, func, and_, desc, case
 from sqlalchemy.ext.asyncio import AsyncSession
 from src.database.models import User, Transaction
 from src.database.functions import get_utc_now
@@ -9,6 +9,18 @@ from src.database.functions import get_utc_now
 _stats_cache = {}
 _last_update = {}
 CACHE_TTL = 300  # 5 минут
+
+async def _get_cached_data(cache_key: str, force_refresh: bool, fetch_func, *args, **kwargs):
+    """Вспомогательная функция для кеширования."""
+    now_ts = time.time()
+    if not force_refresh and cache_key in _stats_cache:
+        if now_ts - _last_update.get(cache_key, 0) < CACHE_TTL:
+            return _stats_cache[cache_key]
+    
+    data = await fetch_func(*args, **kwargs)
+    _stats_cache[cache_key] = data
+    _last_update[cache_key] = now_ts
+    return data
 
 async def get_financial_metrics(session: AsyncSession, force_refresh: bool = False) -> dict:
     """
@@ -19,84 +31,62 @@ async def get_financial_metrics(session: AsyncSession, force_refresh: bool = Fal
     - Бонусный долг (SUM balance)
     - ARPU
     """
-    now_ts = time.time()
-    # Проверяем кеш
-    if not force_refresh and "financial" in _stats_cache:
-        if now_ts - _last_update.get("financial", 0) < CACHE_TTL:
-            return _stats_cache["financial"]
+    return await _get_cached_data("financial", force_refresh, _fetch_financial_metrics, session)
 
+async def _fetch_financial_metrics(session: AsyncSession) -> dict:
+    """Прямой расчет финансовых метрик одним SQL-запросом."""
     now = get_utc_now()
     day_ago = now - timedelta(days=1)
     two_days_ago = now - timedelta(days=2)
     seven_days_ago = now - timedelta(days=7)
 
-    # 1. Оборот за 24ч (DEPOSIT)
-    turnover_24h_query = select(func.sum(Transaction.amount)).where(
-        and_(Transaction.type == 'DEPOSIT', Transaction.created_at >= day_ago)
-    )
-    turnover_24h = (await session.execute(turnover_24h_query)).scalar() or 0.0
+    # Считаем все обороты за один проход по таблице Transactions
+    turnover_query = select(
+        func.sum(case((Transaction.created_at >= day_ago, Transaction.amount), else_=0)).label("t24h"),
+        func.sum(case((and_(Transaction.created_at >= two_days_ago, Transaction.created_at < day_ago), Transaction.amount), else_=0)).label("t_prev24h"),
+        func.sum(case((Transaction.created_at >= two_days_ago, Transaction.amount), else_=0)).label("t48h"),
+        func.sum(case((Transaction.created_at >= seven_days_ago, Transaction.amount), else_=0)).label("t7d"),
+        func.sum(Transaction.amount).label("total"),
+        func.count(func.distinct(Transaction.user_id)).label("unique_payers")
+    ).where(Transaction.type == 'DEPOSIT')
 
-    # 1.1 Оборот за 48ч (DEPOSIT)
-    turnover_48h_query = select(func.sum(Transaction.amount)).where(
-        and_(Transaction.type == 'DEPOSIT', Transaction.created_at >= two_days_ago)
-    )
-    turnover_48h = (await session.execute(turnover_48h_query)).scalar() or 0.0
+    res = (await session.execute(turnover_query)).one()
+    
+    t24h = res.t24h or 0.0               # Оборот за 24 часа
+    t_prev24h = res.t_prev24h or 0.0     # Оборот за предыдущи 24 часа
+    t48h = res.t48h or 0.0               # Оборот за 48 часов
+    t7d = res.t7d or 0.0                 # Оборот за 7 дней
+    total = res.total or 0.0             # Оборот за всё время
+    unique_payers = res.unique_payers or 0
 
-    # 2. Оборот за предыдущие 24ч (для дельты)
-    turnover_prev_24h_query = select(func.sum(Transaction.amount)).where(
-        and_(
-            Transaction.type == 'DEPOSIT',
-            Transaction.created_at >= two_days_ago,
-            Transaction.created_at < day_ago
-        )
-    )
-    turnover_prev_24h = (await session.execute(turnover_prev_24h_query)).scalar() or 0.0
-
-    # Расчет дельты (%)
+    # Дельта (%)
     delta = 0.0
-    if turnover_prev_24h > 0:
-        delta = ((turnover_24h - turnover_prev_24h) / turnover_prev_24h) * 100
-    elif turnover_24h > 0:
+    if t_prev24h > 0:
+        delta = ((t24h - t_prev24h) / t_prev24h) * 100
+    elif t24h > 0:
         delta = 100.0
 
-    # 3. Оборот за 7 дней
-    turnover_7d_query = select(func.sum(Transaction.amount)).where(
-        and_(Transaction.type == 'DEPOSIT', Transaction.created_at >= seven_days_ago)
-    )
-    turnover_7d = (await session.execute(turnover_7d_query)).scalar() or 0.0
+    # Выплачено бонусов
+    rewards_query = select(func.sum(Transaction.amount)).where(Transaction.type == 'REWARD')
+    rewards_total = (await session.execute(rewards_query)).scalar() or 0.0
 
-    # 4. Общий оборот (Total Deposit)
-    turnover_total_query = select(func.sum(Transaction.amount)).where(Transaction.type == 'DEPOSIT')
-    turnover_total = (await session.execute(turnover_total_query)).scalar() or 0.0
-
-    # 5. Выплачено бонусов (total REWARD)
-    rewards_total_query = select(func.sum(Transaction.amount)).where(Transaction.type == 'REWARD')
-    rewards_total = (await session.execute(rewards_total_query)).scalar() or 0.0
-
-    # 6. Бонусный долг (Wallet Liabilities - сумма всех балансов)
+    # Бонусный долг (Количество денег на всех кошелках)
     bonus_debt_query = select(func.sum(User.balance))
     bonus_debt = (await session.execute(bonus_debt_query)).scalar() or 0.0
 
-    # 7. ARPU (Total Turnover / Unique Payers)
-    unique_payers_query = select(func.count(func.distinct(Transaction.user_id))).where(Transaction.type == 'DEPOSIT')
-    unique_payers = (await session.execute(unique_payers_query)).scalar() or 0
-    
-    arpu = turnover_total / unique_payers if unique_payers > 0 else 0.0
+    # ARPU - доход с одного пользователя за всё время
+    arpu = total / unique_payers if unique_payers > 0 else 0.0
 
-    metrics = {
-        "turnover_24h": round(turnover_24h, 2),
-        "turnover_48h": round(turnover_48h, 2),
-        "turnover_7d": round(turnover_7d, 2),
-        "turnover_total": round(turnover_total, 2),
+    return {
+        "turnover_24h": round(t24h, 2),
+        "turnover_48h": round(t48h, 2),
+        "turnover_7d": round(t7d, 2),
+        "turnover_total": round(total, 2),
         "delta_24h": round(delta, 1),
         "rewards_total": round(abs(rewards_total), 2),
         "bonus_debt": round(bonus_debt, 2),
         "arpu": round(arpu, 2)
     }
-
-    _stats_cache["financial"] = metrics
-    _last_update["financial"] = now_ts
-    return metrics
 
 async def get_audience_metrics(session: AsyncSession, force_refresh: bool = False) -> dict:
     """
@@ -106,43 +96,31 @@ async def get_audience_metrics(session: AsyncSession, force_refresh: bool = Fals
     - Конверсия Trial-to-Paid
     - Топ-3 реферера
     """
-    now_ts = time.time()
-    # Проверяем кеш
-    if not force_refresh and "audience" in _stats_cache:
-        if now_ts - _last_update.get("audience", 0) < CACHE_TTL:
-            return _stats_cache["audience"]
+    return await _get_cached_data("audience", force_refresh, _fetch_audience_metrics, session)
 
+async def _fetch_audience_metrics(session: AsyncSession) -> dict:
+    """Прямой расчет метрик аудитории."""
     now = get_utc_now()
 
-    # 1. Всего пользователей
-    total_users_query = select(func.count(User.id))
-    total_users = (await session.execute(total_users_query)).scalar() or 0
-
-    # 2. Активные VIP-подписки (subscription_end > now)
-    active_vip_query = select(func.count(User.id)).where(User.subscription_end > now)
-    active_vip = (await session.execute(active_vip_query)).scalar() or 0
-
-    # 3. Конверсия Trial-to-Paid (%)
-    # Знаменатель: Юзеры, использовавшие триал
-    trial_users_query = select(func.count(User.id)).where(User.is_trial_used == True)
-    trial_users_count = (await session.execute(trial_users_query)).scalar() or 0
-
-    # Числитель: Юзеры с триалом, совершившие покупку (WITHDRAW)
-    # Используем подзапрос для фильтрации
-    trial_user_ids_subquery = select(User.id).where(User.is_trial_used == True).scalar_subquery()
+    # 1. Основные счетчики
+    counts_query = select(
+        func.count(User.id).label("total"),
+        func.sum(case((User.subscription_end > now, 1), else_=0)).label("active_vip"),
+        func.sum(case((User.is_trial_used == True, 1), else_=0)).label("trial_used")
+    )
+    res_counts = (await session.execute(counts_query)).one()
     
+    # 2. Конверсия
+    trial_user_ids_subquery = select(User.id).where(User.is_trial_used == True).scalar_subquery()
+
     paid_from_trial_query = select(func.count(func.distinct(Transaction.user_id))).where(
-        and_(
-            Transaction.type == 'WITHDRAW',
-            Transaction.user_id.in_(trial_user_ids_subquery)
-        )
+        and_(Transaction.type == 'WITHDRAW',
+         Transaction.user_id.in_(trial_user_ids_subquery))
     )
     paid_from_trial_count = (await session.execute(paid_from_trial_query)).scalar() or 0
+    conversion = (paid_from_trial_count / res_counts.trial_used * 100) if res_counts.trial_used and res_counts.trial_used > 0 else 0.0
 
-    conversion = (paid_from_trial_count / trial_users_count * 100) if trial_users_count > 0 else 0.0
-
-    # 4. Топ-3 Реферера
-    # Группируем по referrer_id и считаем приглашенных
+    # 3. Топ-3 Реферера
     counts_subquery = (
         select(User.referrer_id, func.count(User.id).label('invite_count'))
         .where(User.referrer_id.isnot(None))
@@ -150,7 +128,6 @@ async def get_audience_metrics(session: AsyncSession, force_refresh: bool = Fals
         .subquery()
     )
 
-    # Джойним с User для получения имен
     top_referrers_query = (
         select(User.id, User.username, counts_subquery.c.invite_count)
         .join(counts_subquery, User.id == counts_subquery.c.referrer_id)
@@ -158,21 +135,13 @@ async def get_audience_metrics(session: AsyncSession, force_refresh: bool = Fals
         .limit(3)
     )
     top_referrers_res = (await session.execute(top_referrers_query)).all()
+    top_reffers = [{"name": r.username or f"ID: {r.id}", "count": r.invite_count} for r in top_referrers_res]
 
-    top_referrers = []
-    for ref_id, username, count in top_referrers_res:
-        name = username if username else f"ID: {ref_id}"
-        top_referrers.append({"name": name, "count": count})
-
-    metrics = {
-        "total_users": total_users,
-        "active_vip": active_vip,
-        "trial_users_count": trial_users_count,
+    return {
+        "total_users": res_counts.total or 0,
+        "active_vip": res_counts.active_vip or 0,
+        "trial_users_count": res_counts.trial_used or 0,
         "paid_from_trial_count": paid_from_trial_count,
         "conversion_rate": round(conversion, 1),
-        "top_referrers": top_referrers
+        "top_referrers": top_reffers
     }
-
-    _stats_cache["audience"] = metrics
-    _last_update["audience"] = now_ts
-    return metrics

@@ -34,20 +34,11 @@ async def process_admin_bi_main(callback: types.CallbackQuery):
     await callback.answer()
 
 @router.callback_query(F.data == "admin_bi_finance")
-async def process_bi_finance(callback: types.CallbackQuery):
+async def process_bi_finance(callback: types.CallbackQuery, listener, liq_aggregator, data_queue: asyncio.Queue):
     """Экран финансовых метрик"""
     async with async_session() as session:
-        # Используем MetricsService для получения всех данных
-        # Нам нужны только финансовые, но MetricsService.get_admin_bi_data удобен
-        # В будущем можно оптимизировать, если будет тормозить
         data = await MetricsService.get_admin_bi_data(
-            session, 
-            # Передаем заглушки или берем из контекста, если хендлер поддерживает DI
-            # Но так как MetricsService.get_admin_bi_data требует объекты, 
-            # нам нужно убедиться, что они прокинуты в polling
-            getattr(callback.bot, 'listener', None),
-            getattr(callback.bot, 'liq_aggregator', None),
-            getattr(callback.bot, 'data_queue', None)
+            session, listener, liq_aggregator, data_queue
         )
         
     text = BIFormatter.format_finance_text(data['financial'])
@@ -58,14 +49,11 @@ async def process_bi_finance(callback: types.CallbackQuery):
     await callback.answer()
 
 @router.callback_query(F.data == "admin_bi_audience")
-async def process_bi_audience(callback: types.CallbackQuery):
+async def process_bi_audience(callback: types.CallbackQuery, listener, liq_aggregator, data_queue: asyncio.Queue):
     """Экран метрик аудитории"""
     async with async_session() as session:
         data = await MetricsService.get_admin_bi_data(
-            session,
-            getattr(callback.bot, 'listener', None),
-            getattr(callback.bot, 'liq_aggregator', None),
-            getattr(callback.bot, 'data_queue', None)
+            session, listener, liq_aggregator, data_queue
         )
         
     text = BIFormatter.format_audience_text(data['audience'])
@@ -76,14 +64,11 @@ async def process_bi_audience(callback: types.CallbackQuery):
     await callback.answer()
 
 @router.callback_query(F.data == "admin_bi_system")
-async def process_bi_system(callback: types.CallbackQuery):
+async def process_bi_system(callback: types.CallbackQuery, listener, liq_aggregator, data_queue: asyncio.Queue):
     """Экран системных метрик"""
     async with async_session() as session:
         data = await MetricsService.get_admin_bi_data(
-            session,
-            getattr(callback.bot, 'listener', None),
-            getattr(callback.bot, 'liq_aggregator', None),
-            getattr(callback.bot, 'data_queue', None)
+            session, listener, liq_aggregator, data_queue
         )
         
     text = BIFormatter.format_system_text(data['tech'])

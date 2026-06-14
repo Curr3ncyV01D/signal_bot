@@ -121,13 +121,6 @@ async def main():
 
     logging.info("Система запущена в модульном режиме.")
 
-    # Сохраняем ссылки в объекте бота для доступа из хендлеров (DI через bot)
-    bot.listener = listener
-    bot.liq_aggregator = liq_aggregator
-    bot.market_aggregator = market_aggregator
-    bot.trade_aggregator = trade_aggregator
-    bot.data_queue = queue
-
     try:
         polling_task = asyncio.create_task(
             dp.start_polling(
