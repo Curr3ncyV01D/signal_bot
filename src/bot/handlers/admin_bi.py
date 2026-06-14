@@ -1,6 +1,7 @@
 import io
 import csv
 import logging
+import asyncio
 from datetime import datetime, timezone
 from aiogram import Router, types, F
 from aiogram.utils.markdown import hbold
