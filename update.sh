@@ -21,7 +21,7 @@ fi
 echo -e "${GREEN}📥 Получение обновлений из GitHub...${NC}"
 # Если были локальные мелкие правки, git pull может упасть. 
 # Можно добавить git stash перед пулом, если это необходимо.
-git pull origin dev
+git pull origin main
 
 # 3. Сборка образов
 echo -e "${GREEN}🏗 Сборка и запуск Docker контейнеров...${NC}"

@@ -1,7 +1,7 @@
 services:
   db:
     image: postgres:15-alpine
-    container_name: bybit_bot_db_dev
+    container_name: bybit_bot_db
     restart: always
     environment:
       POSTGRES_USER: ${DB_USER:-postgres}
@@ -15,12 +15,12 @@ services:
       timeout: 5s
       retries: 5
     ports:
-      - "127.0.0.1:5435:5432"
+      - "127.0.0.1:5433:5432"
   bot:
     build: .
     volumes:
       - .:/app
-    container_name: bybit_bot_app_dev
+    container_name: bybit_bot_app
     restart: always
     depends_on:
       db:
