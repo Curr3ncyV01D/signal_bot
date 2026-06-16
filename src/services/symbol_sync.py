@@ -10,7 +10,7 @@ logger = logging.getLogger(__name__)
 
 
 def build_target_symbols(all_symbols: list[str]) -> list[str]:
-    ignored_set = set(config.IGNORED_SYMBOLS)
+    ignored_set = set[str](config.IGNORED_SYMBOLS)
     target_symbols = [symbol for symbol in all_symbols if symbol not in ignored_set]
 
     if config.DEV_MODE:
@@ -20,12 +20,10 @@ def build_target_symbols(all_symbols: list[str]) -> list[str]:
 
 
 async def symbol_sync_worker(listener: BybitListener, market_aggregator: MarketAggregator) -> None:
-    logger.info("🔄 Фоновый синк листингов запущен.")
+    logger.info("🔄 Фоновая синхронизация листингов запущена.")
 
     while True:
         try:
-            await asyncio.sleep(3600)
-
             all_symbols = await asyncio.to_thread(listener.get_all_usdt_symbols)
             if not all_symbols:
                 continue
@@ -40,8 +38,10 @@ async def symbol_sync_worker(listener: BybitListener, market_aggregator: MarketA
             await warmup_system(market_aggregator, new_symbols)
             await listener.restart(new_all_symbols)
             logger.info(f"🆕 Обнаружены новые монеты: {', '.join(new_symbols)}. Мониторинг перезапущен.")
+
+            await asyncio.sleep(14400) # 4 часа
         except asyncio.CancelledError:
-            logger.info("🛑 Фоновый синк листингов остановлен.")
+            logger.info("🛑 Фоновая синхронизация листингов остановлена.")
             raise
         except Exception as e:
             logger.error(f"Ошибка в symbol_sync_worker: {e}", exc_info=True)

@@ -1,9 +1,11 @@
 import asyncio
 import logging
+from datetime import timedelta
 from aiogram import Bot
 from src.database.session import async_session
 from src.database.models import Invoice
 from src.database.crud import billing_service
+from src.database.functions import get_utc_now
 from src.services.cryptopay import cryptopay
 from sqlalchemy import select
 
@@ -24,15 +26,22 @@ async def payment_checker_worker(bot: Bot):
                 pending_invoices = result.scalars().all()
                 
                 for inv in pending_invoices:
-                    # 2. Проверяем статус в CryptoPay
+                    # 2. Проверка по времени (24ч)
+                    now = get_utc_now()
+                    if now - inv.created_at > timedelta(hours=24):
+                        await billing_service.update_invoice_status(session, inv.crypto_pay_id, 'EXPIRED')
+                        logger.info(f"Инвойс #{inv.crypto_pay_id} закрыт по таймауту (24ч)")
+                        continue
+
+                    # 3. Проверяем статус в CryptoPay
                     status = await cryptopay.check_invoice_status(int(inv.crypto_pay_id))
                     
                     if status == 'paid':
-                        # 3. Атомарно подтверждаем оплату (Баланс + Статус + Транзакция)
+                        # 4. Атомарно подтверждаем оплату (Баланс + Статус + Транзакция)
                         success = await billing_service.confirm_invoice_payment(session, inv.crypto_pay_id)
                         
                         if success:
-                            # 4. Уведомляем пользователя
+                            # 5. Уведомляем пользователя
                             try:
                                 await bot.send_message(
                                     chat_id=inv.user_id,
@@ -42,10 +51,10 @@ async def payment_checker_worker(bot: Bot):
                             except Exception as notify_err:
                                 logger.error(f"Не удалось отправить уведомление пользователю {inv.user_id}: {notify_err}")
                                 
-                    elif status == 'expired':
+                    elif status in ['expired', 'deleted', 'cancelled']:
                         # Обновляем статус на EXPIRED
                         await billing_service.update_invoice_status(session, inv.crypto_pay_id, 'EXPIRED')
-                        logger.info(f"Инвойс #{inv.crypto_pay_id} истек")
+                        logger.info(f"Инвойс #{inv.crypto_pay_id} закрыт (статус: {status})")
                         
         except Exception as e:
             logger.error(f"Ошибка в payment_checker_worker: {e}")

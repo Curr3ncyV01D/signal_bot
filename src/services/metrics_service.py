@@ -4,7 +4,7 @@ import time
 from datetime import datetime, timezone
 from src.core.config import config
 from src.database.crud.stats_service import get_financial_metrics, get_audience_metrics
-from src.services.bouncer import LAST_RUN as BOUNCER_LAST_RUN
+from src.services.bouncer import BouncerManager
 
 class MetricsService:
     @staticmethod
@@ -66,11 +66,11 @@ class MetricsService:
         """
         Возвращает статус последнего прохода Вышибалы.
         """
-        if not BOUNCER_LAST_RUN:
+        if not BouncerManager.last_run:
             return "Ожидание..."
             
         now = datetime.now(timezone.utc)
-        diff = (now - BOUNCER_LAST_RUN).total_seconds()
+        diff = (now - BouncerManager.last_run).total_seconds()
         
         if diff < 60:
             return "Только что"

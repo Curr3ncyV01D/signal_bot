@@ -11,20 +11,19 @@ from src.database.crud.user_service import get_expired_users, clear_expired_subs
 
 logger = logging.getLogger(__name__)
 
-# Хранилище состояния Вышибалы
-LAST_RUN = None
+class BouncerManager:
+    last_run: datetime | None = None
 
 async def bouncer_worker(bot: Bot, interval_minutes: int = 15):
     """
     Фоновая задача "Вышибала".
     Ищет юзеров с истекшей подпиской, кикает из канала и обнуляет дату в БД.
     """
-    global LAST_RUN
     logger.info(f"👮‍♂️ Вышибала (Bouncer) запущен. Проверка каждые {interval_minutes} минут.")
     
     while True:
         try:
-            LAST_RUN = datetime.now(timezone.utc)
+            BouncerManager.last_run = datetime.now(timezone.utc)
             async with async_session() as session:
                 expired_users = await get_expired_users(session)
                 

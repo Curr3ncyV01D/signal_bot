@@ -74,6 +74,7 @@ class BIFormatter:
             f"  ├ Последний сигнал API: {hbold(data['latency'])} назад\n"
             f"  ├ Очередь обработки: {queue_status} {hbold(data['queue_size'])}\n"
             f"  └ Событий в кэше: {hbold(data['total_events'])}\n\n"
+            f"👮‍♂️ {hbold('Вышибала:')} Последний проверка {data['bouncer_hb']}\n"
             f"💓 {hbold('Время работы:')} {hbold(data['uptime'])}\n"
             f"🕒 Время сервера: {data['server_time']} UTC"
         )
