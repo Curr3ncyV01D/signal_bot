@@ -1,15 +1,13 @@
 import logging
 import os
 import asyncio
+import orjson
 from datetime import datetime, timezone
 
 from pybit.unified_trading import WebSocket, HTTP
 from src.core.config import config
 
 logger = logging.getLogger(__name__)
-
-# Fallback-значение, если в конфиге забыли указать
-MIN_TRADE = getattr(config, 'MIN_TRADE_VALUE_FOR_CVD', 200.0)
 
 class BybitListener:
     def __init__(self, queue: asyncio.Queue, loop: asyncio.AbstractEventLoop):
@@ -54,12 +52,31 @@ class BybitListener:
 
     # --- СПЕЦИАЛИЗИРОВАННЫЕ ОБРАБОТЧИКИ (Фильтрация до очереди) ---
 
+    def on_message(self, message):
+        """Единая точка входа для всех сообщений WebSocket."""
+        # Если пришел словарь (от pybit), мы не можем использовать orjson.loads
+        if not isinstance(message, dict):
+            try:
+                message = orjson.loads(message)
+            except Exception:
+                return
+
+        topic = message.get("topic", "")
+        if not topic: return
+
+        if "liquidation" in topic:
+            self.handle_liquidation(message)
+        elif "ticker" in topic:
+            self.handle_ticker(message)
+        elif "publicTrade" in topic:
+            self.handle_trade(message)
+
     def handle_liquidation(self, message):
         """Обработка ликвидаций (Stage 1)"""
-        self.last_message_time = datetime.now(timezone.utc).replace(tzinfo=None)
         data = message.get("data")
-        
         if not data: return
+        
+        self.last_message_time = datetime.now(timezone.utc).replace(tzinfo=None)
         
         # Оборачиваем в type: liquidation, чтобы Воркер понял
         if isinstance(data, list):
@@ -70,33 +87,31 @@ class BybitListener:
 
     def handle_ticker(self, message):
         """Обработка тикеров: Открытый интерес (OI), Цена, Фандинг"""
-        self.last_message_time = datetime.now(timezone.utc).replace(tzinfo=None)
         data = message.get("data")
+        if not data: return
+        
+        self.last_message_time = datetime.now(timezone.utc).replace(tzinfo=None)
         topic = message.get("topic", "")
         
-        if data:
-            # Оборачиваем в type: ticker
-            self.loop.call_soon_threadsafe(self.queue.put_nowait, {"type": "ticker", "topic": topic, "data": data})
+        # Оборачиваем в type: ticker
+        self.loop.call_soon_threadsafe(self.queue.put_nowait, {"type": "ticker", "topic": topic, "data": data})
 
     def handle_trade(self, message):
-        """Обработка публичных сделок (CVD). Жесткая фильтрация!"""
-        self.last_message_time = datetime.now(timezone.utc).replace(tzinfo=None)
-        data = message.get("data", [])
-        topic = message.get("topic", "")
+        """Обработка публичных сделок (CVD)"""
+        data = message.get("data")
+        if not data: return
+
+        limit = config.MIN_TRADE_VALUE_FOR_CVD
+        filtered = [
+            t for t in data 
+            if (p := float(t['p'])) * (v := float(t['v'])) >= limit
+        ]
         
-        filtered_trades = []
-        for item in data:
-            try:
-                price = float(item.get("p", 0))
-                qty = float(item.get("v", 0))
-                # Отсекаем "шум" мелких роботов
-                if price * qty >= MIN_TRADE:
-                    filtered_trades.append(item)
-            except (ValueError, TypeError):
-                continue
-                
-        if filtered_trades:
-            self.loop.call_soon_threadsafe(self.queue.put_nowait, {"type": "trade", "topic": topic, "data": filtered_trades})
+        if not filtered: return
+
+        self.last_message_time = datetime.now(timezone.utc).replace(tzinfo=None)
+        topic = message.get("topic", "")
+        self.loop.call_soon_threadsafe(self.queue.put_nowait, {"type": "trade", "topic": topic, "data": filtered})
 
     # -------------------------------------------------------------
 
@@ -148,11 +163,11 @@ class BybitListener:
             for symbol in chunk:
                 try:
                     # ПОДПИСКА 1: Ликвидации
-                    ws.all_liquidation_stream(symbol=symbol, callback=self.handle_liquidation)
+                    ws.all_liquidation_stream(symbol=symbol, callback=self.on_message)
                     # ПОДПИСКА 2: Тикеры (OI, Price)
-                    ws.ticker_stream(symbol=symbol, callback=self.handle_ticker)
+                    ws.ticker_stream(symbol=symbol, callback=self.on_message)
                     # ПОДПИСКА 3: Сделки (CVD)
-                    ws.trade_stream(symbol=symbol, callback=self.handle_trade)
+                    ws.trade_stream(symbol=symbol, callback=self.on_message)
                 except Exception as e:
                     logger.error(f"Ошибка подписки на {symbol}: {e}")
             

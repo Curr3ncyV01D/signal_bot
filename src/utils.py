@@ -28,7 +28,10 @@ async def lag_detector() -> None:
         await asyncio.sleep(1)
         delay = time.time() - start_time - 1
 
-        if delay > 0.5:
+        if delay > 1.5:
+            logger.error(
+                f"🚨 Критическая блокировка Event Loop. "
+                f"Фактическая задержка составила {delay:.3f} сек."
+            )
+        elif delay > 0.5:
             logger.warning(f"⚠️ ВНИМАНИЕ! Event Loop заблокирован. Задержка: {delay:.3f} сек.")
-        elif delay > 2.0:
-            logger.error(f"🚨 КРИТИЧЕСКИЙ ЛАГ! Бот 'висел' {delay:.3f} сек. PING может отвалиться!")

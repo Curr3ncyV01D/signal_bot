@@ -60,9 +60,8 @@ class LiquidationAggregator:
         shorts_map = {}
 
         # Итерируемся по копии ключей, чтобы избежать ошибок при изменении словаря из других потоков
-        for symbol in list(self.history.keys()):
+        for symbol, events in list(self.history.items()):
             try:
-                events = self.history.get(symbol, [])
                 for date, value, side in reversed(events):
                     if (now - date).total_seconds() > window_seconds:
                         break
@@ -130,7 +129,7 @@ class LiquidationAggregator:
                 if total_removed > 15:
                     # Считаем общее кол-во оставшихся событий для мониторинга ОЗУ
                     total_remaining = sum(len(d) for d in self.history.values())
-                    logger.info(
+                    logger.debug(
                         f"🧹 [GC] Aggregator очищен: удалено {total_removed} событий. "
                         f"Осталось в кэше: {total_remaining} по {len(self.history)} тикерам."
                     )

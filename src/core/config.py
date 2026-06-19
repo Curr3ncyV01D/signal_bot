@@ -1,4 +1,6 @@
 import json
+import logging
+import sys
 from datetime import datetime
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import field_validator
@@ -6,6 +8,8 @@ from pydantic import field_validator
 class Settings(BaseSettings):
     # === 0. СИСТЕМНЫЕ МЕТРИКИ (Internal) ===
     START_TIME: datetime | None = None
+    # Настройка логгирования
+    LOG_LEVEL: str = "INFO"
 
     # === 1. ОСНОВНЫЕ НАСТРОЙКИ (Infrastructure) ===
     BOT_TOKEN: str
@@ -81,5 +85,28 @@ class Settings(BaseSettings):
     DEV_SYMBOL_LIMIT: int = 0
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+
+
+def setup_logging() -> None:
+    level_name = config.LOG_LEVEL.upper()
+    level = getattr(logging, level_name, logging.INFO)
+
+    logging.basicConfig(
+        level=level,
+        format="%(asctime)s - [%(levelname)s] - %(name)s - %(message)s",
+        stream=sys.stdout,
+        force=True,
+    )
+
+    for logger_name in (
+        "aiogram",
+        "aiogram.event",
+        "pybit",
+        "websocket",
+        "asyncio",
+        "aiohttp",
+        "uvicorn",
+    ):
+        logging.getLogger(logger_name).setLevel(logging.WARNING)
 
 config = Settings()

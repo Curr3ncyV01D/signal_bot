@@ -19,7 +19,7 @@ async def retention_policy_worker(hours: int = 4, interval_hours: int = 1):
             async with async_session() as session:
                 deleted_count = await delete_old_liquidations(session, hours=hours)
                 if deleted_count > 0:
-                    logger.info(f"Retention Policy: успешно удалено {deleted_count} старых записей.")
+                    logger.debug(f"Retention Policy: успешно удалено {deleted_count} старых записей.")
                 else:
                     logger.debug("Retention Policy: старых записей для удаления не найдено.")
                 
