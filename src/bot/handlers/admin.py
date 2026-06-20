@@ -23,10 +23,9 @@ from src.bot.keyboards import (
     get_user_manage_kb, get_admin_channel_kb,
     get_close_button_kb
 )
-from src.bot.utils.dashboard_formatter import DashboardFormatter
+from src.services.dashboard import recreate_dashboard_logic
 from src.utils import format_datetime
 from src.core.config import config
-from aiogram.types import LinkPreviewOptions
 
 logger = logging.getLogger(__name__)
 
@@ -315,50 +314,13 @@ async def process_restart_dash(
     liq_aggregator, 
     market_aggregator
 ):
-    """
-    Создает новое сообщение дэшборда в канале, закрепляет его и сохраняет ID.
-    """
     try:
-        # 0. Пытаемся удалить старое сообщение дэшборда
-        settings = ChannelService.get_cached_settings()
-        if settings.dashboard_message_id:
-            try:
-                await bot.delete_message(
-                    chat_id=config.PRIVATE_CHANNEL_ID,
-                    message_id=settings.dashboard_message_id
-                )
-            except Exception as e:
-                logger.warning(f"Не удалось удалить старое сообщение дэшборда: {e}")
+        message_id = await recreate_dashboard_logic(bot, liq_aggregator, market_aggregator)
+        if message_id is None:
+            await callback.answer("⏳ Пересоздание дэшборда уже выполняется.", show_alert=True)
+        else:
+            await callback.answer("✅ Дэшборд успешно пересоздан и закреплен!", show_alert=True)
 
-        # 1. Собираем актуальные данные из агрегаторов
-        liq_data = liq_aggregator.get_top_liquidations(window_minutes=15)
-        market_data = market_aggregator.get_market_rankings(window_minutes=15)
-        combined_data = {**liq_data, **market_data}
-        
-        # 2. Генерируем текст дэшборда
-        text = DashboardFormatter.compile_dashboard(combined_data, window_minutes=15)
-        
-        # 3. Отправляем новое сообщение в канал
-        msg = await bot.send_message(
-            chat_id=config.PRIVATE_CHANNEL_ID,
-            text=text,
-            parse_mode="HTML",
-            link_preview_options=LinkPreviewOptions(is_disabled=True)
-        )
-        
-        # 4. Закрепляем его
-        await bot.pin_chat_message(
-            chat_id=config.PRIVATE_CHANNEL_ID,
-            message_id=msg.message_id
-        )
-        
-        # 5. Сохраняем ID в базу данных
-        async with async_session() as session:
-            await ChannelService.set_dashboard_id(session, msg.message_id)
-            
-        await callback.answer("✅ Дэшборд успешно запущен и закреплен!", show_alert=True)
-        
-        # 6. Обновляем меню админки
         async with async_session() as session:
             await render_channel_settings(callback, session)
             
