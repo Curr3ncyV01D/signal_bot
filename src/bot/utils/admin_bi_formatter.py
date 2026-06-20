@@ -21,7 +21,7 @@ class BIFormatter:
         return (
             f"💰 {hbold('Финансовая аналитика')}\n\n"
             f"💸 {hbold('Оборот (DEPOSIT):')}\n"
-            f"  ├ 24ч: {hbold(data['turnover_24h'])} $ ({delta_emoji} {data['delta_24h']}% по сравнению с предыдущими 24ч)\n"
+            f"  ├ 24ч: {hbold(data['turnover_24h'])} $ ({delta_emoji} {data['delta_24h']}% относительно прошлых 24ч)\n"
             f"  ├ 48ч: {hbold(data['turnover_48h'])} $\n"
             f"  ├ 7д: {hbold(data['turnover_7d'])} $\n"
             f"  └ Всего: {hbold(data['turnover_total'])} $\n\n"
@@ -74,7 +74,7 @@ class BIFormatter:
             f"  ├ Последний сигнал API: {hbold(data['latency'])} назад\n"
             f"  ├ Очередь обработки: {queue_status} {hbold(data['queue_size'])}\n"
             f"  └ Событий в кэше: {hbold(data['total_events'])}\n\n"
-            f"👮‍♂️ {hbold('Вышибала:')} Последний проверка {data['bouncer_hb']}\n"
+            f"👮‍♂️ {hbold('Вышибала:')} Последняя проверка {data['bouncer_hb']}\n"
             f"💓 {hbold('Время работы:')} {hbold(data['uptime'])}\n"
             f"🕒 Время сервера: {data['server_time']} UTC"
         )
