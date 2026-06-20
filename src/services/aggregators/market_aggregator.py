@@ -1,4 +1,5 @@
 import logging
+import heapq
 from typing import Any
 from collections import deque
 from datetime import datetime, timezone
@@ -25,21 +26,40 @@ class MarketAggregator:
         now: float,
         window_minutes: int,
     ) -> tuple[float, float, float] | None:
-        """Возвращает запись окна по индексу, если история полная и без временного разрыва."""
+        """Ищет ближайшую запись окна по индексу с локальным обходом соседей."""
         if not hist or window_minutes < 1:
             return None
 
-        required_points = window_minutes + 1
-        if len(hist) < required_points:
+        target_idx = -(window_minutes + 1)
+        target_time = now - (window_minutes * 60)
+
+        try:
+            direct_record = hist[target_idx]
+        except IndexError:
             return None
 
-        record = hist[-required_points]
-        expected_age = window_minutes * 60
-        actual_age = now - record[0]
-        if abs(actual_age - expected_age) >= 30:
+        direct_diff = abs(direct_record[0] - target_time)
+        if direct_diff <= 20:
+            return direct_record
+
+        best_record: tuple[float, float, float] | None = None
+        best_diff = float("inf")
+
+        for idx in range(target_idx - 2, target_idx + 3):
+            try:
+                candidate = hist[idx]
+            except IndexError:
+                continue
+
+            candidate_diff = abs(candidate[0] - target_time)
+            if candidate_diff < best_diff:
+                best_record = candidate
+                best_diff = candidate_diff
+
+        if best_record is None or best_diff > 45:
             return None
 
-        return record
+        return best_record
 
     def update(self, symbol: str, price: float | None, oi: float | None, funding: float | None) -> None:
         now = datetime.now(timezone.utc).timestamp()
@@ -79,6 +99,22 @@ class MarketAggregator:
                 # Мы внутри того же часового бара. Обновляем текущую "живую" цену закрытия
                 if self.rsi_prices[symbol]:
                     self.rsi_prices[symbol][-1] = price
+
+    def get_cached_rsi(self, symbol: str, period: int = 14) -> float | None:
+        """Возвращает RSI из L1-кэша или вычисляет его при cache miss."""
+        prices = self.rsi_prices.get(symbol)
+        current_snap = self.snapshots.get(symbol)
+        if not prices or not current_snap or len(prices) < period + 1:
+            return None
+
+        cached_rsi = self._rsi_cache.get(symbol)
+        cache_key = (current_snap["price"], len(prices))
+        if cached_rsi and cached_rsi[0] == cache_key:
+            return cached_rsi[1]
+
+        rsi_val = rsi_indicator.calculate_rsi_local(prices, period)
+        self._rsi_cache[symbol] = (cache_key, rsi_val)
+        return rsi_val
 
     def get_market_data(self, symbol: str, window_minutes: int = 5) -> dict[str, Any] | None:
         """Возвращает текущие данные и изменение OI/Price за N минут."""
@@ -154,8 +190,8 @@ class MarketAggregator:
         total_oi_pct_change = 0.0
 
         if oi_data:
-            oi_up = sorted([d for d in oi_data if d[1] > 0], key=lambda x: x[1], reverse=True)[:oi_limit]
-            oi_down = sorted([d for d in oi_data if d[1] < 0], key=lambda x: x[1])[:oi_limit]
+            oi_up = heapq.nlargest(oi_limit, (d for d in oi_data if d[1] > 0), key=lambda x: x[1])
+            oi_down = heapq.nlargest(oi_limit, (d for d in oi_data if d[1] < 0), key=lambda x: -x[1])
             
         if total_oi_old > 0:
             total_oi_pct_change = ((total_oi_current - total_oi_old) / total_oi_old * 100)
@@ -166,19 +202,10 @@ class MarketAggregator:
         
         for symbol, prices in self.rsi_prices.items():
             try:
-                current_snap = self.snapshots.get(symbol)
-                if not current_snap or len(prices) < 15:
+                if len(prices) < 15:
                     continue
 
-                current_price = current_snap["price"]
-                cache_key = (current_price, len(prices))
-                cached_rsi = self._rsi_cache.get(symbol)
-                if cached_rsi and cached_rsi[0] == cache_key:
-                    rsi_val = cached_rsi[1]
-                else:
-                    rsi_val = rsi_indicator.calculate_rsi_local(prices, 14)
-                    self._rsi_cache[symbol] = (cache_key, rsi_val)
-
+                rsi_val = self.get_cached_rsi(symbol, 14)
                 if rsi_val is not None:
                     if rsi_val > 80:
                         rsi_overbought.append((symbol, rsi_val))
@@ -188,8 +215,8 @@ class MarketAggregator:
                 logger.error(f"Ошибка расчета RSI Heatmap для {symbol}: {e}")
                 continue
         
-        rsi_overbought = sorted(rsi_overbought, key=lambda x: x[1], reverse=True)[:10]
-        rsi_oversold = sorted(rsi_oversold, key=lambda x: x[1])[:10]
+        rsi_overbought = heapq.nlargest(10, rsi_overbought, key=lambda x: x[1])
+        rsi_oversold = heapq.nlargest(10, rsi_oversold, key=lambda x: -x[1])
 
         # 4. Данные BTCUSDT (Независимое получение цены - KISS)
         btc_snap = self.snapshots.get("BTCUSDT", {})

@@ -1,4 +1,5 @@
 import asyncio
+import heapq
 import logging
 from collections import deque
 from datetime import datetime, timezone
@@ -59,9 +60,11 @@ class LiquidationAggregator:
         longs_map = {}
         shorts_map = {}
 
-        # Итерируемся по копии ключей, чтобы избежать ошибок при изменении словаря из других потоков
-        for symbol, events in list(self.history.items()):
+        for symbol, events in self.history.items():
             try:
+                if not events:
+                    continue
+
                 for date, value, side in reversed(events):
                     if (now - date).total_seconds() > window_seconds:
                         break
@@ -74,9 +77,8 @@ class LiquidationAggregator:
                 logger.error(f"Ошибка агрегации ликвидаций для {symbol}: {e}")
                 continue
 
-        # Сортируем и берем топ
-        top_longs = sorted(longs_map.items(), key=lambda x: x[1], reverse=True)[:limit]
-        top_shorts = sorted(shorts_map.items(), key=lambda x: x[1], reverse=True)[:limit]
+        top_longs = heapq.nlargest(limit, longs_map.items(), key=lambda x: x[1])
+        top_shorts = heapq.nlargest(limit, shorts_map.items(), key=lambda x: x[1])
 
         return {
             "longs": top_longs,
@@ -110,24 +112,23 @@ class LiquidationAggregator:
                 now = datetime.now(timezone.utc).replace(tzinfo=None)
                 total_removed = 0
 
-                # 1. Итерируемся по КОПИИ списка ключей (list(...)), 
-                # чтобы избежать RuntimeError при удалении ключей из словаря в цикле
-                for symbol in list(self.history.keys()):
-                    events = self.history[symbol]
+                empty_symbols = []
+                for symbol, events in self.history.items():
+                    if not events:
+                        empty_symbols.append(symbol)
+                        continue
 
-                    # 2. Удаляем старые события из начала очереди (пока они старше часа)
                     while events and (now - events[0][0]).total_seconds() > config.WINDOW_VOLUME_1H:
                         events.popleft()
                         total_removed += 1
-                    
-                    # 3. Если по символу больше нет данных, удаляем сам ключ, 
-                    # чтобы не раздувать словарь (Garbage Collection)
+
                     if not events:
-                        del self.history[symbol]
+                        empty_symbols.append(symbol)
+
+                for symbol in empty_symbols:
+                    self.history.pop(symbol, None)
                 
-                # Логируем результат, только если были удаления
                 if total_removed > 15:
-                    # Считаем общее кол-во оставшихся событий для мониторинга ОЗУ
                     total_remaining = sum(len(d) for d in self.history.values())
                     logger.debug(
                         f"🧹 [GC] Aggregator очищен: удалено {total_removed} событий. "

@@ -6,7 +6,6 @@ from src.core.config import config
 from src.database.crud.user_service import get_active_users
 from src.database.crud.channel_service import ChannelService
 from src.bot.notifier import send_liquidation_alert
-from src.services.indicators.rsi import rsi_indicator
 
 logger = logging.getLogger(__name__)
 
@@ -120,8 +119,7 @@ async def process_liquidation_item(
     _, _, delta_5m = trade_aggregator.get_cvd_metrics(symbol, minutes=5)
     _, _, delta_30m = trade_aggregator.get_cvd_metrics(symbol, minutes=30)
 
-    rsi_prices = market_aggregator.rsi_prices.get(symbol)
-    rsi_val = rsi_indicator.calculate_rsi_local(rsi_prices, config.RSI_PERIOD) if rsi_prices else None
+    rsi_val = market_aggregator.get_cached_rsi(symbol, config.RSI_PERIOD)
 
     alert_tasks = []
 

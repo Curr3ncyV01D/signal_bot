@@ -56,9 +56,6 @@ class DataWorker:
                     # ТИКЕРЫ: Записываем в агрегатор ДАЖЕ ЕСЛИ символ в IGNORED_SYMBOLS (нужно для BTC в дэшборде)
                     if price is not None or oi is not None or funding is not None:
                         self.market_aggregator.update(symbol, price, oi, funding)
-                    
-                    # ДЕБАГ: Раскомментируй строку ниже, если хочешь увидеть поток тикеров в консоли
-                    logger.debug(f"Ticker update for {symbol}: P:{price} OI:{oi}")
 
                 elif msg_type == "trade":
                     symbol = msg.get("topic", "").split(".")[-1]
