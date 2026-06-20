@@ -46,7 +46,7 @@ class Settings(BaseSettings):
 
     # Пороги фильтрации
     MIN_LIQ_VALUE_FILTER: float = 100.0          # Отсечение шума ликвидаций ($)
-    MIN_TRADE_VALUE_FOR_CVD: float = 200.0       # Мин. сделка для подсчета дельты ($)
+    MIN_TRADE_VALUE_FOR_CVD: float = 300.0       # Мин. сделка для подсчета дельты ($)
     CASCADE_TRIGGER_COUNT: int = 15              # Кол-во событий для алерта "КАСКАД"
 
     # Временные окна (в секундах)

@@ -12,10 +12,34 @@ class MarketAggregator:
         self.history: dict[str, deque[tuple[float, float, float]]] = {}
         # Текущие снапшоты для быстрого доступа
         self.snapshots: dict[str, dict[str, Any]] = {}
+        # L1-кэш RSI: { "BTCUSDT": ((current_price, bars_count), rsi_value) }
+        self._rsi_cache: dict[str, tuple[tuple[float, int], float | None]] = {}
         
         # НОВОЕ: Внутрипамятное хранилище цен для RSI (раз в 5 минут)
         self.rsi_prices: dict[str, deque[float]] = {}
         self.rsi_bars: dict[str, int] = {} # Хранит ID текущего 5-минутного бара
+
+    @staticmethod
+    def _get_window_record(
+        hist: deque[tuple[float, float, float]] | None,
+        now: float,
+        window_minutes: int,
+    ) -> tuple[float, float, float] | None:
+        """Возвращает запись окна по индексу, если история полная и без временного разрыва."""
+        if not hist or window_minutes < 1:
+            return None
+
+        required_points = window_minutes + 1
+        if len(hist) < required_points:
+            return None
+
+        record = hist[-required_points]
+        expected_age = window_minutes * 60
+        actual_age = now - record[0]
+        if abs(actual_age - expected_age) >= 30:
+            return None
+
+        return record
 
     def update(self, symbol: str, price: float | None, oi: float | None, funding: float | None) -> None:
         now = datetime.now(timezone.utc).timestamp()
@@ -62,7 +86,7 @@ class MarketAggregator:
         if not current:
             return None
 
-        hist = self.history.get(symbol, [])
+        hist = self.history.get(symbol)
         
         # Базовая структура при отсутствии истории (Холодный старт)
         result = {
@@ -76,16 +100,9 @@ class MarketAggregator:
             return result
         
         now = current["ts"]
-        # Если истории еще недостаточно для указанного окна, возвращаем текущие данные с None в изменениях
-        if (now - hist[0][0]) < (window_minutes * 60):
+        old_record = self._get_window_record(hist, now, window_minutes)
+        if old_record is None:
             return result
-            
-        old_record = hist[0]
-        target_ts = now - (window_minutes * 60)
-        for rec in reversed(hist):
-            if rec[0] <= target_ts:
-                old_record = rec
-                break
         
         old_price, old_oi = old_record[1], old_record[2]
 
@@ -107,40 +124,26 @@ class MarketAggregator:
         """
         Генерирует рыночные рейтинги (OI, RSI, BTC).
         """
-        now = datetime.now(timezone.utc).timestamp()
-        target_ts = now - (window_minutes * 60)
-        
         total_oi_current = 0.0
         total_oi_old = 0.0
         oi_data = []
 
         # 1. Агрегация OI по всем монетам
-        for symbol in list(self.snapshots.keys()):
+        for symbol, current_snap in self.snapshots.items():
             try:
-                current_snap = self.snapshots.get(symbol)
-                if not current_snap:
+                hist = self.history.get(symbol)
+                old_record = self._get_window_record(hist, current_snap["ts"], window_minutes)
+                if old_record is None:
                     continue
-                
-                hist = self.history.get(symbol, [])
-                if not hist:
-                    continue
-                
-                # Ищем старую запись для динамики
-                old_record = None
-                for rec in reversed(hist):
-                    if rec[0] <= target_ts:
-                        old_record = rec
-                        break
-                
-                if old_record:
-                    current_oi = current_snap["oi"]
-                    old_oi = old_record[2]
-                    oi_pct = ((current_oi - old_oi) / old_oi * 100) if old_oi > 0 else 0.0
-                    oi_delta = current_oi - old_oi
-                    
-                    total_oi_current += current_oi
-                    total_oi_old += old_oi
-                    oi_data.append((symbol, round(oi_pct, 2), round(oi_delta, 2), round(current_oi, 2)))
+
+                current_oi = current_snap["oi"]
+                old_oi = old_record[2]
+                oi_pct = ((current_oi - old_oi) / old_oi * 100) if old_oi > 0 else 0.0
+                oi_delta = current_oi - old_oi
+
+                total_oi_current += current_oi
+                total_oi_old += old_oi
+                oi_data.append((symbol, round(oi_pct, 2), round(oi_delta, 2), round(current_oi, 2)))
             except Exception as e:
                 logger.error(f"Ошибка агрегации OI для {symbol}: {e}")
                 continue
@@ -161,13 +164,21 @@ class MarketAggregator:
         rsi_overbought = []
         rsi_oversold = []
         
-        for symbol in list(self.rsi_prices.keys()):
+        for symbol, prices in self.rsi_prices.items():
             try:
-                prices = self.rsi_prices.get(symbol)
-                if not prices or len(prices) < 15:
+                current_snap = self.snapshots.get(symbol)
+                if not current_snap or len(prices) < 15:
                     continue
-                    
-                rsi_val = rsi_indicator.calculate_rsi_local(list(prices), 14)
+
+                current_price = current_snap["price"]
+                cache_key = (current_price, len(prices))
+                cached_rsi = self._rsi_cache.get(symbol)
+                if cached_rsi and cached_rsi[0] == cache_key:
+                    rsi_val = cached_rsi[1]
+                else:
+                    rsi_val = rsi_indicator.calculate_rsi_local(prices, 14)
+                    self._rsi_cache[symbol] = (cache_key, rsi_val)
+
                 if rsi_val is not None:
                     if rsi_val > 80:
                         rsi_overbought.append((symbol, rsi_val))
