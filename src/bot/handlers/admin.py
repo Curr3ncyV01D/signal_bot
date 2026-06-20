@@ -24,8 +24,7 @@ from src.bot.keyboards import (
     get_close_button_kb
 )
 from src.services.dashboard import recreate_dashboard_logic
-from src.utils import format_datetime
-from src.core.config import config
+from src.utils import format_datetime, format_smart_num, parse_numeric_input
 
 logger = logging.getLogger(__name__)
 
@@ -187,20 +186,15 @@ async def process_admin_toggle_block(callback: types.CallbackQuery, bot: Bot):
 async def render_channel_settings(message_or_call, session):
     """Хелпер для отрисовки меню настроек канала"""
     settings = await ChannelService.get_settings(session)
-    
-    def fmt_num(num):
-        if num >= 1_000_000: return f"${num/1_000_000:.1f}M"
-        elif num >= 1_000: return f"${num/1_000:.1f}K"
-        return f"${num:.0f}"
 
     text = (
         f"📢 <b>Настройки VIP-Канала</b>\n\n"
         f"<b>Статус постинга:</b> {'🟢 АКТИВЕН' if settings.is_active else '🔴 ОТКЛЮЧЕН'}\n\n"
         f"<b>📊 Фильтры ликвидаций:</b>\n"
-        f"🔸 Порог объема: <b>{fmt_num(settings.threshold)}</b>\n"
-        f"🔸 Порог каскада: <b>{fmt_num(settings.threshold_cascade)}</b>\n\n"
+        f"🔸 Порог объема: <b>${format_smart_num(settings.threshold)}</b>\n"
+        f"🔸 Порог каскада: <b>${format_smart_num(settings.threshold_cascade)}</b>\n\n"
         f"<b>📈 Фильтры аналитики (OI):</b>\n"
-        f"🔸 Мин. рост OI: <b>{settings.threshold_oi_percent}%</b> и <b>{fmt_num(settings.threshold_oi_value)}</b>\n\n"
+        f"🔸 Мин. рост OI: <b>{format_smart_num(settings.threshold_oi_percent, is_percent=True)}</b> и <b>${format_smart_num(settings.threshold_oi_value)}</b>\n\n"
         f"<i>Здесь вы настраиваете глобальные фильтры. Сигналы ниже этих значений в канал не попадут.</i>"
     )
     markup = get_admin_channel_kb(settings)
@@ -262,13 +256,15 @@ async def set_chan_vol(callback: types.CallbackQuery, state: FSMContext):
 @router.message(AdminChannelStates.waiting_for_volume)
 async def process_chan_vol(message: types.Message, state: FSMContext):
     try:
-        val = float(message.text.replace(',', '.').replace('$', '').replace(' ', ''))
+        val = parse_numeric_input(message.text.replace("$", ""))
+        if val <= 0:
+            raise ValueError
         async with async_session() as session:
             await ChannelService.update_settings(session, threshold=val)
             await render_channel_settings(message, session)
         await state.clear()
     except ValueError:
-        await message.answer("❌ Введите корректное число.")
+        await message.answer("❌ Пожалуйста, введите корректную сумму цифрами")
 
 @router.callback_query(F.data == "admin_chan_set_cas")
 async def set_chan_cas(callback: types.CallbackQuery, state: FSMContext):
@@ -279,13 +275,15 @@ async def set_chan_cas(callback: types.CallbackQuery, state: FSMContext):
 @router.message(AdminChannelStates.waiting_for_cascade)
 async def process_chan_cas(message: types.Message, state: FSMContext):
     try:
-        val = float(message.text.replace(',', '.').replace('$', '').replace(' ', ''))
+        val = parse_numeric_input(message.text.replace("$", ""))
+        if val <= 0:
+            raise ValueError
         async with async_session() as session:
             await ChannelService.update_settings(session, threshold_cascade=val)
             await render_channel_settings(message, session)
         await state.clear()
     except ValueError:
-        await message.answer("❌ Введите корректное число.")
+        await message.answer("❌ Пожалуйста, введите корректную сумму цифрами")
 
 @router.callback_query(F.data == "admin_chan_set_oi")
 async def set_chan_oi(callback: types.CallbackQuery, state: FSMContext):
@@ -296,16 +294,20 @@ async def set_chan_oi(callback: types.CallbackQuery, state: FSMContext):
 @router.message(AdminChannelStates.waiting_for_oi)
 async def process_chan_oi(message: types.Message, state: FSMContext):
     try:
-        parts = message.text.replace(',', '.').replace('%', '').replace('$', '').split()
-        if len(parts) != 2: raise ValueError
-        pct, val = float(parts[0]), float(parts[1])
+        parts = message.text.replace("%", "").replace("$", "").split()
+        if len(parts) != 2:
+            raise ValueError
+        pct = parse_numeric_input(parts[0])
+        val = parse_numeric_input(parts[1])
+        if pct <= 0 or val <= 0:
+            raise ValueError
         
         async with async_session() as session:
             await ChannelService.update_settings(session, threshold_oi_percent=pct, threshold_oi_value=val)
             await render_channel_settings(message, session)
         await state.clear()
     except ValueError:
-        await message.answer("❌ Введите два числа через пробел (например: 10 1000000).")
+        await message.answer("❌ Пожалуйста, введите корректную сумму цифрами")
 
 @router.callback_query(F.data == "admin_chan_restart_dash")
 async def process_restart_dash(

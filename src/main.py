@@ -14,6 +14,7 @@ from src.database.crud.liq_service import get_recent_liquidations
 from src.database.crud.channel_service import ChannelService
 from src.bot.handlers import main_router as router
 from src.bot.middlewares.block_middleware import BlockMiddleware
+from src.bot.middlewares.fsm_cleaner import FSMCleanerMiddleware
 from src.services.bybit_ws import BybitListener
 from src.services.aggregators.liq_aggregator import LiquidationAggregator
 from src.services.aggregators.market_aggregator import MarketAggregator
@@ -82,6 +83,7 @@ async def main():
     bot = Bot(token=config.BOT_TOKEN, session=session)
     dp = Dispatcher()
     dp.update.outer_middleware(BlockMiddleware(async_session))
+    dp.message.outer_middleware(FSMCleanerMiddleware())
     dp.include_router(router)
 
     # Инициализация инфраструктуры данных (SOLID & DI)

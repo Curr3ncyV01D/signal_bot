@@ -12,6 +12,46 @@ def format_datetime(dt: datetime | None) -> str:
         return "Н/Д"
     return f"{dt.strftime('%d.%m.%Y %H:%M')} UTC"
 
+
+def format_smart_num(val: float, is_percent: bool = False) -> str:
+    """Форматирует число по-человечески: пробелы в тысячах и до 1 знака после запятой."""
+    num = float(val)
+    rounded = round(num, 1)
+    is_integer = rounded.is_integer()
+
+    if is_integer:
+        formatted = f"{int(rounded):,}".replace(",", " ")
+    else:
+        formatted = f"{rounded:,.1f}".replace(",", " ").replace(".", ",")
+
+    return f"{formatted}%" if is_percent else formatted
+
+
+def parse_numeric_input(text: str) -> float:
+    """Парсит числовой ввод с пробелами, запятыми и лишними точками."""
+    normalized = text.strip().replace(" ", "").replace(",", ".")
+    if not normalized:
+        raise ValueError("empty input")
+
+    sign = ""
+    if normalized[0] in "+-":
+        sign = normalized[0]
+        normalized = normalized[1:]
+
+    digits: list[str] = []
+    last_dot_index = normalized.rfind(".")
+    for idx, char in enumerate(normalized):
+        if char.isdigit():
+            digits.append(char)
+        elif char == "." and idx == last_dot_index:
+            digits.append(char)
+
+    cleaned = "".join(digits).strip(".")
+    if not cleaned:
+        raise ValueError("invalid numeric input")
+
+    return float(f"{sign}{cleaned}")
+
 def mask_proxy_url(url: str | None) -> str | None:
     """Маскирует пароль в URL прокси для безопасного логирования."""
     if not url:

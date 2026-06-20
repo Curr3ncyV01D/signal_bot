@@ -8,7 +8,7 @@ from src.core.config import config
 from src.database.session import async_session
 from src.database.crud import user_service, billing_service
 from src.services.cryptopay import cryptopay
-from src.utils import format_datetime
+from src.utils import format_datetime, format_smart_num
 from src.bot.keyboards.billing_kb import (
     get_wallet_main_kb, 
     get_deposit_amounts_kb, 
@@ -30,7 +30,7 @@ async def cmd_wallet(message: types.Message):
     
     text = (
         f"💳 <b>Ваш кошелек</b>\n\n"
-        f"💰 Текущий баланс: {hbold(f'{user.balance:.2f} USDT')}\n"
+        f"💰 Текущий баланс: {hbold(f'{format_smart_num(user.balance)} USDT')}\n"
         f"🆔 Ваш ID: {hcode(user.id)}\n\n"
         f"Выберите действие:"
     )
@@ -44,7 +44,7 @@ async def callback_wallet_main(callback: types.CallbackQuery):
     
     text = (
         f"💳 <b>Ваш кошелек</b>\n\n"
-        f"💰 Текущий баланс: {hbold(f'{user.balance:.2f} USDT')}\n"
+        f"💰 Текущий баланс: {hbold(f'{format_smart_num(user.balance)} USDT')}\n"
         f"🆔 Ваш ID: {hcode(user.id)}\n\n"
         f"Выберите действие:"
     )
@@ -65,9 +65,9 @@ async def callback_tx_history(callback: types.CallbackQuery):
             amount = float(tx.amount)
             
             if amount > 0:
-                amount_str = f"🟢 +{amount:.2f}"
+                amount_str = f"🟢 +{format_smart_num(amount)}"
             else:
-                amount_str = f"🔴 {amount:.2f}"
+                amount_str = f"🔴 {format_smart_num(amount)}"
                 
             blocks.append(
                 f"┌ 📅 {tx_date} │ {hbold(amount_str)} USDT\n"
@@ -96,7 +96,7 @@ async def callback_partner_cabinet(callback: types.CallbackQuery):
         f"Приглашайте друзей и получайте {config.REFERRAL_BONUS_PERCENT}% от их покупок пожизненно на ваш баланс!\n\n"
         f"🔗 <b>Ваша ссылка:</b>\n{hcode(referral_link)}\n\n"
         f"👥 Приглашено: {hbold(str(invited_count))}\n"
-        f"💸 Заработано: {hbold(f'{total_rewards:.2f} USDT')}"
+        f"💸 Заработано: {hbold(f'{format_smart_num(total_rewards)} USDT')}"
     )
 
     await callback.message.edit_text(
@@ -154,7 +154,7 @@ async def callback_create_invoice(callback: types.CallbackQuery):
     
     text = (
         f"🧾 <b>Счет на оплату #{invoice_id}</b>\n\n"
-        f"Сумма: {hbold(f'{amount} USDT')}\n"
+        f"Сумма: {hbold(f'{format_smart_num(amount)} USDT')}\n"
         f"Статус: {hbold('Ожидание оплаты')}\n\n"
         f"Нажмите кнопку ниже для перехода в CryptoBot:"
     )
@@ -192,7 +192,7 @@ async def callback_check_payment(callback: types.CallbackQuery):
                 user = await user_service.get_user_by_id(session, callback.from_user.id)
                 await callback.message.edit_text(
                     f"✅ <b>Оплата подтверждена!</b>\n\n"
-                    f"Ваш баланс пополнен. Текущий баланс: {hbold(f'{user.balance:.2f} USDT')}",
+                    f"Ваш баланс пополнен. Текущий баланс: {hbold(f'{format_smart_num(user.balance)} USDT')}",
                     parse_mode="HTML"
                 )
                 return await callback.answer("Успешно!")
