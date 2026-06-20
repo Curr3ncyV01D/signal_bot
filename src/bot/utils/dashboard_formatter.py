@@ -160,7 +160,7 @@ class DashboardFormatter:
             overbought = get_data("rsi_overbought", [])
             if overbought:
                 for i, (symbol, val) in enumerate(overbought, 1):
-                    rsi_overbought_lines.append(f"{i}. #{symbol} — RSI {hbold(str(val))}")
+                    rsi_overbought_lines.append(f"{i}. #{symbol} — RSI {hbold(str(val))}%")
             else:
                 rsi_overbought_lines.append("<i>Данные собираются... ⌛</i>")
             sections.append(("rsi_overbought", rsi_overbought_lines, True))
@@ -169,7 +169,7 @@ class DashboardFormatter:
             oversold = get_data("rsi_oversold", [])
             if oversold:
                 for i, (symbol, val) in enumerate(oversold, 1):
-                    rsi_oversold_lines.append(f"{i}. #{symbol} — RSI {hbold(str(val))}")
+                    rsi_oversold_lines.append(f"{i}. #{symbol} — RSI {hbold(str(val))}%")
             else:
                 rsi_oversold_lines.append("<i>Данные собираются... ⌛</i>")
             rsi_oversold_lines.append("")
@@ -185,7 +185,7 @@ class DashboardFormatter:
                 btc_price_num = 0.0
 
             if math.isfinite(btc_price_num) and btc_price_num > 0:
-                btc_price_formatted = f"${btc_price_num:,.0f}"
+                btc_price_formatted = f"${btc_price_num:,.0f}".replace(",", " ")
                 btc_link = hlink(btc_price_formatted, btc_url)
                 if btc_change is not None:
                     btc_change_formatted = format_percent(btc_change)

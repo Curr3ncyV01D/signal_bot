@@ -113,13 +113,13 @@ class AlertFormatter:
         emoji_1h = self.get_liq_emoji(side_1h)
 
         cascade_emoji = "🌋" if sum_cas >= (threshold_cas * 2) else "⚡️"
-
-        res = f"{emoji_5m} {hbold(f'{side_5m} LIQ (5m):')} {self.format_money(sum_5m)}\n"
         
         if self.data.get("alert_type") == "CASCADE" or count_cas >= getattr(config, 'CASCADE_TRIGGER_COUNT', 10):
             res += f"{cascade_emoji} {hbold('LIQ КАСКАД:')} {count_cas} шт ({self.format_money(sum_cas)})\n"
         else:
-            res += f"{emoji_1h} {hbold(f'{side_1h} LIQ (1H):')} {self.format_money(sum_1h)}\n"
+            res = f"{emoji_5m} {hbold(f'{side_5m} LIQ (5m):')} {self.format_money(sum_5m)}\n"
+            
+        res += f"{emoji_1h} {hbold(f'{side_1h} LIQ (1H):')} {self.format_money(sum_1h)}\n"
         return res
 
     def _indicators_block(self) -> str:
@@ -132,7 +132,7 @@ class AlertFormatter:
         if self.data.get("show_rsi") and rsi is not None:
             rsi_emoji = "⚠️" if rsi >= 70 or rsi <= 30 else "📉"
             rsi_status = " 🔥" if rsi >= 80 or rsi <= 20 else ""
-            res += f"{rsi_emoji} {hbold('RSI (1H):')} {rsi}{rsi_status}\n"
+            res += f"{rsi_emoji} {hbold('RSI (1H):')} {rsi}{rsi_status}%\n"
             
         fund_abs = abs(funding) if funding else 0
         fund_marker = " ‼️" if fund_abs >= 1.0 else " ❗️" if fund_abs >= 0.5 else ""
