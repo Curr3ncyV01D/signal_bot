@@ -59,8 +59,10 @@ def mask_proxy_url(url: str | None) -> str | None:
     import re
     return re.sub(r'(?<=://)[^:]+:[^@]+@', '***:***@', url)
 
-async def lag_detector() -> None:
-    """Детектор блокировки Event Loop."""
+async def lag_detector(queue: asyncio.Queue | None = None) -> None:
+    """Детектор блокировки Event Loop.
+    Если передана очередь, выводит её размер при лагах.
+    """
     logger.info("🕵️ Детектор лагов запущен.")
 
     while True:
@@ -68,10 +70,12 @@ async def lag_detector() -> None:
         await asyncio.sleep(1)
         delay = time.time() - start_time - 1
 
-        if delay > 1.5:
-            logger.error(
-                f"🚨 Критическая блокировка Event Loop. "
-                f"Фактическая задержка составила {delay:.3f} сек."
-            )
-        elif delay > 0.5:
-            logger.warning(f"⚠️ ВНИМАНИЕ! Event Loop заблокирован. Задержка: {delay:.3f} сек.")
+        if delay > 1.0:
+            queue_info = f" Задач в очереди: {queue.qsize()}" if queue else ""
+            if delay > 1.5:
+                logger.error(
+                    f"🚨 Критическая блокировка Event Loop. "
+                    f"Фактическая задержка составила {delay:.3f} сек.{queue_info}"
+                )
+            else:
+                logger.warning(f"⚠️ ВНИМАНИЕ! Event Loop заблокирован. Задержка: {delay:.3f} сек.{queue_info}")

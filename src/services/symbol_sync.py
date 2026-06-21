@@ -36,8 +36,11 @@ async def symbol_sync_worker(listener: BybitListener, market_aggregator: MarketA
                 continue
 
             await warmup_system(market_aggregator, new_symbols)
-            await listener.restart(new_all_symbols)
-            logger.info(f"🆕 Обнаружены новые монеты: {', '.join(new_symbols)}. Мониторинг перезапущен.")
+            
+            for symbol in new_symbols:
+                await listener.add_new_symbol(symbol)
+                
+            logger.info(f"🆕 Обнаружены новые монеты: {', '.join(new_symbols)}. Добавлены через Hot Swap.")
 
             await asyncio.sleep(14400) # 4 часа
         except asyncio.CancelledError:

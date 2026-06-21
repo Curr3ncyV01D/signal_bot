@@ -21,7 +21,7 @@ class BybitListener:
             logger.info("Bybit Listener использует прокси")
         
         self.http = HTTP(testnet=False)
-        self.ws_connections = []
+        self.ws_map = {}  # {WebSocket: [symbols]}
         self.target_symbols = []
         self._start_count = 0
         self._launch_context = "primary"
@@ -42,11 +42,11 @@ class BybitListener:
 
     def get_active_connections_count(self):
         active_count = 0
-        for ws in self.ws_connections:
+        for ws in self.ws_map.keys():
             try:
                 if ws.is_connected():
                     active_count += 1
-            except Exception as e:
+            except Exception:
                 pass
         return active_count
 
@@ -169,17 +169,9 @@ class BybitListener:
             )
             
             for symbol in chunk:
-                try:
-                    # ПОДПИСКА 1: Ликвидации
-                    ws.all_liquidation_stream(symbol=symbol, callback=self.on_message)
-                    # ПОДПИСКА 2: Тикеры (OI, Price)
-                    ws.ticker_stream(symbol=symbol, callback=self.on_message)
-                    # ПОДПИСКА 3: Сделки (CVD)
-                    ws.trade_stream(symbol=symbol, callback=self.on_message)
-                except Exception as e:
-                    logger.error(f"Ошибка подписки на {symbol}: {e}")
+                self.subscribe_to_symbol(ws, symbol)
             
-            self.ws_connections.append(ws)
+            self.ws_map[ws] = list(chunk)
             
             sys.stdout.write(f"\r📡 Подключение вебсокетов: [{'=' * (i * 20 // len(symbol_chunks)):<20}] {i}/{len(symbol_chunks)}")
             sys.stdout.flush()
@@ -187,22 +179,64 @@ class BybitListener:
             await asyncio.sleep(connection_delay) # Пауза, чтобы не словить бан по IP за спам коннектами
 
         print() 
-        logger.info(f"\n✅ Все {len(self.ws_connections)} соединений успешно инициализированы.")
+        logger.info(f"\n✅ Все {len(self.ws_map)} соединений успешно инициализированы.")
         self._start_count += 1
         self._launch_context = "normal"
 
-    async def restart(self, new_symbols: list[str]):
-        logger.info("Обновление списка символов: выполняется перезапуск WebSocket-подключений.")
-        self.stop()
-        self.target_symbols = list(new_symbols)
-        self._launch_context = "listing_restart"
-        await self.start()
-
     def stop(self):
-        for ws in self.ws_connections:
+        for ws in self.ws_map.keys():
             try:
                 ws.exit()
             except:
                 pass
-        self.ws_connections.clear()
+        self.ws_map.clear()
         logger.info("Все WebSocket соединения закрыты.")
+
+    def subscribe_to_symbol(self, ws, symbol):
+        """Подписка на ликвидации, тикеры и сделки для конкретного символа."""
+        try:
+            # ПОДПИСКА 1: Ликвидации
+            ws.all_liquidation_stream(symbol=symbol, callback=self.on_message)
+            # ПОДПИСКА 2: Тикеры (OI, Price)
+            ws.ticker_stream(symbol=symbol, callback=self.on_message)
+            # ПОДПИСКА 3: Сделки (CVD)
+            ws.trade_stream(symbol=symbol, callback=self.on_message)
+        except Exception as e:
+            logger.error(f"❌ Ошибка динамической подписки на {symbol}: {e}")
+
+    async def add_new_symbol(self, symbol):
+        """Добавление новой монеты без перезагрузки (Hot Swap)."""
+        if symbol in self.target_symbols:
+            return
+
+        # Ищем существующий сокет с местом
+        chunk_size = getattr(config, 'WS_CHUNK_SIZE', 25)
+        target_ws = None
+        
+        for ws, symbols in self.ws_map.items():
+            if len(symbols) < chunk_size:
+                target_ws = ws
+                break
+        
+        if target_ws:
+            self.subscribe_to_symbol(target_ws, symbol)
+            self.ws_map[target_ws].append(symbol)
+            logger.info(f"✅ Монета {symbol} добавлена в существующий сокет ({len(self.ws_map[target_ws])}/{chunk_size})")
+        else:
+            # Создаем новый сокет
+            logger.info(f"🚀 Создание нового сокета для {symbol} (все текущие заполнены)")
+            ws = WebSocket(
+                testnet=False, 
+                channel_type="linear",
+                ping_interval=20,
+                ping_timeout=10,
+                restart_on_error=True
+            )
+            self.subscribe_to_symbol(ws, symbol)
+            self.ws_map[ws] = [symbol]
+            
+            # Небольшая задержка для стабилизации нового соединения
+            await asyncio.sleep(getattr(config, 'WS_DELAY_PROD', 1.5))
+
+        if symbol not in self.target_symbols:
+            self.target_symbols.append(symbol)

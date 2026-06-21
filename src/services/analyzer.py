@@ -118,11 +118,30 @@ async def process_liquidation_item(
 
     rsi_val = market_aggregator.get_cached_rsi(symbol, config.RSI_PERIOD)
 
+    # 4. Подготовка базового payload (Atomic Payload)
+    # Эти данные одинаковы для всех получателей
+    base_payload = {
+        "symbol": symbol,
+        "side_label": side_label,
+        "sum_5m": sum_5m,
+        "sum_1h": sum_1h,
+        "sum_cascade": sum_cas,
+        "cascade_count": count_cas,
+        "oi_pct": m_data['oi_change_pct'] if m_data else None,
+        "oi_val": m_data['oi_change_value'] if m_data else 0.0,
+        "price_pct": m_data['price_change_pct'] if m_data else None,
+        "total_oi": m_data['oi'] if m_data else 0.0,
+        "funding": m_data['funding'] if m_data else 0.0,
+        "delta_5m": delta_5m,
+        "delta_30m": delta_30m,
+        "rsi": rsi_val,
+    }
+
     alert_tasks = []
 
-    # 4. Single-pass рассылка по закэшированным адресатам.
+    # 5. Single-pass рассылка по закэшированным адресатам.
     for target in targets:
-        payload = _check_triggers(
+        trigger_result = _check_triggers(
             target=target,
             symbol=symbol,
             side_label=side_label,
@@ -131,14 +150,14 @@ async def process_liquidation_item(
             sum_cas=sum_cas,
             count_cas=count_cas,
             m_data=m_data,
-            delta_5m=delta_5m,
-            delta_30m=delta_30m,
-            rsi_val=rsi_val,
         )
 
-        if payload:
+        if trigger_result:
             recipient_id = config.PRIVATE_CHANNEL_ID if target["id"] == "CHANNEL" else int(target["id"])
-            alert_tasks.append(send_liquidation_alert(bot, recipient_id, **payload))
+            
+            # Объединяем общие данные с персональными (заголовок, тип, фильтры отображения)
+            full_payload = {**base_payload, **trigger_result}
+            alert_tasks.append(send_liquidation_alert(bot, recipient_id, **full_payload))
 
     # Массовая отправка алертов (внутри send_liquidation_alert уже есть семафор и throttling)
     if alert_tasks:
@@ -153,11 +172,10 @@ def _check_triggers(
     sum_cas: float,
     count_cas: int,
     m_data: dict[str, Any] | None,
-    delta_5m: float | None,
-    delta_30m: float | None,
-    rsi_val: float | None,
 ) -> dict[str, Any] | None:
-    """Универсальная логика проверки условий для пользователя или канала"""
+    """Универсальная логика проверки условий для пользователя или канала.
+    Возвращает персональные настройки payload, если триггер сработал.
+    """
     now = datetime.now(timezone.utc).replace(tzinfo=None)
     
     # --- 1. ТРИГГЕРЫ (Базовые условия пробития порогов) ---
@@ -214,30 +232,16 @@ def _check_triggers(
             if not grew_5m:
                 return None
 
-    # --- 5. ФОРМИРОВАНИЕ ПЕЙЛОАДА ---
+    # --- 5. ФОРМИРОВАНИЕ ПЕРСОНАЛЬНОГО ПЕЙЛОАДА ---
     user_alert_history[history_key] = {
         'time': now,
         'sum_5m': sum_5m
     }
     
     return {
-        "symbol": symbol,
-        "side_label": side_label,
         "alert_title": alert_title,
         "alert_type": alert_type,
-        "sum_5m": sum_5m,
-        "sum_1h": sum_1h,
-        "sum_cascade": sum_cas,
-        "cascade_count": count_cas,
         "threshold_cascade": target["threshold_cascade"],
-        "oi_pct": m_data['oi_change_pct'] if m_data else None,
-        "oi_val": m_data['oi_change_value'] if m_data else 0.0,
-        "price_pct": m_data['price_change_pct'] if m_data else None,
-        "total_oi": m_data['oi'] if m_data else 0.0,
-        "funding": m_data['funding'] if m_data else 0.0,
-        "delta_5m": delta_5m,
-        "delta_30m": delta_30m,
-        "rsi": rsi_val,
         "show_oi": target["alert_oi"],
         "show_cvd": target["alert_cvd"],
         "show_rsi": target["alert_rsi"]

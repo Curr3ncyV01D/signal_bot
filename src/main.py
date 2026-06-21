@@ -147,7 +147,7 @@ async def main():
     sync_task = asyncio.create_task(symbol_sync_worker(listener, market_aggregator))
 
     # 6. Запускаем фоновые задачи и Вышибалу
-    lag_detector_task = asyncio.create_task(lag_detector())
+    lag_detector_task = asyncio.create_task(lag_detector(queue))
     retention_task = asyncio.create_task(retention_policy_worker(hours=4))
     aggregator_task = asyncio.create_task(liq_aggregator.cleanup_task())
     alert_cleanup_task = asyncio.create_task(cleanup_alert_history_task())        

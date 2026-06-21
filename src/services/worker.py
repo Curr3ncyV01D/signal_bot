@@ -39,18 +39,18 @@ class DataWorker:
                     else:
                         item = {}
 
-                    symbol = item.get("symbol") or item.get("s")
-                    
+                    symbol = item.get("symbol")
                     if not symbol:
                         queue.task_done()
                         continue
 
-                    # Извлекаем значения только если они есть в пакете
+                    # Извлекаем значения через прямой доступ (структура Bybit V5 гарантирована)
+                    # Если какого-то поля нет в дельта-апдейте, используем .get
                     try:
-                        price = float(item["lastPrice"]) if "lastPrice" in item and item["lastPrice"] else None
-                        oi = float(item["openInterestValue"]) if "openInterestValue" in item and item["openInterestValue"] else None
-                        funding = float(item["fundingRate"]) if "fundingRate" in item and item["fundingRate"] else None
-                    except (ValueError, TypeError):
+                        price = float(item["lastPrice"]) if "lastPrice" in item else None
+                        oi = float(item["openInterestValue"]) if "openInterestValue" in item else None
+                        funding = float(item["fundingRate"]) if "fundingRate" in item else None
+                    except (ValueError, TypeError, KeyError):
                         price = oi = funding = None
 
                     # ТИКЕРЫ: Записываем в агрегатор ДАЖЕ ЕСЛИ символ в IGNORED_SYMBOLS (нужно для BTC в дэшборде)

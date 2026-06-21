@@ -66,6 +66,10 @@ async def warmup_system(market_aggregator, target_symbols: list[str]) -> None:
                                 # Заполняем rsi_prices в агрегаторе напрямую
                                 from collections import deque
                                 market_aggregator.rsi_prices[symbol] = deque(prices, maxlen=50)
+                                
+                                # Наполняем историю MarketAggregator для мгновенного старта OI/Price Change
+                                market_aggregator.seed_history(symbol, prices)
+                                
                                 # Фиксируем ID текущего бара
                                 now = datetime.now(timezone.utc).timestamp()
                                 # Часовой бар для RSI 1H

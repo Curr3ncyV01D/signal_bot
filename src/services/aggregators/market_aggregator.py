@@ -33,33 +33,76 @@ class MarketAggregator:
         target_idx = -(window_minutes + 1)
         target_time = now - (window_minutes * 60)
 
+        # 1. Попытка прямого доступа по индексу (Best Effort: если индекса нет, берем самый старый)
         try:
+            # Пытаемся взять целевой индекс
             direct_record = hist[target_idx]
+            
+            # Проверяем, насколько далеко мы от цели
+            direct_diff = abs(direct_record[0] - target_time)
+            if direct_diff <= 20:
+                return direct_record
+
+            # Если отклонение есть, ищем среди ближайших соседей
+            best_record: tuple[float, float, float] | None = None
+            best_diff = float("inf")
+
+            for idx in range(target_idx - 2, target_idx + 3):
+                try:
+                    candidate = hist[idx]
+                except IndexError:
+                    continue
+
+                candidate_diff = abs(candidate[0] - target_time)
+                if candidate_diff < best_diff:
+                    best_record = candidate
+                    best_diff = candidate_diff
+
+            if best_record and best_diff <= 45:
+                return best_record
+
         except IndexError:
-            return None
+            # 2. "Best Effort" для холодного старта:
+            # Если истории еще мало, берем самую первую запись (индекс 0), 
+            # при условии, что она достаточно старая (хотя бы 2 минуты назад).
+            if len(hist) >= 2:
+                oldest = hist[0]
+                age_sec = now - oldest[0]
+                if age_sec >= 120: # Минимум 2 минуты истории для хоть какой-то динамики
+                    return oldest
+            
+        return None
 
-        direct_diff = abs(direct_record[0] - target_time)
-        if direct_diff <= 20:
-            return direct_record
+    def seed_history(self, symbol: str, prices: list[float]) -> None:
+        """
+        Предварительное наполнение истории цен для устранения 'окна слепоты'.
+        Генерирует синтетические таймстампы назад от текущего момента.
+        """
+        if not prices:
+            return
 
-        best_record: tuple[float, float, float] | None = None
-        best_diff = float("inf")
+        now = datetime.now(timezone.utc).timestamp()
+        
+        # Инициализируем историю, если её нет
+        if symbol not in self.history:
+            self.history[symbol] = deque(maxlen=61)
+            
+        # Берем текущий ОИ как заглушку (он уже должен быть в snapshots после шага 1 warmup)
+        current_snap = self.snapshots.get(symbol, {"oi": 0.0})
+        current_oi = current_snap.get("oi", 0.0)
 
-        for idx in range(target_idx - 2, target_idx + 3):
-            try:
-                candidate = hist[idx]
-            except IndexError:
-                continue
-
-            candidate_diff = abs(candidate[0] - target_time)
-            if candidate_diff < best_diff:
-                best_record = candidate
-                best_diff = candidate_diff
-
-        if best_record is None or best_diff > 45:
-            return None
-
-        return best_record
+        # Очищаем историю перед посевом, чтобы не перемешивать с real-time данными
+        # если бот только что запустился.
+        if len(self.history[symbol]) < 2:
+            self.history[symbol].clear()
+            
+            # Наполняем в обратном порядке: от новых к старым
+            # prices приходят в хронологическом порядке (после reverse в warmup)
+            # Мы берем последние 60 штук (limit 61 в deque)
+            for i, price in enumerate(reversed(prices)):
+                ts = now - (i * 60)
+                # Добавляем в начало очереди, так как идем от новых к старым
+                self.history[symbol].appendleft((ts, price, current_oi))
 
     def update(self, symbol: str, price: float | None, oi: float | None, funding: float | None) -> None:
         now = datetime.now(timezone.utc).timestamp()
