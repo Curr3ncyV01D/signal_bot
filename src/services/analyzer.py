@@ -81,12 +81,9 @@ async def _refresh_user_cache(session) -> list[CachedAlertTarget]:
 
     _cached_users = cached_targets
     _last_user_refresh = now_ts
-    _min_system_threshold = (
-        max(min_threshold, config.MIN_LIQ_VALUE_FILTER)
-        if cached_targets
-        else float("inf")
-    )
-    _min_system_cascade = min_cascade if cached_targets else float("inf")
+
+    _min_system_threshold = (max(min_threshold, config.MIN_LIQ_VALUE_FILTER) if cached_targets else config.MIN_LIQ_VALUE_FILTER)
+    _min_system_cascade = min_cascade if cached_targets else config.CASCADE_TRIGGER_COUNT * 1000
     return _cached_users
 
 async def process_liquidation_item(

@@ -54,7 +54,6 @@ class BybitListener:
 
     def on_message(self, message):
         """Единая точка входа для всех сообщений WebSocket."""
-        # Если пришел словарь (от pybit), мы не можем использовать orjson.loads
         if not isinstance(message, dict):
             try:
                 message = orjson.loads(message)
@@ -62,23 +61,32 @@ class BybitListener:
                 return
 
         topic = message.get("topic", "")
-        if not topic: return
-
-        if "liquidation" in topic:
+        topic_lower = topic.lower()
+        
+        if topic and "liquidation" in topic_lower:
             self.handle_liquidation(message)
-        elif "ticker" in topic:
+        elif topic and "ticker" in topic_lower:
             self.handle_ticker(message)
-        elif "publicTrade" in topic:
+        elif topic and "publictrade" in topic_lower:
             self.handle_trade(message)
+        elif not topic:
+            if "s" in message and "p" in message and "v" in message:
+                self.handle_liquidation({"data": message})
+        else:
+            logger.warning(f"⚠️ Неизвестный топик: {topic}")
 
     def handle_liquidation(self, message):
         """Обработка ликвидаций (Stage 1)"""
         data = message.get("data")
-        if not data: return
+        
+        if not data:
+            if "s" in message and "p" in message:
+                data = message
+            else:
+                return
         
         self.last_message_time = datetime.now(timezone.utc).replace(tzinfo=None)
         
-        # Оборачиваем в type: liquidation, чтобы Воркер понял
         if isinstance(data, list):
             for item in data:
                 self.loop.call_soon_threadsafe(self.queue.put_nowait, {"type": "liquidation", "data": item})

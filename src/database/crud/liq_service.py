@@ -13,8 +13,10 @@ async def save_liquidation(session: AsyncSession, item: dict) -> None:
         side = item.get("S") or item.get("side")
         
         try:
-            price = float(item.get("p") or item.get("price", 0))
-            qty = float(item.get("v") or item.get("qty", 0))
+            p_val = item.get("p") or item.get("price")
+            v_val = item.get("v") or item.get("qty")
+            price = float(p_val) if p_val else 0.0
+            qty = float(v_val) if v_val else 0.0
         except (ValueError, TypeError):
             logger.warning(f"Пропуск ликвидации из-за некорректных чисел: {item}")
             return
