@@ -35,14 +35,27 @@ logger = logging.getLogger(__name__)
 
 def toggle_log_level() -> None:
     root_logger = logging.getLogger()
-    current_level = root_logger.level
-    new_level = logging.DEBUG if current_level == logging.INFO else logging.INFO
-    root_logger.setLevel(new_level)
-    logger.info(
-        f"[SYSTEM] \U0001f504 Сигнал получен. Уровень логирования изменен на "
-        f"[{logging.getLevelName(new_level)}]"
-    )
+    
+    if root_logger.level == logging.INFO:
+        new_level = logging.DEBUG
+        aiogram_level = logging.INFO
+        status_text = "DEBUG (С аналитикой и телеметрией)"
+    else:
+        new_level = logging.INFO
+        aiogram_level = logging.WARNING
+        status_text = "INFO (Только сигналы)"
 
+    # 1. Меняем уровень самого логгера
+    root_logger.setLevel(new_level)
+    
+    # 2. МЕНЯЕМ УРОВЕНЬ ОБРАБОТЧИКОВ
+    for handler in root_logger.handlers:
+        handler.setLevel(logging.NOTSET) # Разрешаем обработчикам всё
+
+    # 3. Управляем конкретно aiogram.event
+    logging.getLogger("aiogram.event").setLevel(aiogram_level)
+
+    logger.info(f"--- [SYSTEM] 🔄 Уровень логирования переключен на {status_text} ---")
 
 def install_signal_handlers(loop: asyncio.AbstractEventLoop, stop_event: asyncio.Event) -> None:
     def shutdown_handler() -> None:

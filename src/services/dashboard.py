@@ -45,10 +45,14 @@ async def recreate_dashboard_logic(bot: Bot, liq_aggregator, market_aggregator) 
 
     _dashboard_recreate_in_progress = True
     try:
-        settings = ChannelService.get_cached_settings()
+        # 1. Принудительно проверяем БД перед пересозданием, чтобы не плодить дубликаты
+        async with async_session() as session:
+            settings = await ChannelService.get_settings(session)
+        
         old_message_id = settings.dashboard_message_id
 
         if old_message_id:
+            logger.info(f"🗑 Попытка удаления старого дэшборда ID: {old_message_id}")
             try:
                 await asyncio.wait_for(
                     bot.delete_message(
@@ -57,9 +61,10 @@ async def recreate_dashboard_logic(bot: Bot, liq_aggregator, market_aggregator) 
                     ),
                     timeout=10.0,
                 )
-            except Exception:
-                logger.debug("Старое сообщение дэшборда уже отсутствует или недоступно для удаления.")
+            except Exception as e:
+                logger.debug(f"Старое сообщение дэшборда {old_message_id} не удалено: {e}")
 
+        # 2. Собираем свежие данные и отправляем новое сообщение
         combined_data = _get_combined_data(liq_aggregator, market_aggregator, use_cache=False)
         text = DashboardFormatter.compile_dashboard(combined_data, window_minutes=15)
 
@@ -73,20 +78,24 @@ async def recreate_dashboard_logic(bot: Bot, liq_aggregator, market_aggregator) 
             timeout=10.0,
         )
 
-        await asyncio.wait_for(
-            bot.pin_chat_message(
-                chat_id=config.PRIVATE_CHANNEL_ID,
-                message_id=msg.message_id,
-            ),
-            timeout=10.0,
-        )
+        # 3. Закрепляем и сохраняем ID
+        try:
+            await asyncio.wait_for(
+                bot.pin_chat_message(
+                    chat_id=config.PRIVATE_CHANNEL_ID,
+                    message_id=msg.message_id,
+                ),
+                timeout=10.0,
+            )
+        except Exception as e:
+            logger.warning(f"Не удалось закрепить сообщение: {e}")
 
         async with async_session() as session:
             await ChannelService.set_dashboard_id(session, msg.message_id)
 
         _last_data = combined_data
         _last_update_ts = time.time()
-        logger.debug("Дэшборд успешно пересоздан и закреплен.")
+        logger.info(f"✅ Дэшборд успешно пересоздан. Новый ID: {msg.message_id}")
         return msg.message_id
     finally:
         _dashboard_recreate_in_progress = False
@@ -97,6 +106,10 @@ async def dashboard_worker(bot: Bot, liq_aggregator, market_aggregator):
     """
     logger.info("🚀 Dashboard worker запущен.")
     
+    # Первичная проверка ID при старте
+    settings = ChannelService.get_cached_settings()
+    logger.info(f"📊 Начальный ID дэшборда из кэша: {settings.dashboard_message_id}")
+    
     while True:
         try:
             if _dashboard_recreate_in_progress:
@@ -105,6 +118,14 @@ async def dashboard_worker(bot: Bot, liq_aggregator, market_aggregator):
 
             # 1. Получаем текущие настройки (из кэша)
             settings = ChannelService.get_cached_settings()
+            
+            # Если кэш пустой или не инициализирован (проверяем по отсутствию данных, которые должны быть в БД)
+            # В нашем случае, если dashboard_message_id None и это первый цикл, стоит проверить БД
+            if settings.dashboard_message_id is None:
+                async with async_session() as session:
+                    settings = await ChannelService.get_settings(session)
+                    logger.info(f"🔄 Кэш настроек принудительно обновлен из БД. ID: {settings.dashboard_message_id}")
+
             message_id = settings.dashboard_message_id
             
             if message_id is None:
@@ -124,7 +145,7 @@ async def dashboard_worker(bot: Bot, liq_aggregator, market_aggregator):
                         ),
                         timeout=10.0
                     )
-                    logger.debug("Dashboard message успешно обновлен.")
+                    logger.debug(f"Dashboard message {message_id} успешно обновлен.")
                     
                 except asyncio.TimeoutError:
                     logger.error("❌ Таймаут при редактировании дэшборда (10 сек).")

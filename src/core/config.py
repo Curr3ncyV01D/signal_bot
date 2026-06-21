@@ -10,6 +10,15 @@ class Settings(BaseSettings):
     START_TIME: datetime | None = None
     # Настройка логгирования
     LOG_LEVEL: str = "INFO"
+    DEBUG_LOGGERS: list[str] = ["aiogram", "aiogram.event", "pybit"]
+    INFRA_LOGGERS: list[str] = [
+        "urllib3",
+        "websocket",
+        "aiohttp",
+        "asyncio",
+        "uvicorn",
+        "httpcore",
+    ]
 
     # === 1. ОСНОВНЫЕ НАСТРОЙКИ (Infrastructure) ===
     BOT_TOKEN: str
@@ -88,25 +97,35 @@ class Settings(BaseSettings):
 
 
 def setup_logging() -> None:
+    # 1. Получаем уровень из конфига
     level_name = config.LOG_LEVEL.upper()
     level = getattr(logging, level_name, logging.INFO)
 
-    logging.basicConfig(
-        level=level,
-        format="%(asctime)s - [%(levelname)s] - %(name)s - %(message)s",
-        stream=sys.stdout,
-        force=True,
-    )
+    # 2. Настраиваем корневой логгер
+    root_logger = logging.getLogger()
+    root_logger.setLevel(level)
 
-    for logger_name in (
-        "aiogram",
-        "aiogram.event",
-        "pybit",
-        "websocket",
-        "asyncio",
-        "aiohttp",
-        "uvicorn",
-    ):
+    # 3. Создаем обработчик для консоли ПРАВИЛЬНО
+    handler = logging.StreamHandler(sys.stdout)
+    handler.setFormatter(logging.Formatter(
+        "%(asctime)s - [%(levelname)s] - %(name)s - %(message)s"
+    ))
+    # ВАЖНО: Ставим обработчику уровень NOTSET, чтобы он пропускал всё,
+    # что разрешит сам логгер
+    handler.setLevel(logging.NOTSET) 
+    
+    root_logger.handlers = [] # Очищаем старые обработчики
+    root_logger.addHandler(handler)
+
+    # 4. Глушим инфраструктуру (только ошибки)
+    SILENT_LOGGERS = ["pybit", "websocket", "aiohttp", "asyncio", "urllib3", "httpcore"]
+    for logger_name in SILENT_LOGGERS:
         logging.getLogger(logger_name).setLevel(logging.WARNING)
+
+    # 5. Настраиваем aiogram.event в зависимости от стартового уровня
+    if level == logging.DEBUG:
+        logging.getLogger("aiogram.event").setLevel(logging.INFO)
+    else:
+        logging.getLogger("aiogram.event").setLevel(logging.WARNING)
 
 config = Settings()

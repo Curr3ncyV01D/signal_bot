@@ -55,8 +55,9 @@ class BIFormatter:
     @classmethod
     def format_system_text(cls, data: dict) -> str:
         """Форматирует технический блок."""
-        cpu_bar = cls.create_progress_bar(data['cpu_usage'])
-        ram_bar = cls.create_progress_bar(data['ram_usage'])
+        # Прогресс-бары для сервера
+        sv_cpu_bar = cls.create_progress_bar(data['server_cpu_pct'])
+        sv_ram_bar = cls.create_progress_bar(data['server_ram_pct'])
         
         conn_status = "✅" if data['active_connections'] >= max(1, data['total_connections'] * 3 / 4) else "⚠️"
         if data['active_connections'] == 0: conn_status = "❌"
@@ -67,8 +68,15 @@ class BIFormatter:
         return (
             f"⚙️ {hbold('Техническое состояние')}\n\n"
             f"🖥 {hbold('Нагрузка сервера:')}\n"
-            f"  ├ CPU: {cpu_bar} {hbold(data['cpu_usage'])}%\n"
-            f"  └ RAM: {ram_bar} {hbold(data['ram_usage'])}%\n\n"
+            f"  ├ CPU: {sv_cpu_bar} {hbold(f'{data['server_cpu_pct']:.1f}%')}\n"
+            f"  └ RAM: {sv_ram_bar} {hbold(f'{data['server_ram_pct']:.1f}%')} "
+            f"({data['server_ram_used_gb']:.1f}/{data['server_ram_total_gb']:.1f} GB)\n\n"
+            
+            f"🤖 {hbold('Нагрузка бота:')}\n"
+            f"  ├ CPU: {hbold(f'{data['process_cpu_pct']:.1f}%')}\n"
+            f"  └ RAM: {hbold(f'{data['process_ram_mb']:.1f}')} MiB "
+            f"({hbold(f'{data['process_ram_pct']:.2f}%')} от сервера)\n\n"
+
             f"🌐 {hbold('Инфраструктура:')}\n"
             f"  ├ Соединения: {conn_status} {hbold(data['active_connections'])}/{hbold(data['total_connections'])}\n"
             f"  ├ Последний сигнал API: {hbold(data['latency'])} назад\n"
