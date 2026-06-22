@@ -73,9 +73,10 @@ async def lag_detector(queue: asyncio.Queue | None = None) -> None:
         if delay > 1.0:
             queue_info = f" Задач в очереди: {queue.qsize()}" if queue else ""
             if delay > 1.5:
+                tasks_info = f" Активных задач: {len(asyncio.all_tasks())}"
                 logger.error(
                     f"🚨 Критическая блокировка Event Loop. "
-                    f"Фактическая задержка составила {delay:.3f} сек.{queue_info}"
+                    f"Фактическая задержка составила {delay:.3f} сек.{queue_info}.{tasks_info}"
                 )
             else:
                 logger.warning(f"⚠️ ВНИМАНИЕ! Event Loop заблокирован. Задержка: {delay:.3f} сек.{queue_info}")

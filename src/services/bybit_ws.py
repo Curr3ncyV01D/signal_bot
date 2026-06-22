@@ -2,6 +2,7 @@ import logging
 import os
 import asyncio
 import orjson
+import time
 from datetime import datetime, timezone
 
 from pybit.unified_trading import WebSocket, HTTP
@@ -14,6 +15,7 @@ class BybitListener:
         self.queue = queue
         self.loop = loop
         self.last_message_time = None
+        self.last_heartbeat = {}  # {ws_instance: timestamp}
         
         if getattr(config, 'PROXY_URL', None):
             os.environ['HTTP_PROXY'] = config.PROXY_URL
@@ -29,12 +31,13 @@ class BybitListener:
     def get_all_usdt_symbols(self) -> list[str]:
         """Получает список всех активных USDT-пар с Bybit."""
         try:
-            resp = self.http.get_instruments_info(category="linear")
+            resp = self.http.get_instruments_info(category="linear", limit=1000)
             symbols = [
                 item["symbol"] 
                 for item in resp.get("result", {}).get("list", []) 
-                if item["symbol"].endswith("USDT") and item["status"] == "Trading"
+                if item["symbol"].endswith("USDT") and item["status"] in ["Trading", "PreLaunch"]
             ]
+            logger.info(f"Найдено {len(symbols)} активных USDT-пар (включая PreLaunch)")
             return symbols
         except Exception as e:
             logger.error(f"Ошибка получения списка символов: {e}")
@@ -52,13 +55,31 @@ class BybitListener:
 
     # --- СПЕЦИАЛИЗИРОВАННЫЕ ОБРАБОТЧИКИ (Фильтрация до очереди) ---
 
-    def on_message(self, message):
+    def on_message(self, message, ws=None):
         """Единая точка входа для всех сообщений WebSocket."""
+        if ws:
+            self.last_heartbeat[ws] = time.time()
+
         if not isinstance(message, dict):
             try:
                 message = orjson.loads(message)
             except Exception:
                 return
+
+        # Перехват служебных сообщений (подтверждения подписок)
+        if "success" in message:
+            try:
+                is_success = message.get("success")
+                req_id = message.get("req_id", "N/A")
+                ret_msg = message.get("ret_msg", "")
+                
+                if is_success:
+                    logger.debug(f"Подписка подтверждена: {req_id or message.get('conn_id')}")
+                else:
+                    logger.error(f"Bybit ОТКЛОНИЛ подписку: {ret_msg}. Данные по части монет могут не поступать!")
+            except Exception as e:
+                logger.error(f"Ошибка при обработке подтверждения подписки: {e}")
+            return
 
         topic = message.get("topic", "")
         topic_lower = topic.lower()
@@ -147,7 +168,7 @@ class BybitListener:
         if config.DEV_MODE:
             connection_delay = config.WS_DELAY_DEV 
         else:
-            connection_delay = config.WS_DELAY_PROD
+            connection_delay = max(config.WS_DELAY_PROD, 2.0)
         
         chunk_size = getattr(config, 'WS_CHUNK_SIZE', 25)
         symbol_chunks = [target_symbols[i:i + chunk_size] for i in range(0, len(target_symbols), chunk_size)]
@@ -169,7 +190,7 @@ class BybitListener:
             )
             
             for symbol in chunk:
-                self.subscribe_to_symbol(ws, symbol)
+                await self.subscribe_to_symbol(ws, symbol)
             
             self.ws_map[ws] = list(chunk)
             
@@ -180,8 +201,71 @@ class BybitListener:
 
         print() 
         logger.info(f"\n✅ Все {len(self.ws_map)} соединений успешно инициализированы.")
+        
+        if self._start_count == 0:
+            asyncio.create_task(self.watchdog_task())
+
         self._start_count += 1
         self._launch_context = "normal"
+
+    async def watchdog_task(self):
+        """Проверка активности сокетов и их реанимация при необходимости."""
+        logger.info("📡 Watchdog WebSocket запущен.")
+        while True:
+            await asyncio.sleep(60)
+            now = time.time()
+            
+            # Если весь лисенер молчит слишком долго, возможно проблема с сетью вообще
+            total_silence = 0
+            if self.last_message_time:
+                total_silence = now - self.last_message_time.timestamp()
+            
+            # Если интернет есть (хотя бы один сокет жив), но конкретный сокет молчит > 3 минут
+            for ws, symbols in list(self.ws_map.items()):
+                last_ws_time = self.last_heartbeat.get(ws, 0)
+                silence_duration = now - last_ws_time
+                
+                if silence_duration > 180:
+                    # Проверяем, не глобальная ли это тишина (проблема с интернетом)
+                    # Если другие сокеты получают данные, значит проблема в этом конкретном сокете
+                    if total_silence < 180:
+                        logger.warning(f"⚠️ Сокет {ws} молчит {int(silence_duration)} сек. Попытка реанимации...")
+                        await self.reconnect_chunk(ws)
+                    else:
+                        logger.debug(f"⏳ Глобальная тишина ({int(total_silence)} сек), Watchdog ожидает восстановления сети.")
+
+    async def reconnect_chunk(self, old_ws):
+        """Закрывает старый сокет и создает новый с тем же набором символов."""
+        symbols = self.ws_map.get(old_ws, [])
+        if not symbols:
+            return
+
+        try:
+            old_ws.exit()
+        except:
+            pass
+        
+        if old_ws in self.ws_map:
+            del self.ws_map[old_ws]
+        if old_ws in self.last_heartbeat:
+            del self.last_heartbeat[old_ws]
+
+        logger.info(f"🔄 Переподключение чанка на {len(symbols)} монет...")
+        
+        new_ws = WebSocket(
+            testnet=False, 
+            channel_type="linear",
+            ping_interval=20,
+            ping_timeout=10,
+            restart_on_error=True
+        )
+        
+        for symbol in symbols:
+            await self.subscribe_to_symbol(new_ws, symbol)
+        
+        self.ws_map[new_ws] = symbols
+        self.last_heartbeat[new_ws] = time.time()
+        logger.info(f"✅ Чанк успешно пересоздан.")
 
     def stop(self):
         for ws in self.ws_map.keys():
@@ -192,15 +276,19 @@ class BybitListener:
         self.ws_map.clear()
         logger.info("Все WebSocket соединения закрыты.")
 
-    def subscribe_to_symbol(self, ws, symbol):
+    async def subscribe_to_symbol(self, ws, symbol):
         """Подписка на ликвидации, тикеры и сделки для конкретного символа."""
+        callback = lambda msg: self.on_message(msg, ws=ws)
         try:
             # ПОДПИСКА 1: Ликвидации
-            ws.all_liquidation_stream(symbol=symbol, callback=self.on_message)
+            ws.all_liquidation_stream(symbol=symbol, callback=callback)
+            await asyncio.sleep(0.05)
             # ПОДПИСКА 2: Тикеры (OI, Price)
-            ws.ticker_stream(symbol=symbol, callback=self.on_message)
+            ws.ticker_stream(symbol=symbol, callback=callback)
+            await asyncio.sleep(0.05)
             # ПОДПИСКА 3: Сделки (CVD)
-            ws.trade_stream(symbol=symbol, callback=self.on_message)
+            ws.trade_stream(symbol=symbol, callback=callback)
+            await asyncio.sleep(0.05)
         except Exception as e:
             logger.error(f"❌ Ошибка динамической подписки на {symbol}: {e}")
 
@@ -219,7 +307,7 @@ class BybitListener:
                 break
         
         if target_ws:
-            self.subscribe_to_symbol(target_ws, symbol)
+            await self.subscribe_to_symbol(target_ws, symbol)
             self.ws_map[target_ws].append(symbol)
             logger.info(f"✅ Монета {symbol} добавлена в существующий сокет ({len(self.ws_map[target_ws])}/{chunk_size})")
         else:
@@ -232,11 +320,11 @@ class BybitListener:
                 ping_timeout=10,
                 restart_on_error=True
             )
-            self.subscribe_to_symbol(ws, symbol)
+            await self.subscribe_to_symbol(ws, symbol)
             self.ws_map[ws] = [symbol]
             
             # Небольшая задержка для стабилизации нового соединения
-            await asyncio.sleep(getattr(config, 'WS_DELAY_PROD', 1.5))
+            await asyncio.sleep(getattr(config, 'WS_DELAY_PROD', 2.0))
 
         if symbol not in self.target_symbols:
             self.target_symbols.append(symbol)

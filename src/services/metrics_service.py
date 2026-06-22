@@ -28,7 +28,7 @@ class MetricsService:
         uptime_str = str(uptime_delta).split('.')[0] if uptime_delta else "N/A"
 
         # 2. WebSocket Connections
-        total_pool = len(listener.ws_connections) if hasattr(listener, 'ws_connections') else 0
+        total_pool = len(listener.ws_map) if hasattr(listener, 'ws_map') else 0
         active_pool = listener.get_active_connections_count() if hasattr(listener, 'get_active_connections_count') else 0
 
         # 3. Aggregator Cache

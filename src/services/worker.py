@@ -20,6 +20,7 @@ class DataWorker:
 
     async def run(self, queue: asyncio.Queue):
         logger.info("Consumer (DataWorker) запущен.")
+        counter = 0
         while True:
             try:
                 msg = await queue.get()
@@ -61,6 +62,11 @@ class DataWorker:
                     symbol = msg.get("topic", "").split(".")[-1]
                     if symbol:
                         self.trade_aggregator.add_trades(symbol, data)
+                
+                counter += 1
+                if counter >= 20:
+                    await asyncio.sleep(0) 
+                    counter = 0
 
                 queue.task_done()
             except Exception as e:

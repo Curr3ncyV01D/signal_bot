@@ -159,9 +159,12 @@ async def process_liquidation_item(
             full_payload = {**base_payload, **trigger_result}
             alert_tasks.append(send_liquidation_alert(bot, recipient_id, **full_payload))
 
-    # Массовая отправка алертов (внутри send_liquidation_alert уже есть семафор и throttling)
     if alert_tasks:
-        await asyncio.gather(*alert_tasks, return_exceptions=True)
+        batch_size = 50
+        for i in range(0, len(alert_tasks), batch_size):
+            batch = alert_tasks[i:i + batch_size]
+            await asyncio.gather(*batch, return_exceptions=True)
+            await asyncio.sleep(0.01)
 
 def _check_triggers(
     target: CachedAlertTarget,

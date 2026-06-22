@@ -38,6 +38,8 @@ async def symbol_sync_worker(listener: BybitListener, market_aggregator: MarketA
             await warmup_system(market_aggregator, new_symbols)
             
             for symbol in new_symbols:
+                # Повторный прогрев конкретной монеты для гарантии перед подпиской
+                await warmup_system(market_aggregator, [symbol])
                 await listener.add_new_symbol(symbol)
                 
             logger.info(f"🆕 Обнаружены новые монеты: {', '.join(new_symbols)}. Добавлены через Hot Swap.")

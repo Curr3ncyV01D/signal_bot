@@ -168,29 +168,34 @@ class AlertFormatter:
             self._footer()
         )
 
-async def send_liquidation_alert(bot: Bot, user_id: int, **kwargs):
+async def send_liquidation_alert(bot: Bot, user_id: int, retry_count: int = 0, **kwargs):
     """Единая точка входа для отправки алертов с защитой от FloodWait"""
+    if retry_count > 3:
+        logger.error(f"❌ Превышено число попыток отправки для {user_id}")
+        return None
+
     async with broadcaster_semaphore:
         try:
             formatter = AlertFormatter(kwargs)
             text = formatter.compile_text()
 
-            await bot.send_message(
+            return await bot.send_message(
                 chat_id=user_id,
                 text=text,
                 parse_mode="HTML",
                 protect_content=True,
                 link_preview_options=LinkPreviewOptions(is_disabled=True)
             )
-            # Принудительная задержка для соблюдения лимитов Telegram (30/сек)
-            await asyncio.sleep(0.04)
             
         except TelegramRetryAfter as e:
-            logger.warning(f"Flood limit reached. Sleep for {e.retry_after}s")
+            logger.warning(f"⏳ Flood limit ({e.retry_after}s) для {user_id}. Попытка #{retry_count + 1}")
             await asyncio.sleep(e.retry_after)
-            # Рекурсивная попытка после паузы
-            return await send_liquidation_alert(bot, user_id, **kwargs)
+            return await send_liquidation_alert(bot, user_id, retry_count + 1, **kwargs)
+            
         except TelegramForbiddenError:
-            logger.info(f"User {user_id} blocked the bot. Skipping.")
+            logger.debug(f"🚫 Юзер {user_id} заблокировал бота.")
+            return None
+            
         except Exception as e:
-            logger.error(f"Ошибка Notifier для {user_id}: {e}")
+            logger.error(f"❌ Ошибка Notifier для {user_id}: {e}")
+            return None
