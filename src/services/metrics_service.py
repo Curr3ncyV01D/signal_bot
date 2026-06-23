@@ -75,8 +75,8 @@ class MetricsService:
         if not listener or not hasattr(listener, 'last_message_time') or not listener.last_message_time:
             return "N/A"
             
-        now = datetime.now(timezone.utc).replace(tzinfo=None)
-        diff = (now - listener.last_message_time).total_seconds()
+        now = time.time()
+        diff = now - listener.last_message_time
         
         if diff < 1:
             return f"{diff:.2f} сек."

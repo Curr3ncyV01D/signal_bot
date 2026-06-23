@@ -24,6 +24,11 @@ def get_start_kb(user: User) -> InlineKeyboardMarkup:
     builder.row(InlineKeyboardButton(text="⚙️ Настройки и фильтры", callback_data="open_settings"))
     return builder.as_markup()
 
+def get_back_button_kb(back_data: str) -> InlineKeyboardMarkup:
+    """Клавиатура для возврата в главное меню"""
+    return Kb_Helper.add_common_buttons(InlineKeyboardBuilder(), back_data=back_data).as_markup()
+
+
 def get_close_button_kb() -> InlineKeyboardMarkup:
     """Клавиатура для сообщений уведомлений. Нужно чтобы закрывать их одной кнопкой"""
     return Kb_Helper.add_common_buttons(InlineKeyboardBuilder()).as_markup()

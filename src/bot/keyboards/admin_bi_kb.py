@@ -29,5 +29,9 @@ def get_bi_system_kb() -> InlineKeyboardMarkup:
     """Клавиатура технического блока"""
     builder = InlineKeyboardBuilder()
     builder.row(InlineKeyboardButton(text="🔄 Обновить", callback_data="admin_bi_system"))
+    builder.row(
+        InlineKeyboardButton(text="🔍 Найти монету", callback_data="admin_bi_symbol_search"),
+        InlineKeyboardButton(text="📄 Список (TXT)", callback_data="admin_bi_symbol_export")
+    )
     builder.row(InlineKeyboardButton(text="⬅️ Назад", callback_data="admin_bi_main"))
     return builder.as_markup()

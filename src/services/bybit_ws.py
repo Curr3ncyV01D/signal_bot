@@ -16,6 +16,8 @@ class BybitListener:
         self.loop = loop
         self.last_message_time = None
         self.last_heartbeat = {}  # {ws_instance: timestamp}
+        self.symbol_statuses = {}  # {symbol: status}
+        self._watchdog_task = None
         
         if getattr(config, 'PROXY_URL', None):
             os.environ['HTTP_PROXY'] = config.PROXY_URL
@@ -32,12 +34,17 @@ class BybitListener:
         """Получает список всех активных USDT-пар с Bybit."""
         try:
             resp = self.http.get_instruments_info(category="linear", limit=1000)
+            instruments = resp.get("result", {}).get("list", [])
+            
+            for item in instruments:
+                self.symbol_statuses[item["symbol"]] = item["status"]
+
             symbols = [
                 item["symbol"] 
-                for item in resp.get("result", {}).get("list", []) 
+                for item in instruments
                 if item["symbol"].endswith("USDT") and item["status"] in ["Trading", "PreLaunch"]
             ]
-            logger.info(f"Найдено {len(symbols)} активных USDT-пар (включая PreLaunch)")
+            logger.debug(f"Найдено {len(symbols)} активных USDT-пар (включая PreLaunch)")
             return symbols
         except Exception as e:
             logger.error(f"Ошибка получения списка символов: {e}")
@@ -106,7 +113,7 @@ class BybitListener:
             else:
                 return
         
-        self.last_message_time = datetime.now(timezone.utc).replace(tzinfo=None)
+        self.last_message_time = time.time()
         
         if isinstance(data, list):
             for item in data:
@@ -119,7 +126,7 @@ class BybitListener:
         data = message.get("data")
         if not data: return
         
-        self.last_message_time = datetime.now(timezone.utc).replace(tzinfo=None)
+        self.last_message_time = time.time()
         topic = message.get("topic", "")
         
         # Оборачиваем в type: ticker
@@ -138,7 +145,7 @@ class BybitListener:
         
         if not filtered: return
 
-        self.last_message_time = datetime.now(timezone.utc).replace(tzinfo=None)
+        self.last_message_time = time.time()
         topic = message.get("topic", "")
         self.loop.call_soon_threadsafe(self.queue.put_nowait, {"type": "trade", "topic": topic, "data": filtered})
 
@@ -202,8 +209,8 @@ class BybitListener:
         print() 
         logger.info(f"\n✅ Все {len(self.ws_map)} соединений успешно инициализированы.")
         
-        if self._start_count == 0:
-            asyncio.create_task(self.watchdog_task())
+        if self._start_count == 0 and not self._watchdog_task:
+            self._watchdog_task = asyncio.create_task(self.watchdog_task())
 
         self._start_count += 1
         self._launch_context = "normal"
@@ -212,27 +219,32 @@ class BybitListener:
         """Проверка активности сокетов и их реанимация при необходимости."""
         logger.info("📡 Watchdog WebSocket запущен.")
         while True:
-            await asyncio.sleep(60)
-            now = time.time()
-            
-            # Если весь лисенер молчит слишком долго, возможно проблема с сетью вообще
-            total_silence = 0
-            if self.last_message_time:
-                total_silence = now - self.last_message_time.timestamp()
-            
-            # Если интернет есть (хотя бы один сокет жив), но конкретный сокет молчит > 3 минут
-            for ws, symbols in list(self.ws_map.items()):
-                last_ws_time = self.last_heartbeat.get(ws, 0)
-                silence_duration = now - last_ws_time
+            try:
+                await asyncio.sleep(60)
+                now = time.time()
                 
-                if silence_duration > 180:
-                    # Проверяем, не глобальная ли это тишина (проблема с интернетом)
-                    # Если другие сокеты получают данные, значит проблема в этом конкретном сокете
-                    if total_silence < 180:
-                        logger.warning(f"⚠️ Сокет {ws} молчит {int(silence_duration)} сек. Попытка реанимации...")
-                        await self.reconnect_chunk(ws)
-                    else:
-                        logger.debug(f"⏳ Глобальная тишина ({int(total_silence)} сек), Watchdog ожидает восстановления сети.")
+                # Если весь лисенер молчит слишком долго, возможно проблема с сетью вообще
+                total_silence = 0
+                if self.last_message_time:
+                    total_silence = now - self.last_message_time
+                
+                # Если интернет есть (хотя бы один сокет жив), но конкретный сокет молчит > 3 минут
+                for ws, symbols in list(self.ws_map.items()):
+                    last_ws_time = self.last_heartbeat.get(ws, 0)
+                    silence_duration = now - last_ws_time
+                    
+                    if silence_duration > 180:
+                        # Проверяем, не глобальная ли это тишина (проблема с интернетом)
+                        if self.last_message_time is None or total_silence < 180:
+                            logger.warning(f"⚠️ Сокет {ws} молчит {int(silence_duration)} сек. Попытка реанимации...")
+                            await self.reconnect_chunk(ws)
+                        else:
+                            logger.debug(f"⏳ Глобальная тишина ({int(total_silence)} сек), Watchdog ожидает восстановления сети.")
+            except asyncio.CancelledError:
+                logger.info("📡 Watchdog WebSocket остановлен.")
+                break
+            except Exception as e:
+                logger.error(f"Ошибка в watchdog_task: {e}")
 
     async def reconnect_chunk(self, old_ws):
         """Закрывает старый сокет и создает новый с тем же набором символов."""
@@ -259,21 +271,27 @@ class BybitListener:
             ping_timeout=10,
             restart_on_error=True
         )
-        
+
+        self.ws_map[new_ws] = symbols
+        self.last_heartbeat[new_ws] = time.time()
+
         for symbol in symbols:
             await self.subscribe_to_symbol(new_ws, symbol)
         
-        self.ws_map[new_ws] = symbols
-        self.last_heartbeat[new_ws] = time.time()
         logger.info(f"✅ Чанк успешно пересоздан.")
 
     def stop(self):
+        if self._watchdog_task:
+            self._watchdog_task.cancel()
+            self._watchdog_task = None
+
         for ws in self.ws_map.keys():
             try:
                 ws.exit()
             except:
                 pass
         self.ws_map.clear()
+        self.last_heartbeat.clear()
         logger.info("Все WebSocket соединения закрыты.")
 
     async def subscribe_to_symbol(self, ws, symbol):
@@ -328,3 +346,25 @@ class BybitListener:
 
         if symbol not in self.target_symbols:
             self.target_symbols.append(symbol)
+
+    def get_detailed_symbol_info(self, symbol: str) -> dict | None:
+        """Поиск информации об отслеживаемой монете по всем сокетам."""
+        target_symbol = symbol.upper()
+        
+        for i, (ws, symbols) in enumerate(self.ws_map.items(), 1):
+            if target_symbol in [s.upper() for s in symbols]:
+                return {
+                    "chunk_index": i,
+                    "is_connected": ws.is_connected() if hasattr(ws, 'is_connected') else False,
+                    "last_heartbeat": self.last_heartbeat.get(ws),
+                    "symbols_count": len(symbols),
+                    "market_status": self.symbol_statuses.get(target_symbol, "Unknown")
+                }
+        return None
+
+    def get_all_tracked_grouped(self) -> dict[int, list[str]]:
+        """Возвращает список всех монет, сгруппированных по номеру сокета."""
+        grouped = {}
+        for i, (ws, symbols) in enumerate(self.ws_map.items(), 1):
+            grouped[i] = sorted(list(symbols))
+        return grouped

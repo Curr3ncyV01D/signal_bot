@@ -37,6 +37,7 @@ class AdminChannelStates(StatesGroup):
     waiting_for_cascade = State()
     waiting_for_oi = State()
     waiting_for_sub_days = State()
+    waiting_for_symbol_search = State()
 
 USERS_PER_PAGE = 10
 

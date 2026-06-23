@@ -189,9 +189,19 @@ async def main():
         logging.error(f"Ошибка в основном цикле: {e}")
     finally:
         await on_shutdown(
-            bot, 
-            listener, 
-            [lag_detector_task, worker_task, sync_task, retention_task, aggregator_task, alert_cleanup_task, bouncer_task, dashboard_task, payment_task]
+            bot,
+            listener,
+            [
+                lag_detector_task,
+                worker_task,
+                sync_task,
+                retention_task,
+                aggregator_task,
+                alert_cleanup_task,
+                bouncer_task,
+                dashboard_task,
+                payment_task
+            ]
         )
 
 async def on_shutdown(bot: Bot, listener: BybitListener, tasks: list[asyncio.Task]):

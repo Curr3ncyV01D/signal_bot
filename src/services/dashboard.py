@@ -31,7 +31,6 @@ def _get_combined_data(liq_aggregator, market_aggregator, use_cache: bool = True
     combined_data = {**liq_data, **market_data}
     _last_data = combined_data
     _last_update_ts = now_ts
-    logger.debug("Dashboard worker собрал новые combined_data из агрегаторов.")
     return combined_data
 
 
@@ -145,7 +144,6 @@ async def dashboard_worker(bot: Bot, liq_aggregator, market_aggregator):
                         ),
                         timeout=10.0
                     )
-                    logger.debug(f"Dashboard message {message_id} успешно обновлен.")
                     
                 except asyncio.TimeoutError:
                     logger.error("❌ Таймаут при редактировании дэшборда (10 сек).")
