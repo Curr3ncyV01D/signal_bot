@@ -8,6 +8,7 @@ from src.database.models import User
 from src.database.session import async_session
 from src.database.functions import get_utc_now
 from src.bot.keyboards import get_settings_kb, get_back_to_settings_kb, get_start_kb
+from src.utils import format_smart_num, parse_numeric_input
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -16,12 +17,6 @@ class SettingsStates(StatesGroup):
     waiting_for_threshold = State()
     waiting_for_cascade_threshold = State()
     waiting_for_oi_thresholds = State()
-
-def format_large_number(num: float) -> str:
-    """Хелпер для красивого вывода в меню"""
-    if num >= 1_000_000: return f"${num/1_000_000:.1f}M"
-    elif num >= 1_000: return f"${num/1_000:.1f}K"
-    return f"${num:.0f}"
 
 async def render_settings_menu(event: types.Message | types.CallbackQuery, user: User):
     """Единая функция для отрисовки меню настроек (из команды или кнопки 'Назад')"""
@@ -37,10 +32,10 @@ async def render_settings_menu(event: types.Message | types.CallbackQuery, user:
         f"⚙️ <b>Личный кабинет и настройки</b>\n\n"
         f"👑 <b>Подписка:</b> {sub_status}\n\n"
         f"<b>📊 Фильтры ликвидаций:</b>\n"
-        f"🔸 Порог объема: <b>${user.threshold:,.0f}</b>\n"
-        f"🔸 Порог каскада: <b>${user.threshold_cascade:,.0f}</b>\n\n"
+        f"🔸 Порог объема: <b>${format_smart_num(user.threshold)}</b>\n"
+        f"🔸 Порог каскада: <b>${format_smart_num(user.threshold_cascade)}</b>\n\n"
         f"<b>📈 Фильтры аналитики (OI):</b>\n"
-        f"🔸 Мин. рост OI: <b>{user.threshold_oi_percent}%</b> и <b>{format_large_number(user.threshold_oi_value)}</b>\n\n"
+        f"🔸 Мин. рост OI: <b>{format_smart_num(user.threshold_oi_percent, is_percent=True)}</b> и <b>${format_smart_num(user.threshold_oi_value)}</b>\n\n"
         f"💡 <i>Подсказка: Отключайте неинтересующие индикаторы ниже, чтобы сделать уведомления компактнее.</i>\n"
         f"\n<i>Нажмите на кнопки '❓ Справка', чтобы узнать подробности.</i>"
     )
@@ -136,12 +131,12 @@ async def start_set_threshold(callback: types.CallbackQuery, state: FSMContext):
 
 @router.message(SettingsStates.waiting_for_threshold)
 async def process_threshold(message: types.Message, state: FSMContext):
-    raw_text = message.text.replace(',', '.').replace('$', '').replace(' ', '')
     try:
-        new_threshold = float(raw_text)
-        if new_threshold <= 0 or new_threshold > 100_000_000_000: raise ValueError
+        new_threshold = parse_numeric_input(message.text.replace("$", ""))
+        if new_threshold <= 0 or new_threshold > 100_000_000_000:
+            raise ValueError
     except ValueError:
-        return await message.answer("❌ Некорректный ввод. Введите положительное число (например: 10000).")
+        return await message.answer("❌ Пожалуйста, введите корректную сумму цифрами")
     
     try:
         async with async_session() as session:
@@ -149,7 +144,7 @@ async def process_threshold(message: types.Message, state: FSMContext):
             user.threshold = new_threshold
             await session.commit()
             await state.clear()
-            await message.answer(f"✅ Порог объема изменен на <b>${new_threshold:,.2f}</b>!", parse_mode="HTML")
+            await message.answer(f"✅ Порог объема изменен на <b>${format_smart_num(new_threshold)}</b>!", parse_mode="HTML")
     except Exception as e:
         logger.error(f"Ошибка сохранения: {e}")
 
@@ -161,12 +156,12 @@ async def start_set_cascade_threshold(callback: types.CallbackQuery, state: FSMC
 
 @router.message(SettingsStates.waiting_for_cascade_threshold)
 async def process_cascade_threshold(message: types.Message, state: FSMContext):
-    raw_text = message.text.replace(',', '.').replace('$', '').replace(' ', '')
     try:
-        new_threshold = float(raw_text)
-        if new_threshold <= 0 or new_threshold > 100_000_000_000: raise ValueError
+        new_threshold = parse_numeric_input(message.text.replace("$", ""))
+        if new_threshold <= 0 or new_threshold > 100_000_000_000:
+            raise ValueError
     except ValueError:
-        return await message.answer("❌ Некорректный ввод. Введите положительное число (например: 2000).")
+        return await message.answer("❌ Пожалуйста, введите корректную сумму цифрами")
     
     try:
         async with async_session() as session:
@@ -174,7 +169,7 @@ async def process_cascade_threshold(message: types.Message, state: FSMContext):
             user.threshold_cascade = new_threshold
             await session.commit()
             await state.clear()
-            await message.answer(f"✅ Порог каскадов изменен на <b>${new_threshold:,.2f}</b>!", parse_mode="HTML")
+            await message.answer(f"✅ Порог каскадов изменен на <b>${format_smart_num(new_threshold)}</b>!", parse_mode="HTML")
     except Exception as e:
         logger.error(f"Ошибка сохранения: {e}")
 
@@ -194,16 +189,17 @@ async def start_set_oi_thresholds(callback: types.CallbackQuery, state: FSMConte
 
 @router.message(SettingsStates.waiting_for_oi_thresholds)
 async def process_oi_thresholds(message: types.Message, state: FSMContext):
-    raw_text = message.text.replace(',', '.').replace('%', '').replace('$', '')
-    parts = raw_text.split()
+    parts = message.text.replace("%", "").replace("$", "").split()
     
     try:
-        if len(parts) != 2: raise ValueError
-        new_pct = float(parts[0])
-        new_val = float(parts[1])
-        if new_pct <= 0 or new_val <= 0: raise ValueError
+        if len(parts) != 2:
+            raise ValueError
+        new_pct = parse_numeric_input(parts[0])
+        new_val = parse_numeric_input(parts[1])
+        if new_pct <= 0 or new_val <= 0:
+            raise ValueError
     except ValueError:
-        return await message.answer("❌ Ошибка. Введите два положительных числа через пробел. Пример: 5 500000")
+        return await message.answer("❌ Пожалуйста, введите корректную сумму цифрами")
     
     try:
         async with async_session() as session:
@@ -213,7 +209,7 @@ async def process_oi_thresholds(message: types.Message, state: FSMContext):
             await session.commit()
             await state.clear()
             await message.answer(
-                f"✅ Пороги ОИ изменены!\nПроцент: <b>{new_pct}%</b>\nОбъем: <b>{format_large_number(new_val)}</b>", 
+                f"✅ Пороги ОИ изменены!\nПроцент: <b>{format_smart_num(new_pct, is_percent=True)}</b>\nОбъем: <b>${format_smart_num(new_val)}</b>", 
                 parse_mode="HTML"
             )
     except Exception as e:

@@ -21,7 +21,7 @@ class BIFormatter:
         return (
             f"💰 {hbold('Финансовая аналитика')}\n\n"
             f"💸 {hbold('Оборот (DEPOSIT):')}\n"
-            f"  ├ 24ч: {hbold(data['turnover_24h'])} $ ({delta_emoji} {data['delta_24h']}% по сравнению с предыдущими 24ч)\n"
+            f"  ├ 24ч: {hbold(data['turnover_24h'])} $ ({delta_emoji} {data['delta_24h']}% относительно прошлых 24ч)\n"
             f"  ├ 48ч: {hbold(data['turnover_48h'])} $\n"
             f"  ├ 7д: {hbold(data['turnover_7d'])} $\n"
             f"  └ Всего: {hbold(data['turnover_total'])} $\n\n"
@@ -55,8 +55,9 @@ class BIFormatter:
     @classmethod
     def format_system_text(cls, data: dict) -> str:
         """Форматирует технический блок."""
-        cpu_bar = cls.create_progress_bar(data['cpu_usage'])
-        ram_bar = cls.create_progress_bar(data['ram_usage'])
+        # Прогресс-бары для сервера
+        sv_cpu_bar = cls.create_progress_bar(data['server_cpu_pct'])
+        sv_ram_bar = cls.create_progress_bar(data['server_ram_pct'])
         
         conn_status = "✅" if data['active_connections'] >= max(1, data['total_connections'] * 3 / 4) else "⚠️"
         if data['active_connections'] == 0: conn_status = "❌"
@@ -67,14 +68,22 @@ class BIFormatter:
         return (
             f"⚙️ {hbold('Техническое состояние')}\n\n"
             f"🖥 {hbold('Нагрузка сервера:')}\n"
-            f"  ├ CPU: {cpu_bar} {hbold(data['cpu_usage'])}%\n"
-            f"  └ RAM: {ram_bar} {hbold(data['ram_usage'])}%\n\n"
+            f"  ├ CPU: {sv_cpu_bar} {hbold(f'{data['server_cpu_pct']:.1f}%')}\n"
+            f"  └ RAM: {sv_ram_bar} {hbold(f'{data['server_ram_pct']:.1f}%')} "
+            f"({data['server_ram_used_gb']:.1f}/{data['server_ram_total_gb']:.1f} GB)\n\n"
+            
+            f"🤖 {hbold('Нагрузка бота:')}\n"
+            f"  ├ CPU: {hbold(f'{data['process_cpu_pct']:.1f}%')}\n"
+            f"  └ RAM: {hbold(f'{data['process_ram_mb']:.1f}')} MiB "
+            f"({hbold(f'{data['process_ram_pct']:.2f}%')} от сервера)\n\n"
+
             f"🌐 {hbold('Инфраструктура:')}\n"
             f"  ├ Соединения: {conn_status} {hbold(data['active_connections'])}/{hbold(data['total_connections'])}\n"
             f"  ├ Последний сигнал API: {hbold(data['latency'])} назад\n"
             f"  ├ Очередь обработки: {queue_status} {hbold(data['queue_size'])}\n"
             f"  └ Событий в кэше: {hbold(data['total_events'])}\n\n"
-            f"👮‍♂️ {hbold('Вышибала:')} Последний проверка {data['bouncer_hb']}\n"
+            f"💳 {hbold('Платежи:')} Последняя проверка {data['payment_hb']}\n"
+            f"👮‍♂️ {hbold('Вышибала:')} Последняя проверка {data['bouncer_hb']}\n"
             f"💓 {hbold('Время работы:')} {hbold(data['uptime'])}\n"
             f"🕒 Время сервера: {data['server_time']} UTC"
         )

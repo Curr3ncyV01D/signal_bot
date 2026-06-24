@@ -1,4 +1,6 @@
 import json
+import logging
+import sys
 from datetime import datetime
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import field_validator
@@ -6,6 +8,17 @@ from pydantic import field_validator
 class Settings(BaseSettings):
     # === 0. СИСТЕМНЫЕ МЕТРИКИ (Internal) ===
     START_TIME: datetime | None = None
+    # Настройка логгирования
+    LOG_LEVEL: str = "INFO"
+    DEBUG_LOGGERS: list[str] = ["aiogram", "aiogram.event", "pybit"]
+    INFRA_LOGGERS: list[str] = [
+        "urllib3",
+        "websocket",
+        "aiohttp",
+        "asyncio",
+        "uvicorn",
+        "httpcore",
+    ]
 
     # === 1. ОСНОВНЫЕ НАСТРОЙКИ (Infrastructure) ===
     BOT_TOKEN: str
@@ -20,6 +33,7 @@ class Settings(BaseSettings):
     # Бизнес-правила (Тарифы и деньги)
     # Тарифы подписки (дней: цена_usdt)
     TARIFFS: dict[int, float] = {
+        1: 1.0,
         30: 20.0,
         60: 40.0,
         150: 100.0
@@ -42,7 +56,7 @@ class Settings(BaseSettings):
 
     # Пороги фильтрации
     MIN_LIQ_VALUE_FILTER: float = 100.0          # Отсечение шума ликвидаций ($)
-    MIN_TRADE_VALUE_FOR_CVD: float = 200.0       # Мин. сделка для подсчета дельты ($)
+    MIN_TRADE_VALUE_FOR_CVD: float = 300.0       # Мин. сделка для подсчета дельты ($)
     CASCADE_TRIGGER_COUNT: int = 15              # Кол-во событий для алерта "КАСКАД"
 
     # Временные окна (в секундах)
@@ -81,5 +95,38 @@ class Settings(BaseSettings):
     DEV_SYMBOL_LIMIT: int = 0
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+
+
+def setup_logging() -> None:
+    # 1. Получаем уровень из конфига
+    level_name = config.LOG_LEVEL.upper()
+    level = getattr(logging, level_name, logging.INFO)
+
+    # 2. Настраиваем корневой логгер
+    root_logger = logging.getLogger()
+    root_logger.setLevel(level)
+
+    # 3. Создаем обработчик для консоли ПРАВИЛЬНО
+    handler = logging.StreamHandler(sys.stdout)
+    handler.setFormatter(logging.Formatter(
+        "%(asctime)s - [%(levelname)s] - %(name)s - %(message)s"
+    ))
+    # ВАЖНО: Ставим обработчику уровень NOTSET, чтобы он пропускал всё,
+    # что разрешит сам логгер
+    handler.setLevel(logging.NOTSET) 
+    
+    root_logger.handlers = [] # Очищаем старые обработчики
+    root_logger.addHandler(handler)
+
+    # 4. Глушим инфраструктуру (только ошибки)
+    SILENT_LOGGERS = ["pybit", "websocket", "aiohttp", "asyncio", "urllib3", "httpcore"]
+    for logger_name in SILENT_LOGGERS:
+        logging.getLogger(logger_name).setLevel(logging.WARNING)
+
+    # 5. Настраиваем aiogram.event в зависимости от стартового уровня
+    if level == logging.DEBUG:
+        logging.getLogger("aiogram.event").setLevel(logging.INFO)
+    else:
+        logging.getLogger("aiogram.event").setLevel(logging.WARNING)
 
 config = Settings()

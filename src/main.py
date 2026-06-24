@@ -2,10 +2,11 @@ import asyncio
 import logging
 import signal
 from datetime import datetime, timezone
+from typing import Callable
 from aiogram import Bot, Dispatcher
 from sqlalchemy import select
 
-from src.core.config import config
+from src.core.config import config, setup_logging
 from src.core.security import SecurityManager
 from src.database.session import async_session
 from src.database.models import User
@@ -13,6 +14,7 @@ from src.database.crud.liq_service import get_recent_liquidations
 from src.database.crud.channel_service import ChannelService
 from src.bot.handlers import main_router as router
 from src.bot.middlewares.block_middleware import BlockMiddleware
+from src.bot.middlewares.fsm_cleaner import FSMCleanerMiddleware
 from src.services.bybit_ws import BybitListener
 from src.services.aggregators.liq_aggregator import LiquidationAggregator
 from src.services.aggregators.market_aggregator import MarketAggregator
@@ -28,11 +30,57 @@ from src.services.cryptopay import cryptopay
 from src.services.symbol_sync import build_target_symbols, symbol_sync_worker
 from src.utils import lag_detector
 
+logger = logging.getLogger(__name__)
+
+
+def toggle_log_level() -> None:
+    root_logger = logging.getLogger()
+    
+    if root_logger.level == logging.INFO:
+        new_level = logging.DEBUG
+        aiogram_level = logging.INFO
+        status_text = "DEBUG (С аналитикой и телеметрией)"
+    else:
+        new_level = logging.INFO
+        aiogram_level = logging.WARNING
+        status_text = "INFO (Только сигналы)"
+
+    # 1. Меняем уровень самого логгера
+    root_logger.setLevel(new_level)
+    
+    # 2. МЕНЯЕМ УРОВЕНЬ ОБРАБОТЧИКОВ
+    for handler in root_logger.handlers:
+        handler.setLevel(logging.NOTSET) # Разрешаем обработчикам всё
+
+    # 3. Управляем конкретно aiogram.event
+    logging.getLogger("aiogram.event").setLevel(aiogram_level)
+
+    logger.info(f"--- [SYSTEM] 🔄 Уровень логирования переключен на {status_text} ---")
+
+def install_signal_handlers(loop: asyncio.AbstractEventLoop, stop_event: asyncio.Event) -> None:
+    def shutdown_handler() -> None:
+        logger.info("Получен сигнал завершения...")
+        stop_event.set()
+
+    signal_map: dict[int, Callable[[], None]] = {
+        signal.SIGINT: shutdown_handler,
+        signal.SIGTERM: shutdown_handler,
+    }
+
+    sigusr1 = getattr(signal, "SIGUSR1", None)
+    if sigusr1 is not None:
+        signal_map[sigusr1] = toggle_log_level
+
+    for sig, handler in signal_map.items():
+        try:
+            loop.add_signal_handler(sig, handler)
+        except NotImplementedError:
+            signal.signal(sig, lambda _signum, _frame, callback=handler: callback())
+
+
 async def main():
+    setup_logging()
     config.START_TIME = datetime.now(timezone.utc)
-    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-    logging.getLogger('pybit').setLevel(logging.WARNING)
-    logging.getLogger('websocket').setLevel(logging.WARNING)
 
     # Логика прокси
     session = None
@@ -48,6 +96,7 @@ async def main():
     bot = Bot(token=config.BOT_TOKEN, session=session)
     dp = Dispatcher()
     dp.update.outer_middleware(BlockMiddleware(async_session))
+    dp.message.outer_middleware(FSMCleanerMiddleware())
     dp.include_router(router)
 
     # Инициализация инфраструктуры данных (SOLID & DI)
@@ -97,8 +146,8 @@ async def main():
     worker_task = asyncio.create_task(worker.run(queue))
     sync_task = asyncio.create_task(symbol_sync_worker(listener, market_aggregator))
 
-    # 6. Запускаем фоновые задачи очистки и Вышибалу
-    lag_detector_task = asyncio.create_task(lag_detector())
+    # 6. Запускаем фоновые задачи и Вышибалу
+    lag_detector_task = asyncio.create_task(lag_detector(queue))
     retention_task = asyncio.create_task(retention_policy_worker(hours=4))
     aggregator_task = asyncio.create_task(liq_aggregator.cleanup_task())
     alert_cleanup_task = asyncio.create_task(cleanup_alert_history_task())        
@@ -106,21 +155,10 @@ async def main():
     dashboard_task = asyncio.create_task(dashboard_worker(bot, liq_aggregator, market_aggregator))
     payment_task = asyncio.create_task(payment_checker_worker(bot))
 
-    # Передаем зависимости в Polling для команды /status 
     stop_event = asyncio.Event()
+    install_signal_handlers(loop, stop_event)
 
-    def signal_handler():
-        logging.info("Получен сигнал завершения...")
-        stop_event.set()
-
-    for sig in (signal.SIGINT, signal.SIGTERM):
-        try:
-            loop.add_signal_handler(sig, signal_handler)
-        except NotImplementedError:
-            pass
-
-    logging.info("Система запущена в модульном режиме.")
-
+    # Передаем зависимости в Polling
     try:
         polling_task = asyncio.create_task(
             dp.start_polling(
@@ -151,9 +189,19 @@ async def main():
         logging.error(f"Ошибка в основном цикле: {e}")
     finally:
         await on_shutdown(
-            bot, 
-            listener, 
-            [lag_detector_task, worker_task, sync_task, retention_task, aggregator_task, alert_cleanup_task, bouncer_task, dashboard_task, payment_task]
+            bot,
+            listener,
+            [
+                lag_detector_task,
+                worker_task,
+                sync_task,
+                retention_task,
+                aggregator_task,
+                alert_cleanup_task,
+                bouncer_task,
+                dashboard_task,
+                payment_task
+            ]
         )
 
 async def on_shutdown(bot: Bot, listener: BybitListener, tasks: list[asyncio.Task]):

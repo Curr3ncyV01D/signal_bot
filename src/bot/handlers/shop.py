@@ -10,7 +10,7 @@ from src.database.functions import get_utc_now
 from src.bot.keyboards.billing_kb import get_subscription_tariffs_kb
 from src.bot.keyboards import get_close_button_kb
 from src.database.models import User
-from src.utils import format_datetime
+from src.utils import format_datetime, format_smart_num
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -65,7 +65,7 @@ async def callback_process_purchase(callback: types.CallbackQuery):
         text = (
             f"🎉 <b>Подписка успешно оформлена!</b>\n\n"
             f"📅 Срок действия до: {hbold(format_datetime(new_end))}\n"
-            f"💰 Списано: {hbold(f'{price} USDT')}"
+            f"💰 Списано: {hbold(f'{format_smart_num(price)} USDT')}"
             f"{link_text}"
         )
         await callback.message.edit_text(text, parse_mode="HTML")
@@ -77,7 +77,7 @@ async def callback_process_purchase(callback: types.CallbackQuery):
                     chat_id=referrer_id,
                     text=(
                         "🤝 <b>Партнерский бонус начислен!</b>\n\n"
-                        f"Ваш реферал совершил покупку, и вам начислено {hbold(f'{bonus_amount:.2f} USDT')}."
+                        f"Ваш реферал совершил покупку, и вам начислено {hbold(f'{format_smart_num(bonus_amount)} USDT')}."
                     ),
                     parse_mode="HTML",
                     reply_markup=get_close_button_kb()

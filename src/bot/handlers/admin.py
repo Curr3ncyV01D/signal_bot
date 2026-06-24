@@ -21,12 +21,10 @@ from src.bot.filters.admin import IsAdminFilter
 from src.bot.keyboards import (
     get_admin_main_kb, get_users_list_kb, 
     get_user_manage_kb, get_admin_channel_kb,
-    get_close_button_kb
+    get_close_button_kb, get_cancel_fsm_kb
 )
-from src.bot.utils.dashboard_formatter import DashboardFormatter
-from src.utils import format_datetime
-from src.core.config import config
-from aiogram.types import LinkPreviewOptions
+from src.services.dashboard import recreate_dashboard_logic
+from src.utils import format_datetime, format_smart_num, parse_numeric_input
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +37,7 @@ class AdminChannelStates(StatesGroup):
     waiting_for_cascade = State()
     waiting_for_oi = State()
     waiting_for_sub_days = State()
+    waiting_for_symbol_search = State()
 
 USERS_PER_PAGE = 10
 
@@ -188,20 +187,15 @@ async def process_admin_toggle_block(callback: types.CallbackQuery, bot: Bot):
 async def render_channel_settings(message_or_call, session):
     """Хелпер для отрисовки меню настроек канала"""
     settings = await ChannelService.get_settings(session)
-    
-    def fmt_num(num):
-        if num >= 1_000_000: return f"${num/1_000_000:.1f}M"
-        elif num >= 1_000: return f"${num/1_000:.1f}K"
-        return f"${num:.0f}"
 
     text = (
         f"📢 <b>Настройки VIP-Канала</b>\n\n"
         f"<b>Статус постинга:</b> {'🟢 АКТИВЕН' if settings.is_active else '🔴 ОТКЛЮЧЕН'}\n\n"
         f"<b>📊 Фильтры ликвидаций:</b>\n"
-        f"🔸 Порог объема: <b>{fmt_num(settings.threshold)}</b>\n"
-        f"🔸 Порог каскада: <b>{fmt_num(settings.threshold_cascade)}</b>\n\n"
+        f"🔸 Порог объема: <b>${format_smart_num(settings.threshold)}</b>\n"
+        f"🔸 Порог каскада: <b>${format_smart_num(settings.threshold_cascade)}</b>\n\n"
         f"<b>📈 Фильтры аналитики (OI):</b>\n"
-        f"🔸 Мин. рост OI: <b>{settings.threshold_oi_percent}%</b> и <b>{fmt_num(settings.threshold_oi_value)}</b>\n\n"
+        f"🔸 Мин. рост OI: <b>{format_smart_num(settings.threshold_oi_percent, is_percent=True)}</b> и <b>${format_smart_num(settings.threshold_oi_value)}</b>\n\n"
         f"<i>Здесь вы настраиваете глобальные фильтры. Сигналы ниже этих значений в канал не попадут.</i>"
     )
     markup = get_admin_channel_kb(settings)
@@ -263,13 +257,15 @@ async def set_chan_vol(callback: types.CallbackQuery, state: FSMContext):
 @router.message(AdminChannelStates.waiting_for_volume)
 async def process_chan_vol(message: types.Message, state: FSMContext):
     try:
-        val = float(message.text.replace(',', '.').replace('$', '').replace(' ', ''))
+        val = parse_numeric_input(message.text.replace("$", ""))
+        if val <= 0:
+            raise ValueError
         async with async_session() as session:
             await ChannelService.update_settings(session, threshold=val)
             await render_channel_settings(message, session)
         await state.clear()
     except ValueError:
-        await message.answer("❌ Введите корректное число.")
+        await message.answer("❌ Пожалуйста, введите корректную сумму цифрами")
 
 @router.callback_query(F.data == "admin_chan_set_cas")
 async def set_chan_cas(callback: types.CallbackQuery, state: FSMContext):
@@ -280,13 +276,15 @@ async def set_chan_cas(callback: types.CallbackQuery, state: FSMContext):
 @router.message(AdminChannelStates.waiting_for_cascade)
 async def process_chan_cas(message: types.Message, state: FSMContext):
     try:
-        val = float(message.text.replace(',', '.').replace('$', '').replace(' ', ''))
+        val = parse_numeric_input(message.text.replace("$", ""))
+        if val <= 0:
+            raise ValueError
         async with async_session() as session:
             await ChannelService.update_settings(session, threshold_cascade=val)
             await render_channel_settings(message, session)
         await state.clear()
     except ValueError:
-        await message.answer("❌ Введите корректное число.")
+        await message.answer("❌ Пожалуйста, введите корректную сумму цифрами")
 
 @router.callback_query(F.data == "admin_chan_set_oi")
 async def set_chan_oi(callback: types.CallbackQuery, state: FSMContext):
@@ -297,16 +295,20 @@ async def set_chan_oi(callback: types.CallbackQuery, state: FSMContext):
 @router.message(AdminChannelStates.waiting_for_oi)
 async def process_chan_oi(message: types.Message, state: FSMContext):
     try:
-        parts = message.text.replace(',', '.').replace('%', '').replace('$', '').split()
-        if len(parts) != 2: raise ValueError
-        pct, val = float(parts[0]), float(parts[1])
+        parts = message.text.replace("%", "").replace("$", "").split()
+        if len(parts) != 2:
+            raise ValueError
+        pct = parse_numeric_input(parts[0])
+        val = parse_numeric_input(parts[1])
+        if pct <= 0 or val <= 0:
+            raise ValueError
         
         async with async_session() as session:
             await ChannelService.update_settings(session, threshold_oi_percent=pct, threshold_oi_value=val)
             await render_channel_settings(message, session)
         await state.clear()
     except ValueError:
-        await message.answer("❌ Введите два числа через пробел (например: 10 1000000).")
+        await message.answer("❌ Пожалуйста, введите корректную сумму цифрами")
 
 @router.callback_query(F.data == "admin_chan_restart_dash")
 async def process_restart_dash(
@@ -315,50 +317,13 @@ async def process_restart_dash(
     liq_aggregator, 
     market_aggregator
 ):
-    """
-    Создает новое сообщение дэшборда в канале, закрепляет его и сохраняет ID.
-    """
     try:
-        # 0. Пытаемся удалить старое сообщение дэшборда
-        settings = ChannelService.get_cached_settings()
-        if settings.dashboard_message_id:
-            try:
-                await bot.delete_message(
-                    chat_id=config.PRIVATE_CHANNEL_ID,
-                    message_id=settings.dashboard_message_id
-                )
-            except Exception as e:
-                logger.warning(f"Не удалось удалить старое сообщение дэшборда: {e}")
+        message_id = await recreate_dashboard_logic(bot, liq_aggregator, market_aggregator)
+        if message_id is None:
+            await callback.answer("⏳ Пересоздание дэшборда уже выполняется.", show_alert=True)
+        else:
+            await callback.answer("✅ Дэшборд успешно пересоздан и закреплен!", show_alert=True)
 
-        # 1. Собираем актуальные данные из агрегаторов
-        liq_data = liq_aggregator.get_top_liquidations(window_minutes=15)
-        market_data = market_aggregator.get_market_rankings(window_minutes=15)
-        combined_data = {**liq_data, **market_data}
-        
-        # 2. Генерируем текст дэшборда
-        text = DashboardFormatter.compile_dashboard(combined_data, window_minutes=15)
-        
-        # 3. Отправляем новое сообщение в канал
-        msg = await bot.send_message(
-            chat_id=config.PRIVATE_CHANNEL_ID,
-            text=text,
-            parse_mode="HTML",
-            link_preview_options=LinkPreviewOptions(is_disabled=True)
-        )
-        
-        # 4. Закрепляем его
-        await bot.pin_chat_message(
-            chat_id=config.PRIVATE_CHANNEL_ID,
-            message_id=msg.message_id
-        )
-        
-        # 5. Сохраняем ID в базу данных
-        async with async_session() as session:
-            await ChannelService.set_dashboard_id(session, msg.message_id)
-            
-        await callback.answer("✅ Дэшборд успешно запущен и закреплен!", show_alert=True)
-        
-        # 6. Обновляем меню админки
         async with async_session() as session:
             await render_channel_settings(callback, session)
             
@@ -368,6 +333,16 @@ async def process_restart_dash(
 
 # --- УПРАВЛЕНИЕ ПОДПИСКОЙ ---
 
+@router.callback_query(F.data == "admin_fsm_stop")
+async def process_admin_fsm_stop(callback: types.CallbackQuery, state: FSMContext):
+    """Сброс FSM и удаление сообщения с вопросом"""
+    await state.clear()
+    try:
+        await callback.message.delete()
+    except Exception as e:
+        logger.error(f"Ошибка при удалении сообщения FSM: {e}")
+    await callback.answer("Ввод отменен")
+
 @router.callback_query(F.data.startswith("admin_subs_"))
 async def process_admin_subs_start(callback: types.CallbackQuery, state: FSMContext):
     """Начало процесса изменения подписки"""
@@ -375,13 +350,15 @@ async def process_admin_subs_start(callback: types.CallbackQuery, state: FSMCont
     await state.update_data(target_user_id=user_id)
     await state.set_state(AdminChannelStates.waiting_for_sub_days)
     
-    await callback.message.answer(
+    msg = await callback.message.answer(
         f"📅 <b>Изменение срока подписки</b>\n\n"
         f"Введите количество дней (от 0 до {config.MAX_SUB_DAYS}):\n"
         "• <b>0</b> — аннулировать подписку\n"
         f"• <b>1-{config.MAX_SUB_DAYS}</b> — установить новый срок от текущего момента",
-        parse_mode="HTML"
+        parse_mode="HTML",
+        reply_markup=get_cancel_fsm_kb()
     )
+    await state.update_data(fsm_msg_id=msg.message_id)
     await callback.answer()
 
 @router.message(AdminChannelStates.waiting_for_sub_days)
@@ -389,13 +366,14 @@ async def process_admin_subs_days(message: types.Message, state: FSMContext, bot
     """Обработка ввода количества дней"""
     data = await state.get_data()
     user_id = data.get("target_user_id")
+    fsm_msg_id = data.get("fsm_msg_id")
     
     if not message.text or not message.text.isdigit():
-        return await message.answer("❌ Введите целое число дней (например: 30).")
+        return await message.answer("❌ Введите целое число дней (например: 30).", reply_markup=get_cancel_fsm_kb())
         
     days = int(message.text)
     if days < 0 or days > config.MAX_SUB_DAYS:
-        return await message.answer(f"❌ Введите число от 0 до {config.MAX_SUB_DAYS}.")
+        return await message.answer(f"❌ Введите число от 0 до {config.MAX_SUB_DAYS}.", reply_markup=get_cancel_fsm_kb())
         
     async with async_session() as session:
         user = await update_user_subscription(session, user_id, days)
@@ -404,9 +382,14 @@ async def process_admin_subs_days(message: types.Message, state: FSMContext, bot
             await state.clear()
             return await message.answer("❌ Ошибка: пользователь не найден в базе данных.")
             
-        card_text = _format_user_card_text(user)
-        is_blocked = user.is_blocked
         sub_end = user.subscription_end
+
+    # Удаляем сообщение с вопросом
+    if fsm_msg_id:
+        try:
+            await bot.delete_message(chat_id=message.chat.id, message_id=fsm_msg_id)
+        except Exception:
+            pass
 
     # Уведомление пользователя
     try:

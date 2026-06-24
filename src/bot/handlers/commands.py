@@ -140,7 +140,7 @@ async def generate_status_text(listener, liq_aggregator, data_queue: asyncio.Que
         f"📡 Мониторинг пар: {hbold(stats['active_symbols'])}\n"
         f"🧠 Событий в кэше: {hbold(stats['total_events'])}\n"
         f"{queue_status} {hbold('Очередь обработки:')} {hbold(queue_size)}\n"
-        f"📊 Нагрузка: CPU {hbold(stats['cpu_usage'])}% | RAM {hbold(stats['ram_usage'])}%\n\n"
+        f"📊 Нагрузка: CPU {hbold('{:.1f}'.format(stats['process_cpu_pct']))}% | RAM {hbold('{:.2f}'.format(stats['process_ram_pct']))}%\n\n"
         f"🕒 Время работы: {hbold(stats['uptime'])}\n"
         f"🕒 Время сервера: {stats['server_time']} UTC"
     )

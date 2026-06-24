@@ -1,73 +1,109 @@
 import logging
+from dataclasses import dataclass, fields
+from datetime import datetime
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from src.database.models import ChannelSettings
 
 logger = logging.getLogger(__name__)
 
-class ChannelService:
-    # Глобальный кэш настроек в оперативной памяти
-    _cached_settings: ChannelSettings | None = None
+@dataclass
+class ChannelSettingsData:
+    id: int = 1
+    is_active: bool = True
+    threshold: float = 100000.0
+    threshold_cascade: float = 50000.0
+    alert_cascade: bool = True
+    alert_volume: bool = True
+    alert_squeeze: bool = True
+    alert_oi: bool = True
+    threshold_oi_percent: float = 10.0
+    threshold_oi_value: float = 1000000.0
+    alert_cvd: bool = True
+    alert_rsi: bool = True
+    dashboard_message_id: int | None = None
+    last_summary_at: datetime | None = None
 
     @classmethod
-    async def get_settings(cls, session: AsyncSession) -> ChannelSettings:
+    def from_orm(cls, obj: ChannelSettings):
+        data = {}
+        for field in fields(cls):
+            if hasattr(obj, field.name):
+                data[field.name] = getattr(obj, field.name)
+        return cls(**data)
+
+class ChannelService:
+    # Глобальный кэш настроек в оперативной памяти
+    _cached_settings: ChannelSettingsData | None = None
+
+    @classmethod
+    async def get_settings(cls, session: AsyncSession) -> ChannelSettingsData:
         """
         Получает настройки канала. 
         Сначала проверяет кэш. Если кэш пуст — лезет в БД.
         Если в БД нет записи (первый запуск) — создает её.
         """
-        if cls._cached_settings is not None:
-            return cls._cached_settings
-        
         try:
             result = await session.execute(select(ChannelSettings).where(ChannelSettings.id == 1))
-            settings = result.scalar_one_or_none()
+            settings_orm = result.scalar_one_or_none()
             
-            if not settings:
+            if not settings_orm:
                 # Инициализация первой записи
-                settings = ChannelSettings(id=1)
-                session.add(settings)
+                settings_orm = ChannelSettings(id=1)
+                session.add(settings_orm)
                 await session.commit()
-                await session.refresh(settings)
+                await session.refresh(settings_orm)
                 logger.info("Создана базовая запись настроек канала в БД.")
+            else:
+                # Гарантируем актуальность данных из БД
+                await session.refresh(settings_orm)
             
-            cls._cached_settings = settings
-            return settings
+            # Конвертируем в plain object для кэша
+            cls._cached_settings = ChannelSettingsData.from_orm(settings_orm)
+            return cls._cached_settings
+            
         except Exception as e:
             logger.error(f"Ошибка при получении настроек канала: {e}")
-            # Возвращаем дефолтный объект, чтобы бот не упал при сбое БД
-            return ChannelSettings()
+            # Возвращаем дефолтный объект из кэша или новый, чтобы бот не упал
+            return cls._cached_settings or ChannelSettingsData()
 
     @classmethod
-    async def update_settings(cls, session: AsyncSession, **kwargs) -> ChannelSettings:
+    async def update_settings(cls, session: AsyncSession, **kwargs) -> ChannelSettingsData:
         """
         Универсальный метод для обновления любых полей настроек.
-        Пример вызова: await ChannelService.update_settings(session, threshold=50000.0, is_active=False)
         """
         try:
-            settings = await cls.get_settings(session)
+            # Получаем ORM объект для обновления
+            result = await session.execute(select(ChannelSettings).where(ChannelSettings.id == 1))
+            settings_orm = result.scalar_one_or_none()
             
+            if not settings_orm:
+                settings_orm = ChannelSettings(id=1)
+                session.add(settings_orm)
+
             for key, value in kwargs.items():
-                if hasattr(settings, key):
-                    setattr(settings, key, value)
+                if hasattr(settings_orm, key):
+                    setattr(settings_orm, key, value)
             
             await session.commit()
-            cls._cached_settings = settings # Мгновенно обновляем кэш
-            return settings
+            await session.refresh(settings_orm)
+            
+            # Обновляем кэш
+            cls._cached_settings = ChannelSettingsData.from_orm(settings_orm)
+            return cls._cached_settings
         except Exception as e:
             await session.rollback()
             logger.error(f"Ошибка при обновлении настроек канала: {e}")
-            return cls._cached_settings or ChannelSettings()
+            return cls._cached_settings or ChannelSettingsData()
 
     @classmethod
-    def get_cached_settings(cls) -> ChannelSettings:
+    def get_cached_settings(cls) -> ChannelSettingsData:
         """
         Мгновенный синхронный доступ к настройкам. 
-        Используется в высоконагруженных местах (например, в анализаторе), 
-        чтобы вообще не тратить время на await и запросы.
         """
         if cls._cached_settings is None:
-            return ChannelSettings()
+            # Если кэш пуст, возвращаем дефолтный объект, но это не должно происходить после init
+            return ChannelSettingsData()
         return cls._cached_settings
     
     @classmethod

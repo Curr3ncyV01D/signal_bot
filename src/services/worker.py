@@ -20,6 +20,7 @@ class DataWorker:
 
     async def run(self, queue: asyncio.Queue):
         logger.info("Consumer (DataWorker) запущен.")
+        counter = 0
         while True:
             try:
                 msg = await queue.get()
@@ -39,27 +40,33 @@ class DataWorker:
                     else:
                         item = {}
 
-                    symbol = item.get("symbol") or item.get("s")
-                    
+                    symbol = item.get("symbol")
                     if not symbol:
                         queue.task_done()
                         continue
 
-                    # Извлекаем значения только если они есть в пакете
-                    price = float(item["lastPrice"]) if "lastPrice" in item and item["lastPrice"] else None
-                    oi = float(item["openInterestValue"]) if "openInterestValue" in item and item["openInterestValue"] else None
-                    funding = float(item["fundingRate"]) if "fundingRate" in item and item["fundingRate"] else None
+                    # Извлекаем значения через прямой доступ (структура Bybit V5 гарантирована)
+                    # Если какого-то поля нет в дельта-апдейте, используем .get
+                    try:
+                        price = float(item["lastPrice"]) if "lastPrice" in item else None
+                        oi = float(item["openInterestValue"]) if "openInterestValue" in item else None
+                        funding = float(item["fundingRate"]) if "fundingRate" in item else None
+                    except (ValueError, TypeError, KeyError):
+                        price = oi = funding = None
 
                     # ТИКЕРЫ: Записываем в агрегатор ДАЖЕ ЕСЛИ символ в IGNORED_SYMBOLS (нужно для BTC в дэшборде)
-                    self.market_aggregator.update(symbol, price, oi, funding)
-                    
-                    # ДЕБАГ: Раскомментируй строку ниже, если хочешь увидеть поток тикеров в консоли
-                    logger.debug(f"Ticker update for {symbol}: P:{price} OI:{oi}")
+                    if price is not None or oi is not None or funding is not None:
+                        self.market_aggregator.update(symbol, price, oi, funding)
 
                 elif msg_type == "trade":
                     symbol = msg.get("topic", "").split(".")[-1]
                     if symbol:
                         self.trade_aggregator.add_trades(symbol, data)
+                
+                counter += 1
+                if counter >= 20:
+                    await asyncio.sleep(0) 
+                    counter = 0
 
                 queue.task_done()
             except Exception as e:
@@ -70,8 +77,7 @@ class DataWorker:
                     pass
 
     async def _handle_liquidation(self, item: dict):
-        async with worker_semaphore:
-            symbol = item.get("s") or item.get("symbol")
+        symbol = item.get("s") or item.get("symbol")
         raw_side = item.get("S") or item.get("side")
         
         try:
@@ -85,19 +91,20 @@ class DataWorker:
         if not symbol or value <= config.MIN_LIQ_VALUE_FILTER or symbol in config.IGNORED_SYMBOLS:
             return
 
-        # Если Bybit прислал Buy - это LONG, если Sell - это SHORT
-        side_label = "LONG" if raw_side == "Buy" else "SHORT"
-        self.liq_aggregator.add_event(symbol, value, side_label)
+        async with worker_semaphore:
+            # Если Bybit прислал Buy - это LONG, если Sell - это SHORT
+            side_label = "LONG" if raw_side == "Buy" else "SHORT"
+            self.liq_aggregator.add_event(symbol, value, side_label)
 
-        async with async_session() as session:
-            await save_liquidation(session, item)
-            # Запускаем анализ и обогащение
-            await process_liquidation_item(
-                session=session,
-                symbol=symbol,
-                side_label=side_label,
-                bot=self.bot,
-                liq_aggregator=self.liq_aggregator,
-                market_aggregator=self.market_aggregator,
-                trade_aggregator=self.trade_aggregator
-            )
+            async with async_session() as session:
+                await save_liquidation(session, item)
+                # Запускаем анализ и обогащение
+                await process_liquidation_item(
+                    session=session,
+                    symbol=symbol,
+                    side_label=side_label,
+                    bot=self.bot,
+                    liq_aggregator=self.liq_aggregator,
+                    market_aggregator=self.market_aggregator,
+                    trade_aggregator=self.trade_aggregator
+                )
