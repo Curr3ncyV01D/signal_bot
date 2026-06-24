@@ -21,7 +21,7 @@ from src.bot.filters.admin import IsAdminFilter
 from src.bot.keyboards import (
     get_admin_main_kb, get_users_list_kb, 
     get_user_manage_kb, get_admin_channel_kb,
-    get_close_button_kb
+    get_close_button_kb, get_cancel_fsm_kb
 )
 from src.services.dashboard import recreate_dashboard_logic
 from src.utils import format_datetime, format_smart_num, parse_numeric_input
@@ -333,6 +333,16 @@ async def process_restart_dash(
 
 # --- УПРАВЛЕНИЕ ПОДПИСКОЙ ---
 
+@router.callback_query(F.data == "admin_fsm_stop")
+async def process_admin_fsm_stop(callback: types.CallbackQuery, state: FSMContext):
+    """Сброс FSM и удаление сообщения с вопросом"""
+    await state.clear()
+    try:
+        await callback.message.delete()
+    except Exception as e:
+        logger.error(f"Ошибка при удалении сообщения FSM: {e}")
+    await callback.answer("Ввод отменен")
+
 @router.callback_query(F.data.startswith("admin_subs_"))
 async def process_admin_subs_start(callback: types.CallbackQuery, state: FSMContext):
     """Начало процесса изменения подписки"""
@@ -340,13 +350,15 @@ async def process_admin_subs_start(callback: types.CallbackQuery, state: FSMCont
     await state.update_data(target_user_id=user_id)
     await state.set_state(AdminChannelStates.waiting_for_sub_days)
     
-    await callback.message.answer(
+    msg = await callback.message.answer(
         f"📅 <b>Изменение срока подписки</b>\n\n"
         f"Введите количество дней (от 0 до {config.MAX_SUB_DAYS}):\n"
         "• <b>0</b> — аннулировать подписку\n"
         f"• <b>1-{config.MAX_SUB_DAYS}</b> — установить новый срок от текущего момента",
-        parse_mode="HTML"
+        parse_mode="HTML",
+        reply_markup=get_cancel_fsm_kb()
     )
+    await state.update_data(fsm_msg_id=msg.message_id)
     await callback.answer()
 
 @router.message(AdminChannelStates.waiting_for_sub_days)
@@ -354,13 +366,14 @@ async def process_admin_subs_days(message: types.Message, state: FSMContext, bot
     """Обработка ввода количества дней"""
     data = await state.get_data()
     user_id = data.get("target_user_id")
+    fsm_msg_id = data.get("fsm_msg_id")
     
     if not message.text or not message.text.isdigit():
-        return await message.answer("❌ Введите целое число дней (например: 30).")
+        return await message.answer("❌ Введите целое число дней (например: 30).", reply_markup=get_cancel_fsm_kb())
         
     days = int(message.text)
     if days < 0 or days > config.MAX_SUB_DAYS:
-        return await message.answer(f"❌ Введите число от 0 до {config.MAX_SUB_DAYS}.")
+        return await message.answer(f"❌ Введите число от 0 до {config.MAX_SUB_DAYS}.", reply_markup=get_cancel_fsm_kb())
         
     async with async_session() as session:
         user = await update_user_subscription(session, user_id, days)
@@ -369,9 +382,14 @@ async def process_admin_subs_days(message: types.Message, state: FSMContext, bot
             await state.clear()
             return await message.answer("❌ Ошибка: пользователь не найден в базе данных.")
             
-        card_text = _format_user_card_text(user)
-        is_blocked = user.is_blocked
         sub_end = user.subscription_end
+
+    # Удаляем сообщение с вопросом
+    if fsm_msg_id:
+        try:
+            await bot.delete_message(chat_id=message.chat.id, message_id=fsm_msg_id)
+        except Exception:
+            pass
 
     # Уведомление пользователя
     try:

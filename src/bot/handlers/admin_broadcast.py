@@ -131,4 +131,4 @@ async def process_broadcast_cancel(callback: types.CallbackQuery, state: FSMCont
         reply_markup=get_admin_main_kb(),
         parse_mode="HTML"
     )
-    await callback.answer("❌ <b>Создание рассылки отменено.</b>", show_alert=True)
+    await callback.answer("❌ Создание рассылки отменено", show_alert=True)

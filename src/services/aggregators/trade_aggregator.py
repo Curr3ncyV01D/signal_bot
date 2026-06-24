@@ -46,10 +46,7 @@ class TradeAggregator:
         """Считает More Buys/Sells за последние N минут."""
         hist = self.buckets.get(symbol, [])
         
-        if len(hist) < minutes:
-            return None, None, None
-        
-        # Берем последние N минутных бакетов
+        # Берем доступные минутные бакеты (не более чем запрашиваемое окно)
         target_buckets = list(hist)[-minutes:]
         total_buy = sum(b["buy"] for b in target_buckets)
         total_sell = sum(b["sell"] for b in target_buckets)
@@ -58,5 +55,8 @@ class TradeAggregator:
         if symbol in self.current_minute_data:
             total_buy += self.current_minute_data[symbol]["buy_vol"]
             total_sell += self.current_minute_data[symbol]["sell_vol"]
+
+        if total_buy + total_sell == 0:
+            return None, None, None
 
         return total_buy, total_sell, (total_buy - total_sell)

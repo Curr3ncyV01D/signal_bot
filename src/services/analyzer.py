@@ -181,61 +181,62 @@ def _check_triggers(
     """
     now = datetime.now(timezone.utc).replace(tzinfo=None)
     
-    # --- 1. ТРИГГЕРЫ (Базовые условия пробития порогов) ---
-    is_cascade = (count_cas >= config.CASCADE_TRIGGER_COUNT and 
-                sum_cas >= target["threshold_cascade"])
+    # --- 1. ТРИГГЕРЫ (Определяем все возможные события) ---
+    has_cascade = (count_cas >= config.CASCADE_TRIGGER_COUNT and 
+                  sum_cas >= target["threshold_cascade"])
     
-    is_vol_5m = sum_5m >= target["threshold"]
-    is_vol_1h = sum_1h >= (target["threshold"] * config.VOLUME_MULTIPLIER)
+    has_oi_pump = False
+    if m_data:
+        oi_pct = m_data.get('oi_change_pct')
+        oi_val = m_data.get('oi_change_value')
+        if oi_pct is not None and oi_val is not None:
+            if (oi_pct >= target["threshold_oi_percent"] and 
+                abs(oi_val) >= target["threshold_oi_value"]):
+                has_oi_pump = True
+
+    has_volume = (sum_5m >= target["threshold"] or 
+                  sum_1h >= (target["threshold"] * config.VOLUME_MULTIPLIER))
     
-    is_oi_pump = False
-    if m_data and target["alert_oi"]:
-        if m_data['oi_change_pct'] is not None and m_data['oi_change_value'] is not None:
-            if (m_data['oi_change_pct'] >= target["threshold_oi_percent"] and 
-                abs(m_data['oi_change_value']) >= target["threshold_oi_value"]):
-                is_oi_pump = True
+    has_squeeze = has_volume and sum_5m > (sum_1h * config.SQUEEZE_RATIO)
 
-    # Если ни один порог не пробит — мгновенно скипаем
-    if not (is_cascade or is_vol_5m or is_vol_1h or is_oi_pump):
-        return None
+    # --- 2. ВЫБОР ТИПА ПО ПРИОРИТЕТУ И НАСТРОЙКАМ ПОЛЬЗОВАТЕЛЯ ---
+    alert_type = None
+    alert_title = ""
 
-    # --- 2. ОПРЕДЕЛЕНИЕ ТИПА (Для заголовка и фильтров) ---
-    if is_cascade:
+    if has_cascade and target["alert_cascade"]:
         alert_type = "CASCADE"
         alert_title = f"⚡️ LIQ КАСКАД x{count_cas}"
-        is_allowed = target["alert_cascade"]
-    elif is_oi_pump:
+    elif has_oi_pump and target["alert_oi"]:
         alert_type = "OI_PUMP"
         alert_title = "📈 OI PUMP"
-        is_allowed = target["alert_oi"]
-    elif sum_5m > (sum_1h * config.SQUEEZE_RATIO):
+    elif has_squeeze and target["alert_squeeze"]:
         alert_type = "SQUEEZE"
         alert_title = "🔥 QUICK SQUEEZE"
-        is_allowed = target["alert_squeeze"]
-    else:
+    elif has_volume and target["alert_volume"]:
         alert_type = "VOLUME"
         alert_title = "📊 LIQ VOLUME"
-        is_allowed = target["alert_volume"]
-
-    # --- 3. ФИЛЬТРАЦИЯ ПО НАСТРОЙКАМ ---
-    if not is_allowed:
+    
+    # Если ни один из сработавших триггеров не разрешен пользователем
+    if not alert_type:
         return None
 
-    # --- 4. АНТИ-СПАМ (Smart Threshold) ---
+    # --- 3. АНТИ-СПАМ (Smart Threshold) ---
     target_id = target["id"]
     history_key = (target_id, symbol, side_label)
     last_alert = user_alert_history.get(history_key)
 
     if last_alert:
+        # Проверка кулдауна (общая для всех типов)
         if (now - last_alert['time']).total_seconds() < config.GLOBAL_COOLDOWN_SEC:
             return None
             
-        if alert_type not in ["CASCADE", "OI_PUMP"]:
-            grew_5m = sum_5m >= last_alert['sum_5m'] * config.ALERT_GROWTH_PERCENTAGE
-            if not grew_5m:
+        # Проверка прироста (только для VOLUME и SQUEEZE)
+        if alert_type in ["VOLUME", "SQUEEZE"]:
+            grew_enough = sum_5m >= last_alert['sum_5m'] * config.ALERT_GROWTH_PERCENTAGE
+            if not grew_enough:
                 return None
 
-    # --- 5. ФОРМИРОВАНИЕ ПЕРСОНАЛЬНОГО ПЕЙЛОАДА ---
+    # --- 4. ФОРМИРОВАНИЕ ПЕРСОНАЛЬНОГО ПЕЙЛОАДА ---
     user_alert_history[history_key] = {
         'time': now,
         'sum_5m': sum_5m

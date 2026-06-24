@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from src.core.config import config
 from src.database.crud.stats_service import get_financial_metrics, get_audience_metrics
 from src.services.bouncer import BouncerManager
+from src.services.payment_worker import PaymentManager
 
 class MetricsService:
     _process = None
@@ -94,8 +95,21 @@ class MetricsService:
         diff = (now - BouncerManager.last_run).total_seconds()
         
         if diff < 60:
-            return "Только что"
+            return "только что"
         return f"{int(diff // 60)} мин. назад"
+
+    @staticmethod
+    def get_payment_status() -> str:
+        """
+        Возвращает статус последнего прохода воркера платежей.
+        """
+        if not PaymentManager.last_run:
+            return "ОЖИДАНИЕ..."
+            
+        now = datetime.now(timezone.utc)
+        diff = (now - PaymentManager.last_run).total_seconds()
+        
+        return f"{diff} сек. назад"
 
     @classmethod
     async def get_admin_bi_data(cls, session, listener, liq_aggregator, data_queue: asyncio.Queue) -> dict:
@@ -106,6 +120,7 @@ class MetricsService:
         tech_stats = await cls.get_system_stats(listener, liq_aggregator, data_queue)
         tech_stats["latency"] = cls.get_analytics_latency(listener)
         tech_stats["bouncer_hb"] = cls.get_bouncer_status()
+        tech_stats["payment_hb"] = cls.get_payment_status()
 
         # Бизнес метрики (из stats_service)
         financial = await get_financial_metrics(session)

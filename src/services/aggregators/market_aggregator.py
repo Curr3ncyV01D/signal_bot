@@ -33,7 +33,7 @@ class MarketAggregator:
         target_idx = -(window_minutes + 1)
         target_time = now - (window_minutes * 60)
 
-        # 1. Попытка прямого доступа по индексу (Best Effort: если индекса нет, берем самый старый)
+        # 1. Попытка прямого доступа по индексу
         try:
             # Пытаемся взять целевой индекс
             direct_record = hist[target_idx]
@@ -62,47 +62,58 @@ class MarketAggregator:
                 return best_record
 
         except IndexError:
-            # 2. "Best Effort" для холодного старта:
-            # Если истории еще мало, берем самую первую запись (индекс 0), 
-            # при условии, что она достаточно старая (хотя бы 2 минуты назад).
-            if len(hist) >= 2:
-                oldest = hist[0]
-                age_sec = now - oldest[0]
-                if age_sec >= 120: # Минимум 2 минуты истории для хоть какой-то динамики
-                    return oldest
+            # 2. Fallback Logic: Если данных мало, берем самую старую запись (hist[0])
+            # Условие честности: возраст записи >= 120 секунд
+            oldest = hist[0]
+            if (now - oldest[0]) >= 120:
+                return oldest
             
         return None
 
-    def seed_history(self, symbol: str, prices: list[float]) -> None:
+    def seed_history(self, symbol: str, prices: list[float], oi_points: list[tuple[int, float]] | None = None) -> None:
         """
-        Предварительное наполнение истории цен для устранения 'окна слепоты'.
-        Генерирует синтетические таймстампы назад от текущего момента.
+        Предварительное наполнение истории цен и OI для устранения 'окна слепоты'.
+        Генерирует синхронизированные таймстампы привязанные к началу минуты.
         """
-        if not prices:
+        if not prices or len(self.history.get(symbol, [])) >= 2:
             return
 
         now = datetime.now(timezone.utc).timestamp()
+        now_min = int(now // 60) * 60
         
         # Инициализируем историю, если её нет
         if symbol not in self.history:
             self.history[symbol] = deque(maxlen=61)
             
-        # Берем текущий ОИ как заглушку (он уже должен быть в snapshots после шага 1 warmup)
-        current_snap = self.snapshots.get(symbol, {"oi": 0.0})
-        current_oi = current_snap.get("oi", 0.0)
+        self.history[symbol].clear()
+        
+        # Наполняем историю: ts привязаны к началу минут
+        seed_data = prices[-60:]
+        count = len(seed_data)
+        
+        # Подготовка данных OI для быстрого поиска
+        # Сортируем по времени (Bybit обычно и так шлет от новых к старым, но на всякий случай)
+        oi_sorted = sorted(oi_points, key=lambda x: x[0]) if oi_points else []
 
-        # Очищаем историю перед посевом, чтобы не перемешивать с real-time данными
-        # если бот только что запустился.
-        if len(self.history[symbol]) < 2:
-            self.history[symbol].clear()
+        for i, price in enumerate(seed_data):
+            offset = (count - 1 - i)
+            ts_sec = now_min - (offset * 60)
+            ts_ms = ts_sec * 1000
             
-            # Наполняем в обратном порядке: от новых к старым
-            # prices приходят в хронологическом порядке (после reverse в warmup)
-            # Мы берем последние 60 штук (limit 61 в deque)
-            for i, price in enumerate(reversed(prices)):
-                ts = now - (i * 60)
-                # Добавляем в начало очереди, так как идем от новых к старым
-                self.history[symbol].appendleft((ts, price, current_oi))
+            # Поиск ближайшего OI (размазываем последнее известное значение)
+            # Ищем самый свежий OI, который меньше или равен текущему ts_ms
+            current_oi = 0.0
+            if oi_sorted:
+                # Так как точек мало (15), линейный поиск допустим
+                for timestamp, value in reversed(oi_sorted):
+                    if timestamp <= ts_ms:
+                        current_oi = value
+                        break
+                # Если не нашли (ts_ms меньше всех точек), берем самую старую
+                if current_oi == 0.0 and oi_sorted:
+                    current_oi = oi_sorted[0][1]
+
+            self.history[symbol].append((float(ts_sec), float(price), float(current_oi)))
 
     def update(self, symbol: str, price: float | None, oi: float | None, funding: float | None) -> None:
         now = datetime.now(timezone.utc).timestamp()
