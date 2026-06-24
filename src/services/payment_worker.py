@@ -1,6 +1,6 @@
 import asyncio
 import logging
-from datetime import timedelta
+from datetime import timedelta, datetime, timezone
 from aiogram import Bot
 from src.database.session import async_session
 from src.database.models import Invoice
@@ -11,6 +11,10 @@ from sqlalchemy import select
 
 logger = logging.getLogger(__name__)
 
+class PaymentManager:
+    """Контроль состояния воркера платежей (Heartbeat)"""
+    last_run: datetime | None = None
+
 async def payment_checker_worker(bot: Bot):
     """
     Фоновый воркер для проверки статусов инвойсов CryptoPay.
@@ -18,6 +22,7 @@ async def payment_checker_worker(bot: Bot):
     logger.info("Запущен воркер проверки платежей CryptoPay")
     
     while True:
+        PaymentManager.last_run = datetime.now(timezone.utc)
         try:
             async with async_session() as session:
                 # 1. Получаем все PENDING инвойсы

@@ -110,3 +110,9 @@ def get_admin_channel_kb(settings) -> InlineKeyboardMarkup:
     
     builder.row(InlineKeyboardButton(text="🔙 Назад", callback_data="admin_main"))
     return builder.as_markup()
+
+def get_cancel_fsm_kb() -> InlineKeyboardMarkup:
+    """Кнопка отмены для FSM состояний"""
+    builder = InlineKeyboardBuilder()
+    builder.row(InlineKeyboardButton(text="❌ Отмена", callback_data="admin_fsm_stop"))
+    return builder.as_markup()

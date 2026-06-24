@@ -122,11 +122,13 @@ async def process_broadcast_cancel(callback: types.CallbackQuery, state: FSMCont
     """Отмена рассылки на любом этапе"""
     await state.clear()
     text = (
-        "❌ <b>Создание рассылки отменено.</b>"
+        "👑 <b>Панель администратора</b>\n\n"
+        "Добро пожаловать! Здесь вы можете управлять пользователями, "
+        "выдавать блокировки и проверять статусы подписок."
     )
     await callback.message.edit_text(
         text,
         reply_markup=get_admin_main_kb(),
         parse_mode="HTML"
     )
-    await callback.answer()
+    await callback.answer("❌ Создание рассылки отменено", show_alert=True)

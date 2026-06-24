@@ -113,13 +113,14 @@ class AlertFormatter:
         emoji_1h = self.get_liq_emoji(side_1h)
 
         cascade_emoji = "🌋" if sum_cas >= (threshold_cas * 2) else "⚡️"
-
-        res = f"{emoji_5m} {hbold(f'{side_5m} LIQ (5m):')} {self.format_money(sum_5m)}\n"
         
+        res = ""
         if self.data.get("alert_type") == "CASCADE" or count_cas >= getattr(config, 'CASCADE_TRIGGER_COUNT', 10):
             res += f"{cascade_emoji} {hbold('LIQ КАСКАД:')} {count_cas} шт ({self.format_money(sum_cas)})\n"
         else:
-            res += f"{emoji_1h} {hbold(f'{side_1h} LIQ (1H):')} {self.format_money(sum_1h)}\n"
+            res = f"{emoji_5m} {hbold(f'{side_5m} LIQ (5m):')} {self.format_money(sum_5m)}\n"
+            
+        res += f"{emoji_1h} {hbold(f'{side_1h} LIQ (1H):')} {self.format_money(sum_1h)}\n"
         return res
 
     def _indicators_block(self) -> str:
@@ -132,7 +133,7 @@ class AlertFormatter:
         if self.data.get("show_rsi") and rsi is not None:
             rsi_emoji = "⚠️" if rsi >= 70 or rsi <= 30 else "📉"
             rsi_status = " 🔥" if rsi >= 80 or rsi <= 20 else ""
-            res += f"{rsi_emoji} {hbold('RSI (1H):')} {rsi}{rsi_status}\n"
+            res += f"{rsi_emoji} {hbold('RSI (1H):')} {rsi}% {rsi_status}\n"
             
         fund_abs = abs(funding) if funding else 0
         fund_marker = " ‼️" if fund_abs >= 1.0 else " ❗️" if fund_abs >= 0.5 else ""
@@ -168,29 +169,34 @@ class AlertFormatter:
             self._footer()
         )
 
-async def send_liquidation_alert(bot: Bot, user_id: int, **kwargs):
+async def send_liquidation_alert(bot: Bot, user_id: int, retry_count: int = 0, **kwargs):
     """Единая точка входа для отправки алертов с защитой от FloodWait"""
+    if retry_count > 3:
+        logger.error(f"❌ Превышено число попыток отправки для {user_id}")
+        return None
+
     async with broadcaster_semaphore:
         try:
             formatter = AlertFormatter(kwargs)
             text = formatter.compile_text()
 
-            await bot.send_message(
+            return await bot.send_message(
                 chat_id=user_id,
                 text=text,
                 parse_mode="HTML",
                 protect_content=True,
                 link_preview_options=LinkPreviewOptions(is_disabled=True)
             )
-            # Принудительная задержка для соблюдения лимитов Telegram (30/сек)
-            await asyncio.sleep(0.04)
             
         except TelegramRetryAfter as e:
-            logger.warning(f"Flood limit reached. Sleep for {e.retry_after}s")
+            logger.warning(f"⏳ Flood limit ({e.retry_after}s) для {user_id}. Попытка #{retry_count + 1}")
             await asyncio.sleep(e.retry_after)
-            # Рекурсивная попытка после паузы
-            return await send_liquidation_alert(bot, user_id, **kwargs)
+            return await send_liquidation_alert(bot, user_id, retry_count + 1, **kwargs)
+            
         except TelegramForbiddenError:
-            logger.info(f"User {user_id} blocked the bot. Skipping.")
+            logger.debug(f"🚫 Юзер {user_id} заблокировал бота.")
+            return None
+            
         except Exception as e:
-            logger.error(f"Ошибка Notifier для {user_id}: {e}")
+            logger.error(f"❌ Ошибка Notifier для {user_id}: {e}")
+            return None

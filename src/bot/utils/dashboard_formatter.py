@@ -1,8 +1,11 @@
 import logging
+import math
 from datetime import datetime, timedelta, timezone
 from aiogram.utils.markdown import hbold, hlink
 
 logger = logging.getLogger(__name__)
+TELEGRAM_TEXT_SAFE_LIMIT = 3950
+TRUNCATED_NOTICE = "⚠️ Часть данных обрезана из-за лимитов Telegram"
 
 class DashboardFormatter:
     """
@@ -17,17 +20,19 @@ class DashboardFormatter:
         if value is None:
             return "$0"
         try:
-            abs_val = abs(value)
-            if abs_val >= 1_000_000:
-                res = f"${value / 1_000_000:.2f}M"
-            elif abs_val >= 1_000:
-                res = f"${value / 1_000:.1f}K"
-            else:
-                res = f"${value:.0f}"
-            return res
-        except Exception as e:
-            logger.error(f"Ошибка format_money: {e}")
+            num = float(value)
+        except (TypeError, ValueError):
             return "$0"
+
+        if not math.isfinite(num) or num == 0.0:
+            return "$0"
+
+        abs_val = abs(num)
+        if abs_val >= 1_000_000:
+            return f"${num / 1_000_000:.2f}M"
+        if abs_val >= 1_000:
+            return f"${num / 1_000:.1f}K"
+        return f"${num:.0f}"
 
     @staticmethod
     def format_percent(value: float | None) -> str:
@@ -37,11 +42,15 @@ class DashboardFormatter:
         if value is None:
             return "0.0%"
         try:
-            sign = "+" if value > 0 else ""
-            return f"{sign}{value:.1f}%"
-        except Exception as e:
-            logger.error(f"Ошибка format_percent: {e}")
+            num = float(value)
+        except (TypeError, ValueError):
             return "0.0%"
+
+        if not math.isfinite(num) or num == 0.0:
+            return "0.0%"
+
+        sign = "+" if num > 0 else ""
+        return f"{sign}{num:.1f}%"
 
     @staticmethod
     def get_time_header(window_minutes: int) -> str:
@@ -67,130 +76,158 @@ class DashboardFormatter:
         Собирает итоговый HTML-текст дэшборда.
         """
         try:
-            lines = []
-            
-            # 1. & 2. Заголовки
-            lines.append(f"{hbold(f'📊 Статистика за · {window_minutes}м')}")
-            lines.append(f"⏱️ {cls.get_time_header(window_minutes)}")
-            
-            # 3. Инфо об обновлении
-            lines.append("🔄 Этот пост обновляется каждую минуту. Окно анализа: 15м.")
-            lines.append("") # Разделитель
-            
-            # 4. Long liquidations
-            lines.append(f"🟢 {hbold('Ликвидации LONG: (Топ-10)')}")
-            longs = data.get("longs", [])
+            get_data = data.get
+            format_money = cls.format_money
+            format_percent = cls.format_percent
+            sections: list[tuple[str, list[str], bool]] = []
+
+            header_lines = [
+                f"{hbold(f'📊 Статистика за · {window_minutes}м')}",
+                f"⏱️ {cls.get_time_header(window_minutes)}",
+                "🔄 Этот пост обновляется каждую минуту. Окно анализа: 15м.",
+                "",
+            ]
+            sections.append(("header", header_lines, False))
+
+            long_lines = [f"🟢 {hbold('Ликвидации LONG: (Топ-10)')}"]
+            longs = get_data("longs", [])
             if longs:
                 for i, (symbol, val) in enumerate(longs, 1):
-                    lines.append(f"{i}. #{symbol} — {hbold(cls.format_money(val))}")
+                    long_lines.append(f"{i}. #{symbol} — {hbold(format_money(val))}")
             else:
-                lines.append("<i>Данные собираются... ⌛</i>")
-            lines.append("")
-            
-            # 5. Short liquidations
-            lines.append(f"🔴 {hbold('Ликвидации SHORT: (Топ-10)')}")
-            shorts = data.get("shorts", [])
+                long_lines.append("<i>Данные собираются... ⌛</i>")
+            long_lines.append("")
+            sections.append(("longs", long_lines, False))
+
+            short_lines = [f"🔴 {hbold('Ликвидации SHORT: (Топ-10)')}"]
+            shorts = get_data("shorts", [])
             if shorts:
                 for i, (symbol, val) in enumerate(shorts, 1):
-                    lines.append(f"{i}. #{symbol} — {hbold(cls.format_money(val))}")
+                    short_lines.append(f"{i}. #{symbol} — {hbold(format_money(val))}")
             else:
-                lines.append("<i>Данные собираются... ⌛</i>")
-            lines.append("")
-            
-            # 6. Top Open Interest Header
-            lines.append(f"💥 {hbold(f'Топ Открытого Интереса · {window_minutes}м')}")
-            
-            # 7. OI UP
-            lines.append(f"🟢 {hbold('OI UP: (Топ-20)')}")
-            oi_up = data.get("oi_up", [])
+                short_lines.append("<i>Данные собираются... ⌛</i>")
+            short_lines.append("")
+            sections.append(("shorts", short_lines, False))
+
+            oi_up_lines = [
+                f"💥 {hbold(f'Топ Открытого Интереса · {window_minutes}м')}",
+                f"🟢 {hbold('OI UP: (Топ-20)')}",
+            ]
+            oi_up = get_data("oi_up", [])
             if oi_up:
                 for i, (symbol, pct, delta, current) in enumerate(oi_up, 1):
-                    lines.append(
-                        f"{i}. #{symbol}: {hbold(cls.format_percent(pct))} "
-                        f"({cls.format_money(delta)}) · {cls.format_money(current)}"
+                    oi_up_lines.append(
+                        f"{i}. #{symbol}: {hbold(format_percent(pct))} "
+                        f"({format_money(delta)}) · {format_money(current)}"
                     )
             else:
-                lines.append("<i>Данные собираются... ⌛</i>")
-            lines.append("")
-            
-            # 8. OI DOWN
-            lines.append(f"🔴 {hbold('OI DOWN: (Топ-20)')}")
-            oi_down = data.get("oi_down", [])
+                oi_up_lines.append("<i>Данные собираются... ⌛</i>")
+            oi_up_lines.append("")
+            sections.append(("oi_up", oi_up_lines, False))
+
+            oi_down_lines = [f"🔴 {hbold('OI DOWN: (Топ-20)')}"]
+            oi_down = get_data("oi_down", [])
             if oi_down:
                 for i, (symbol, pct, delta, current) in enumerate(oi_down, 1):
-                    lines.append(
-                        f"{i}. #{symbol}: {hbold(cls.format_percent(pct))} "
-                        f"({cls.format_money(delta)}) · {cls.format_money(current)}"
+                    oi_down_lines.append(
+                        f"{i}. #{symbol}: {hbold(format_percent(pct))} "
+                        f"({format_money(delta)}) · {format_money(current)}"
                     )
             else:
-                lines.append("<i>Данные собираются... ⌛</i>")
-            lines.append("")
-            
-            # 9. Total OI Summary
-            total_oi_raw = data.get("total_oi_current")
+                oi_down_lines.append("<i>Данные собираются... ⌛</i>")
+            oi_down_lines.append("")
+            sections.append(("oi_down", oi_down_lines, True))
+
+            summary_lines = []
+            total_oi_raw = get_data("total_oi_current")
             if total_oi_raw is not None and total_oi_raw > 0:
-                total_oi = cls.format_money(total_oi_raw)
-                total_pct_raw = data.get("total_oi_pct_change")
-                
+                total_oi = format_money(total_oi_raw)
+                total_pct_raw = get_data("total_oi_pct_change")
                 if total_pct_raw is not None:
-                    total_pct = cls.format_percent(total_pct_raw)
-                    lines.append(f"📊 {hbold('Total OI:')} {total_oi} ({total_pct} vs window start)")
+                    total_pct = format_percent(total_pct_raw)
+                    summary_lines.append(f"📊 {hbold('Total OI:')} {total_oi} ({total_pct} vs 15 минут назад)")
                 else:
-                    lines.append(f"📊 {hbold('Total OI:')} {total_oi} (анализ динамики... ⌛)")
+                    summary_lines.append(f"📊 {hbold('Total OI:')} {total_oi} (анализ динамики... ⌛)")
             else:
-                lines.append(f"📊 {hbold('Total OI:')}   <i>Данные собираются... ⌛</i>")
-            lines.append("")
-            
-            # 10. RSI Heatmap
-            lines.append(f"🧭 {hbold('Тепловая карта RSI · 1 час (RSI14)')}")
-            
-            # Overbought
-            lines.append(f"🟢 {hbold('RSI выше 80 (Топ-10)')}")
-            overbought = data.get("rsi_overbought", [])
+                summary_lines.append(f"📊 {hbold('Total OI:')}   <i>Данные собираются... ⌛</i>")
+            summary_lines.append("")
+            sections.append(("summary", summary_lines, False))
+
+            rsi_overbought_lines = [
+                f"🧭 {hbold('Тепловая карта RSI · 1 час (RSI14)')}",
+                f"🟢 {hbold('RSI выше 80 (Топ-10)')}",
+            ]
+            overbought = get_data("rsi_overbought", [])
             if overbought:
                 for i, (symbol, val) in enumerate(overbought, 1):
-                    lines.append(f"{i}. #{symbol} — RSI {hbold(str(val))}")
+                    rsi_overbought_lines.append(f"{i}. #{symbol} — RSI {hbold(str(val))}%")
             else:
-                lines.append("<i>Данные собираются... ⌛</i>")
-                
-            # Oversold
-            lines.append(f"🔴 {hbold('RSI ниже 20 (Топ-10)')}")
-            oversold = data.get("rsi_oversold", [])
+                rsi_overbought_lines.append("<i>Данные собираются... ⌛</i>")
+            sections.append(("rsi_overbought", rsi_overbought_lines, True))
+
+            rsi_oversold_lines = [f"🔴 {hbold('RSI ниже 20 (Топ-10)')}"]
+            oversold = get_data("rsi_oversold", [])
             if oversold:
                 for i, (symbol, val) in enumerate(oversold, 1):
-                    lines.append(f"{i}. #{symbol} — RSI {hbold(str(val))}")
+                    rsi_oversold_lines.append(f"{i}. #{symbol} — RSI {hbold(str(val))}%")
             else:
-                lines.append("<i>Данные собираются... ⌛</i>")
-            lines.append("")
-            
-            # 11. BTC Data Footer
-            btc_price = data.get("btc_price", 0.0) # Текущая цена
-            btc_change = data.get("btc_change_1h") # Изменение цены за 1 час
+                rsi_oversold_lines.append("<i>Данные собираются... ⌛</i>")
+            rsi_oversold_lines.append("")
+            sections.append(("rsi_oversold", rsi_oversold_lines, True))
+
+            btc_lines = []
+            btc_price = get_data("btc_price", 0.0)
+            btc_change = get_data("btc_change_1h")
             btc_url = "https://www.bybit.com/trade/usdt/BTCUSDT"
-            
-            if btc_price > 0:
-                btc_price_formatted = f"${btc_price:,.0f}"
+            try:
+                btc_price_num = float(btc_price)
+            except (TypeError, ValueError):
+                btc_price_num = 0.0
+
+            if math.isfinite(btc_price_num) and btc_price_num > 0:
+                btc_price_formatted = f"${btc_price_num:,.0f}".replace(",", " ")
                 btc_link = hlink(btc_price_formatted, btc_url)
-                
                 if btc_change is not None:
-                    btc_change_formatted = cls.format_percent(btc_change)
-                    lines.append(f"₿ {hbold('BTC:')} {btc_link} ({btc_change_formatted} vs prev hour close)")
+                    btc_change_formatted = format_percent(btc_change)
+                    btc_lines.append(f"₿ {hbold('BTC:')} {btc_link} ({btc_change_formatted} vs час назад)")
                 else:
-                    lines.append(f"₿ {hbold('BTC:')} {btc_link} (анализ динамики... ⌛)")
+                    btc_lines.append(f"₿ {hbold('BTC:')} {btc_link} (анализ динамики... ⌛)")
             else:
-                lines.append(f"₿ {hbold('BTC:')} <i>Ожидание тикера... ⌛</i>")
-            
-            lines.append("")
-            
-            # 12. Next update
+                btc_lines.append(f"₿ {hbold('BTC:')} <i>Ожидание тикера... ⌛</i>")
+            btc_lines.append("")
+            sections.append(("btc", btc_lines, False))
+
             now = datetime.now(timezone.utc) + timedelta(hours=3)
             next_minutes = (now.minute // 15 + 1) * 15
             next_time = now.replace(minute=0, second=0, microsecond=0) + timedelta(minutes=next_minutes)
-            
-            lines.append(f"⏭️ {hbold('Следующее обновление:')} {next_time.strftime('%H:%M')}")
-            
-            return "\n".join(lines)
-            
+            footer_lines = [f"⏭️ {hbold('Следующее обновление:')} {next_time.strftime('%H:%M')}"]
+            sections.append(("footer", footer_lines, False))
+
+            def render(active_sections: list[tuple[str, list[str], bool]], truncated: bool) -> str:
+                lines = [line for _, section_lines, _ in active_sections for line in section_lines]
+                if truncated:
+                    lines.extend(["", TRUNCATED_NOTICE])
+                return "\n".join(lines)
+
+            message = render(sections, truncated=False)
+            if len(message) <= TELEGRAM_TEXT_SAFE_LIMIT:
+                return message
+
+            removable_order = ["rsi_oversold", "rsi_overbought", "oi_down", "oi_up", "shorts", "longs"]
+            active_sections = sections[:]
+            truncated = False
+
+            for section_name in removable_order:
+                active_sections = [section for section in active_sections if section[0] != section_name]
+                truncated = True
+                message = render(active_sections, truncated=True)
+                if len(message) <= TELEGRAM_TEXT_SAFE_LIMIT:
+                    return message
+
+            emergency_sections = [
+                section for section in sections if section[0] in {"header", "summary", "btc", "footer"}
+            ]
+            return render(emergency_sections, truncated=True)
         except Exception as e:
             logger.error(f"Критическая ошибка compile_dashboard: {e}", exc_info=True)
             return f"❌ {hbold('Ошибка генерации дэшборда')}\n<i>Попробуйте позже...</i>"
