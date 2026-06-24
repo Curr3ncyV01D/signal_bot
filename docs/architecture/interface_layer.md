@@ -1,41 +1,37 @@
 # Telegram Interface Layer (Интерфейс и доставка)
 
-Этот слой переводит аналитические данные на язык интерфейса Telegram. Он управляет командами пользователя, формирует визуальные отчеты (кейборды) и обеспечивает доставку алертов с соблюдением лимитов Telegram API.
+Этот слой отвечает за визуализацию данных, взаимодействие с пользователями и надежную доставку уведомлений с соблюдением политик Telegram API.
 
 ### Структура сервисов слоя
 
 ```text
 src/bot/
-├── handlers/           # Обработчики команд (commands, settings, shop)
+├── handlers/           # Команды и бизнес-логика
 ├── keyboards/          # Интерактивные меню (Inline/Reply)
+├── utils/              # Форматтеры (Dashboard, Alerts)
 ├── middlewares/        # Фильтры доступа (Block check)
-├── utils/              # Форматтеры текста (Dashboard, Alerts)
+├── notifier.py         # Batching Notifier (Core)
 └── notifier.py         # Ядро рассылки алертов (Throttling)
 
 src/services/
-├── dashboard.py        # Обновление VIP-дэшборда в канале
+├── dashboard.py        # Self-healing Dashboard
+├── bouncer.py          # Сервис исключения (Subscription check)
 ├── broadcast_service.py # Массовые рассылки админа
-└── bouncer.py          # Сервис исключения (Gatekeeper)
+└── metrics_service.py  # Heartbeat & BI Data
 ```
 
-***
+---
 
 ## 1. Reference (Технический справочник)
 
-### Схема доставки уведомлений (Delivery Path)
-
+### Схема доставки уведомлений
 ```mermaid
 graph TD
-    A[Data Core: Analyzer] -- "Alert Payload" --> B[Notifier: send_liquidation_alert]
-    B --> C{Broadcaster Semaphore}
-    C -- "Slot Available" --> D[Telegram Bot API]
+    A[Data Engine: Analyzer] -- "Atomic Payload" --> B[Notifier: send_liquidation_alert]
+    B -- "Batching (50 msg)" --> C{Broadcaster Semaphore}
+    C -- "Pause 10ms" --> D[Telegram Bot API]
     D -- "Success" --> E[User Device]
     D -- "FloodWait" --> F[Retry Logic]
-    
-    G[User: Telegram] -- "Command / Button" --> H[Middlewares]
-    H -- "Check Subscription" --> I[Handlers]
-    I -- "Update DB" --> J[(PostgreSQL)]
-    I -- "UI Response" --> G
 ```
 
 ### Основные компоненты
@@ -49,7 +45,7 @@ graph TD
 - **Dashboard Worker**:
   - Раз в минуту редактирует закрепленное сообщение в канале. Использует `DashboardFormatter` для генерации сообщения дэшбоарда.
 
-***
+---
 
 ## 2. Explanation (Архитектурная логика)
 
@@ -69,10 +65,9 @@ Telegram ограничивает рассылку (30 сообщений в с�
 
 ## 3. How-to Guides (Прикладные инструкции)
 
-### Как заблокировать пользователя?
-
-Административная блокировка работает мгновенно через `SecurityManager`:
-
-1. Используйте команду `/admin` -> Список юзеров -> Бан.
-2. Система добавит ID в `blocked_users` (Python `set`), и `BlockMiddleware` начнет сбрасывать все запросы этого ID без обращения к БД.
-
+### Как изменить уровень логирования "на лету"?
+Если нужно увидеть детальные логи WebSocket без остановки бота:
+```bash
+docker compose kill -s USR1 bot
+```
+Повторный сигнал вернет уровень `INFO`.
