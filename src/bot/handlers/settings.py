@@ -9,6 +9,7 @@ from src.database.session import async_session
 from src.database.functions import get_utc_now
 from src.bot.keyboards import get_settings_kb, get_back_to_settings_kb, get_start_kb
 from src.utils import format_smart_num, parse_numeric_input
+from src.services import analyzer
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -117,8 +118,13 @@ async def toggle_settings(callback: types.CallbackQuery):
         elif setting_type == "oi": user.alert_oi = not user.alert_oi
         elif setting_type == "rsi": user.alert_rsi = not user.alert_rsi
         elif setting_type == "cvd": user.alert_cvd = not user.alert_cvd
+        elif setting_type == "longs": user.alert_longs = not user.alert_longs
+        elif setting_type == "shorts": user.alert_shorts = not user.alert_shorts
             
         await session.commit()
+        # Сбрасываем кэш анализатора для мгновенного применения
+        analyzer.invalidate_user_cache()
+        
         await callback.message.edit_reply_markup(reply_markup=get_settings_kb(user))
         await callback.answer("Настройка сохранена")
 
@@ -143,6 +149,7 @@ async def process_threshold(message: types.Message, state: FSMContext):
             user = await session.get(User, message.from_user.id)
             user.threshold = new_threshold
             await session.commit()
+            analyzer.invalidate_user_cache()
             await state.clear()
             await message.answer(f"✅ Порог объема изменен на <b>${format_smart_num(new_threshold)}</b>!", parse_mode="HTML")
     except Exception as e:
@@ -168,6 +175,7 @@ async def process_cascade_threshold(message: types.Message, state: FSMContext):
             user = await session.get(User, message.from_user.id)
             user.threshold_cascade = new_threshold
             await session.commit()
+            analyzer.invalidate_user_cache()
             await state.clear()
             await message.answer(f"✅ Порог каскадов изменен на <b>${format_smart_num(new_threshold)}</b>!", parse_mode="HTML")
     except Exception as e:
@@ -207,6 +215,7 @@ async def process_oi_thresholds(message: types.Message, state: FSMContext):
             user.threshold_oi_percent = new_pct
             user.threshold_oi_value = new_val
             await session.commit()
+            analyzer.invalidate_user_cache()
             await state.clear()
             await message.answer(
                 f"✅ Пороги ОИ изменены!\nПроцент: <b>{format_smart_num(new_pct, is_percent=True)}</b>\nОбъем: <b>${format_smart_num(new_val)}</b>", 

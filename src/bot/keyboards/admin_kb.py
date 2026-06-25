@@ -80,6 +80,17 @@ def get_admin_channel_kb(settings) -> InlineKeyboardMarkup:
     cas = "✅" if settings.alert_cascade else "❌"
     vol = "✅" if settings.alert_volume else "❌"
     sqz = "✅" if settings.alert_squeeze else "❌"
+
+    # Направления
+    lng = "✅" if settings.alert_longs else "❌"
+    sht = "✅" if settings.alert_shorts else "❌"
+    
+    # Тумблеры направлений
+    builder.row(
+        InlineKeyboardButton(text=f"🟢 LONG: {lng}", callback_data="admin_chan_toggle_longs"),
+        InlineKeyboardButton(text=f"🔴 SHORT: {sht}", callback_data="admin_chan_toggle_shorts")
+    )
+
     builder.row(
         InlineKeyboardButton(text=f"{cas} Каскад", callback_data="admin_chan_toggle_cascade"),
         InlineKeyboardButton(text=f"{vol} Объем", callback_data="admin_chan_toggle_volume"),

@@ -13,18 +13,29 @@ def format_datetime(dt: datetime | None) -> str:
     return f"{dt.strftime('%d.%m.%Y %H:%M')} UTC"
 
 
-def format_smart_num(val: float, is_percent: bool = False) -> str:
+def format_smart_num(val: float | None, is_percent: bool = False, show_sign: bool = False) -> str:
     """Форматирует число по-человечески: пробелы в тысячах и до 1 знака после запятой."""
+    if val is None:
+        return "Н/Д"
+        
     num = float(val)
     rounded = round(num, 1)
     is_integer = rounded.is_integer()
 
     if is_integer:
-        formatted = f"{int(rounded):,}".replace(",", " ")
+        formatted = f"{int(abs(rounded)):,}".replace(",", " ")
     else:
-        formatted = f"{rounded:,.1f}".replace(",", " ").replace(".", ",")
+        formatted = f"{abs(rounded):,.1f}".replace(",", " ").replace(".", ",")
 
-    return f"{formatted}%" if is_percent else formatted
+    # Добавляем знак
+    sign = ""
+    if rounded > 0 and show_sign:
+        sign = "+"
+    elif rounded < 0:
+        sign = "-"
+
+    res = f"{sign}{formatted}"
+    return f"{res}%" if is_percent else res
 
 
 def parse_numeric_input(text: str) -> float:

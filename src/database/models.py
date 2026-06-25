@@ -27,6 +27,9 @@ class User(Base):
     alert_cascade: Mapped[bool] = mapped_column(Boolean, default=True)
     alert_volume: Mapped[bool] = mapped_column(Boolean, default=True)
     alert_squeeze: Mapped[bool] = mapped_column(Boolean, default=True)
+    alert_longs: Mapped[bool] = mapped_column(Boolean, default=True)
+    alert_shorts: Mapped[bool] = mapped_column(Boolean, default=True)
+    threshold_vol_pct: Mapped[float] = mapped_column(Float, default=0.0)
 
     # Открытый интерес (OI)
     alert_oi: Mapped[bool] = mapped_column(Boolean, default=True)
@@ -55,6 +58,9 @@ class ChannelSettings(Base):
     alert_cascade: Mapped[bool] = mapped_column(Boolean, default=True)
     alert_volume: Mapped[bool] = mapped_column(Boolean, default=True)
     alert_squeeze: Mapped[bool] = mapped_column(Boolean, default=True)
+    alert_longs: Mapped[bool] = mapped_column(Boolean, default=True)
+    alert_shorts: Mapped[bool] = mapped_column(Boolean, default=True)
+    threshold_vol_pct: Mapped[float] = mapped_column(Float, default=0.0)
 
     # Открытый интерес (OI)
     alert_oi: Mapped[bool] = mapped_column(Boolean, default=True)

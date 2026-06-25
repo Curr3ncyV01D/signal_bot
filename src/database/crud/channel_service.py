@@ -16,6 +16,9 @@ class ChannelSettingsData:
     alert_cascade: bool = True
     alert_volume: bool = True
     alert_squeeze: bool = True
+    alert_longs: bool = True
+    alert_shorts: bool = True
+    threshold_vol_pct: float = 0.0
     alert_oi: bool = True
     threshold_oi_percent: float = 10.0
     threshold_oi_value: float = 1000000.0

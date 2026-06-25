@@ -10,6 +10,10 @@ def get_settings_kb(user: User) -> InlineKeyboardMarkup:
     vol = "✅" if user.alert_volume else "❌"
     sqz = "✅" if user.alert_squeeze else "❌"
     
+    # Направления (Спринт 4.1)
+    long_direction = "✅" if user.alert_longs else "❌"
+    short_direction = "✅" if user.alert_shorts else "❌"
+    
     # Статус аналитики (Stage 2)
     oi_btn = "✅" if user.alert_oi else "❌"
     rsi_btn = "✅" if user.alert_rsi else "❌"
@@ -18,6 +22,12 @@ def get_settings_kb(user: User) -> InlineKeyboardMarkup:
     # --- БЛОК ЛИКВИДАЦИЙ ---
     builder.row(InlineKeyboardButton(text="-- ❓ Справка: ЛИКВИДАЦИИ --", callback_data="help_liq"))
     
+    # Тумблеры направлений
+    builder.row(
+        InlineKeyboardButton(text=f"🟢 LONG: {long_direction}", callback_data="toggle_longs"),
+        InlineKeyboardButton(text=f"🔴 SHORT: {short_direction}", callback_data="toggle_shorts")
+    )
+
     # Тумблеры ликвидаций (в один ряд)
     builder.row(
         InlineKeyboardButton(text=f"{cas} Каскады", callback_data="toggle_cascade"),

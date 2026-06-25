@@ -5,6 +5,7 @@ from aiogram.utils.markdown import hbold, hlink
 from aiogram.types import LinkPreviewOptions
 from aiogram.exceptions import TelegramRetryAfter, TelegramForbiddenError
 from src.core.config import config
+from src.utils import format_smart_num
 
 logger = logging.getLogger(__name__)
 
@@ -68,8 +69,8 @@ class AlertFormatter:
         oi_val_marker = " ‼️" if oi_val is not None and abs(oi_val) >= 5_000_000 else " ❗️" if oi_val is not None and abs(oi_val) >= 1_000_000 else ""
         price_marker = " ❗️" if price_pct is not None and abs(price_pct) >= 10 else ""
 
-        oi_display = f"{oi_pct:+.2f}%" if oi_pct is not None else "⌛"
-        price_display = f"{price_pct:+.2f}%" if price_pct is not None else "⌛"
+        oi_display = format_smart_num(oi_pct, is_percent=True, show_sign=True) if oi_pct is not None else "⌛"
+        price_display = format_smart_num(price_pct, is_percent=True, show_sign=True) if price_pct is not None else "⌛"
         price_arrow = "↗️" if (price_pct or 0) > 0 else "↘️" if (price_pct or 0) < 0 else ""
 
         oi_str = f"{oi_display}{oi_pct_marker}"
@@ -91,7 +92,7 @@ class AlertFormatter:
         res = ""
         for period, val in [("5m", d5), ("30m", d30)]:
             if val is None:
-                res += f"📊 {hbold(f'CVD ({period}):')} ⌛\n"
+                res += f"⌛ {hbold(f'CVD ({period}):')} ⌛\n"
             elif val >= 0:
                 res += f"🟢 {hbold(f'More Buys ({period}):')} {self.format_money(val)}\n"
             else:
@@ -122,6 +123,23 @@ class AlertFormatter:
             
         res += f"{emoji_1h} {hbold(f'{side_1h} LIQ (1H):')} {self.format_money(sum_1h)}\n"
         return res
+
+    def _impact_block(self) -> str:
+        """Блок рыночного влияния (Impact %)"""
+        impact_pct = self.data.get("impact_pct")
+        if impact_pct is None:
+            return ""
+        
+        marker = ""
+        if impact_pct >= 10.0:
+            marker = " 💎"
+        elif impact_pct >= 5.0:
+            marker = " ⚠️"
+        elif impact_pct >= 1.0:
+            marker = " ❗️"
+            
+        formatted_impact = format_smart_num(impact_pct, is_percent=True)
+        return f"📊 {hbold('Impact:')} {formatted_impact} от 24ч объёма{marker}\n"
 
     def _indicators_block(self) -> str:
         """Технические индикаторы (RSI, Funding) с экстремумами"""
@@ -165,6 +183,7 @@ class AlertFormatter:
             self._market_block() +
             self._cvd_block() +
             self._liq_block() +
+            self._impact_block() +
             self._indicators_block() +
             self._footer()
         )

@@ -51,12 +51,13 @@ class DataWorker:
                         price = float(item["lastPrice"]) if "lastPrice" in item else None
                         oi = float(item["openInterestValue"]) if "openInterestValue" in item else None
                         funding = float(item["fundingRate"]) if "fundingRate" in item else None
+                        vol24h = float(item["turnover24h"]) if "turnover24h" in item and item["turnover24h"] else None
                     except (ValueError, TypeError, KeyError):
-                        price = oi = funding = None
+                        price = oi = funding = vol24h = None
 
                     # ТИКЕРЫ: Записываем в агрегатор ДАЖЕ ЕСЛИ символ в IGNORED_SYMBOLS (нужно для BTC в дэшборде)
-                    if price is not None or oi is not None or funding is not None:
-                        self.market_aggregator.update(symbol, price, oi, funding)
+                    if price is not None or oi is not None or funding is not None or vol24h is not None:
+                        self.market_aggregator.update(symbol, price, oi, funding, vol24h)
 
                 elif msg_type == "trade":
                     symbol = msg.get("topic", "").split(".")[-1]

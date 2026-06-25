@@ -22,6 +22,8 @@ class CachedAlertTarget(TypedDict):
     alert_oi: bool
     alert_squeeze: bool
     alert_volume: bool
+    alert_longs: bool
+    alert_shorts: bool
     alert_rsi: bool
     alert_cvd: bool
 
@@ -39,6 +41,12 @@ _min_system_threshold: float = float("inf")
 _min_system_cascade: float = float("inf")
 
 
+def invalidate_user_cache():
+    """Сбрасывает время обновления кэша, заставляя систему перечитать данные из БД."""
+    global _last_user_refresh
+    _last_user_refresh = 0.0
+
+
 def _build_cached_target(source: Any, target_id: int | str) -> CachedAlertTarget:
     return {
         "id": target_id,
@@ -50,6 +58,8 @@ def _build_cached_target(source: Any, target_id: int | str) -> CachedAlertTarget
         "alert_oi": bool(source.alert_oi),
         "alert_squeeze": bool(source.alert_squeeze),
         "alert_volume": bool(source.alert_volume),
+        "alert_longs": bool(source.alert_longs),
+        "alert_shorts": bool(source.alert_shorts),
         "alert_rsi": bool(source.alert_rsi),
         "alert_cvd": bool(source.alert_cvd),
     }
@@ -118,6 +128,11 @@ async def process_liquidation_item(
 
     rsi_val = market_aggregator.get_cached_rsi(symbol, config.RSI_PERIOD)
 
+    # Расчет Impact (Влияния) на основе 24h Volume
+    snap = market_aggregator.snapshots.get(symbol, {})
+    vol24h = snap.get("vol24h", 0.0)
+    impact_pct = (sum_5m / vol24h * 100) if vol24h > 0 else None
+
     # 4. Подготовка базового payload (Atomic Payload)
     # Эти данные одинаковы для всех получателей
     base_payload = {
@@ -135,6 +150,7 @@ async def process_liquidation_item(
         "delta_5m": delta_5m,
         "delta_30m": delta_30m,
         "rsi": rsi_val,
+        "impact_pct": impact_pct,
     }
 
     alert_tasks = []
@@ -179,6 +195,12 @@ def _check_triggers(
     """Универсальная логика проверки условий для пользователя или канала.
     Возвращает персональные настройки payload, если триггер сработал.
     """
+    # --- 0. ФИЛЬТРАЦИЯ НАПРАВЛЕНИЯ (Early Return) ---
+    if side_label == "LONG" and not target.get("alert_longs", True):
+        return None
+    if side_label == "SHORT" and not target.get("alert_shorts", True):
+        return None
+
     now = datetime.now(timezone.utc).replace(tzinfo=None)
     
     # --- 1. ТРИГГЕРЫ (Определяем все возможные события) ---

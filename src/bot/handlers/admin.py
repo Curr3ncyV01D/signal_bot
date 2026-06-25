@@ -23,6 +23,7 @@ from src.bot.keyboards import (
     get_user_manage_kb, get_admin_channel_kb,
     get_close_button_kb, get_cancel_fsm_kb
 )
+from src.services import analyzer
 from src.services.dashboard import recreate_dashboard_logic
 from src.utils import format_datetime, format_smart_num, parse_numeric_input
 
@@ -232,6 +233,8 @@ async def process_admin_chan_toggle(callback: types.CallbackQuery):
         elif action == "oi": settings.alert_oi = not settings.alert_oi
         elif action == "rsi": settings.alert_rsi = not settings.alert_rsi
         elif action == "cvd": settings.alert_cvd = not settings.alert_cvd
+        elif action == "longs": settings.alert_longs = not settings.alert_longs
+        elif action == "shorts": settings.alert_shorts = not settings.alert_shorts
         
         # Обновляем через сервис (он сам обновит кэш)
         await ChannelService.update_settings(session, **{
@@ -241,8 +244,13 @@ async def process_admin_chan_toggle(callback: types.CallbackQuery):
             "alert_squeeze": settings.alert_squeeze,
             "alert_oi": settings.alert_oi,
             "alert_rsi": settings.alert_rsi,
-            "alert_cvd": settings.alert_cvd
+            "alert_cvd": settings.alert_cvd,
+            "alert_longs": settings.alert_longs,
+            "alert_shorts": settings.alert_shorts
         })
+        # Сбрасываем кэш анализатора для мгновенного применения
+        analyzer.invalidate_user_cache()
+        
         await render_channel_settings(callback, session)
     await callback.answer("Настройка канала обновлена!")
 
@@ -262,6 +270,7 @@ async def process_chan_vol(message: types.Message, state: FSMContext):
             raise ValueError
         async with async_session() as session:
             await ChannelService.update_settings(session, threshold=val)
+            analyzer.invalidate_user_cache()
             await render_channel_settings(message, session)
         await state.clear()
     except ValueError:
@@ -281,6 +290,7 @@ async def process_chan_cas(message: types.Message, state: FSMContext):
             raise ValueError
         async with async_session() as session:
             await ChannelService.update_settings(session, threshold_cascade=val)
+            analyzer.invalidate_user_cache()
             await render_channel_settings(message, session)
         await state.clear()
     except ValueError:
@@ -305,6 +315,7 @@ async def process_chan_oi(message: types.Message, state: FSMContext):
         
         async with async_session() as session:
             await ChannelService.update_settings(session, threshold_oi_percent=pct, threshold_oi_value=val)
+            analyzer.invalidate_user_cache()
             await render_channel_settings(message, session)
         await state.clear()
     except ValueError:

@@ -115,16 +115,17 @@ class MarketAggregator:
 
             self.history[symbol].append((float(ts_sec), float(price), float(current_oi)))
 
-    def update(self, symbol: str, price: float | None, oi: float | None, funding: float | None) -> None:
+    def update(self, symbol: str, price: float | None, oi: float | None, funding: float | None, vol24h: float | None = None) -> None:
         now = datetime.now(timezone.utc).timestamp()
         
         if symbol not in self.snapshots:
-            self.snapshots[symbol] = {"price": 0.0, "oi": 0.0, "funding": 0.0, "ts": now}
+            self.snapshots[symbol] = {"price": 0.0, "oi": 0.0, "funding": 0.0, "vol24h": 0.0, "ts": now}
         
         # Обновляем только если значение пришло (не None)
         if price is not None: self.snapshots[symbol]["price"] = price
         if oi is not None: self.snapshots[symbol]["oi"] = oi
         if funding is not None: self.snapshots[symbol]["funding"] = funding
+        if vol24h is not None: self.snapshots[symbol]["vol24h"] = vol24h
         
         self.snapshots[symbol]["ts"] = now
 

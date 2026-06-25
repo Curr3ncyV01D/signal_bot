@@ -1,4 +1,4 @@
-import json
+import orjson
 import logging
 import sys
 from datetime import datetime
@@ -78,8 +78,8 @@ class Settings(BaseSettings):
     def parse_ignored_symbols(cls, value):
         if isinstance(value, str):
             try:
-                data = json.loads(value)
-            except json.JSONDecodeError:
+                data = orjson.loads(value)
+            except orjson.JSONDecodeError:
                 data = [s.strip() for s in value.split(",")]
             return [s.upper() for s in data if s.strip()]
         return value
@@ -92,7 +92,7 @@ class Settings(BaseSettings):
 
     # Режим разработки
     DEV_MODE: bool = False
-    DEV_SYMBOL_LIMIT: int = 0
+    DEV_SYMBOL_LIMIT: int = 200
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
