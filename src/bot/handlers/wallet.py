@@ -3,9 +3,9 @@ import asyncio
 from aiogram import Router, types, F
 from aiogram.filters import Command
 from aiogram.utils.markdown import hbold, hcode
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.config import config
-from src.database.session import async_session
 from src.database.crud import user_service, billing_service
 from src.services.cryptopay import cryptopay
 from src.utils import format_datetime, format_smart_num
@@ -21,12 +21,11 @@ router = Router()
 
 @router.message(Command("wallet"))
 @router.message(F.text.contains("Кошелек"))
-async def cmd_wallet(message: types.Message):
+async def cmd_wallet(message: types.Message, session: AsyncSession):
     """Главное меню кошелька"""
-    async with async_session() as session:
-        user = await user_service.get_user_by_id(session, message.from_user.id)
-        if not user:
-            user = await user_service.get_or_create_user(session, message.from_user.id, message.from_user.username)
+    user = await user_service.get_user_by_id(session, message.from_user.id)
+    if not user:
+        user = await user_service.get_or_create_user(session, message.from_user.id, message.from_user.username)
     
     text = (
         f"💳 <b>Ваш кошелек</b>\n\n"
@@ -37,10 +36,9 @@ async def cmd_wallet(message: types.Message):
     await message.answer(text, reply_markup=get_wallet_main_kb(user.balance), parse_mode="HTML")
 
 @router.callback_query(F.data == "wallet_main")
-async def callback_wallet_main(callback: types.CallbackQuery):
+async def callback_wallet_main(callback: types.CallbackQuery, session: AsyncSession):
     """Возврат в главное меню кошелька"""
-    async with async_session() as session:
-        user = await user_service.get_user_by_id(session, callback.from_user.id)
+    user = await user_service.get_user_by_id(session, callback.from_user.id)
     
     text = (
         f"💳 <b>Ваш кошелек</b>\n\n"
@@ -51,10 +49,9 @@ async def callback_wallet_main(callback: types.CallbackQuery):
     await callback.message.edit_text(text, reply_markup=get_wallet_main_kb(user.balance), parse_mode="HTML")
 
 @router.callback_query(F.data == "tx_history")
-async def callback_tx_history(callback: types.CallbackQuery):
+async def callback_tx_history(callback: types.CallbackQuery, session: AsyncSession):
     """Показывает последние транзакции пользователя."""
-    async with async_session() as session:
-        transactions = await billing_service.get_recent_transactions(session, callback.from_user.id)
+    transactions = await billing_service.get_recent_transactions(session, callback.from_user.id)
 
     if not transactions:
         text = "<i> История операций пуста </i>"
@@ -83,13 +80,12 @@ async def callback_tx_history(callback: types.CallbackQuery):
     await callback.answer()
 
 @router.callback_query(F.data == "partner_cabinet")
-async def callback_partner_cabinet(callback: types.CallbackQuery):
+async def callback_partner_cabinet(callback: types.CallbackQuery, session: AsyncSession):
     """Показывает данные партнерской программы пользователя."""
     bot_info = await callback.bot.get_me()
     referral_link = f"https://t.me/{bot_info.username}?start={callback.from_user.id}"
 
-    async with async_session() as session:
-        invited_count, total_rewards = await billing_service.get_partner_stats(session, callback.from_user.id)
+    invited_count, total_rewards = await billing_service.get_partner_stats(session, callback.from_user.id)
 
     text = (
         "🤝 <b>Партнерская программа</b>\n\n"
@@ -117,7 +113,7 @@ async def callback_deposit(callback: types.CallbackQuery):
     await callback.message.edit_text(text, reply_markup=get_deposit_amounts_kb(), parse_mode="HTML")
 
 @router.callback_query(F.data.startswith("deposit_"))
-async def callback_create_invoice(callback: types.CallbackQuery):
+async def callback_create_invoice(callback: types.CallbackQuery, session: AsyncSession):
     """Создание инвойса CryptoPay"""
     amount = float(callback.data.split("_")[1])
     user_id = callback.from_user.id
@@ -144,13 +140,12 @@ async def callback_create_invoice(callback: types.CallbackQuery):
     pay_url, invoice_id = res
     
     # 2. Сохраняем инвойс в БД
-    async with async_session() as session:
-        await billing_service.create_invoice(
-            session=session,
-            user_id=user_id,
-            amount=amount,
-            crypto_pay_id=str(invoice_id)
-        )
+    await billing_service.create_invoice(
+        session=session,
+        user_id=user_id,
+        amount=amount,
+        crypto_pay_id=str(invoice_id)
+    )
     
     text = (
         f"🧾 <b>Счет на оплату #{invoice_id}</b>\n\n"
@@ -161,7 +156,7 @@ async def callback_create_invoice(callback: types.CallbackQuery):
     await callback.message.edit_text(text, reply_markup=get_payment_link_kb(pay_url, invoice_id), parse_mode="HTML")
 
 @router.callback_query(F.data.startswith("check_pay_"))
-async def callback_check_payment(callback: types.CallbackQuery):
+async def callback_check_payment(callback: types.CallbackQuery, session: AsyncSession):
     """Ручная проверка оплаты инвойса"""
     try:
         invoice_id = int(callback.data.split("_")[2])
@@ -186,22 +181,20 @@ async def callback_check_payment(callback: types.CallbackQuery):
     
     if status == 'paid':
         # 2. Начисляем через атомарный метод
-        async with async_session() as session:
-            success = await billing_service.confirm_invoice_payment(session, str(invoice_id))
-            if success:
-                user = await user_service.get_user_by_id(session, callback.from_user.id)
-                await callback.message.edit_text(
-                    f"✅ <b>Оплата подтверждена!</b>\n\n"
-                    f"Ваш баланс пополнен. Текущий баланс: {hbold(f'{format_smart_num(user.balance)} USDT')}",
-                    parse_mode="HTML"
-                )
-                return await callback.answer("Успешно!")
-            else:
-                return await callback.answer("Ошибка при зачислении. Обратитесь в поддержку.", show_alert=True)
+        success = await billing_service.confirm_invoice_payment(session, str(invoice_id))
+        if success:
+            user = await user_service.get_user_by_id(session, callback.from_user.id)
+            await callback.message.edit_text(
+                f"✅ <b>Оплата подтверждена!</b>\n\n"
+                f"Ваш баланс пополнен. Текущий баланс: {hbold(f'{format_smart_num(user.balance)} USDT')}",
+                parse_mode="HTML"
+            )
+            return await callback.answer("Успешно!")
+        else:
+            return await callback.answer("Ошибка при зачислении. Обратитесь в поддержку.", show_alert=True)
     
     elif status == 'expired':
-        async with async_session() as session:
-            await billing_service.update_invoice_status(session, str(invoice_id), 'EXPIRED')
+        await billing_service.update_invoice_status(session, str(invoice_id), 'EXPIRED')
         await callback.message.edit_text("❌ Срок действия счета истек.")
         return await callback.answer("Истек")
         

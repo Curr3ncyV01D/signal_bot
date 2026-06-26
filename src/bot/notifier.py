@@ -125,7 +125,7 @@ class AlertFormatter:
         return res
 
     def _impact_block(self) -> str:
-        """Блок рыночного влияния (Impact %)"""
+        """Блок рыночного влияния ликвидаций на торги за 24часа"""
         impact_pct = self.data.get("impact_pct")
         if impact_pct is None:
             return ""
@@ -139,7 +139,35 @@ class AlertFormatter:
             marker = " ❗️"
             
         formatted_impact = format_smart_num(impact_pct, is_percent=True)
-        return f"📊 {hbold('Impact:')} {formatted_impact} от 24ч объёма{marker}\n"
+        return f"📊 {hbold('Impact (24h):')} {formatted_impact} {marker}\n"
+
+    def _fundamental_block(self) -> str:
+        """Блок фундаментальных данных (Market Cap и Impact %)"""
+        live_mcap = self.data.get("live_mcap", 0.0)
+        impact_pct_5m = self.data.get("impact_pct_5m", 0.0)
+        is_fallback = self.data.get("is_fallback", False)
+
+        if is_fallback:
+            return f"💎 {hbold('Market Cap:')} ⌛ (Данные загружаются...)\n"
+        
+        if live_mcap <= 0:
+            return ""
+
+        marker = ""
+        if impact_pct_5m >= 0.1:
+            marker = " 💎"
+        elif impact_pct_5m >= 0.05:
+            marker = " ⚠️"
+        elif impact_pct_5m >= 0.01:
+            marker = " ❗️"
+
+        formatted_mcap = self.format_money(live_mcap)
+        formatted_impact = format_smart_num(impact_pct_5m, is_percent=True, show_sign=False, decimal_places=4)
+        
+        return (
+            f"💎 {hbold('Market Cap:')} {formatted_mcap}\n"
+            f"📊 {hbold('Impact (Cap):')} {formatted_impact}{marker}\n"
+        )
 
     def _indicators_block(self) -> str:
         """Технические индикаторы (RSI, Funding) с экстремумами"""
@@ -183,6 +211,7 @@ class AlertFormatter:
             self._market_block() +
             self._cvd_block() +
             self._liq_block() +
+            self._fundamental_block() +
             self._impact_block() +
             self._indicators_block() +
             self._footer()

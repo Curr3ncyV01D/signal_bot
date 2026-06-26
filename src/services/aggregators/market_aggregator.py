@@ -4,6 +4,7 @@ from typing import Any
 from collections import deque
 from datetime import datetime, timezone
 from src.services.indicators.rsi import rsi_indicator
+from src.utils import normalize_bybit_symbol
 
 logger = logging.getLogger(__name__)
 
@@ -16,9 +17,12 @@ class MarketAggregator:
         # L1-кэш RSI: { "BTCUSDT": ((current_price, bars_count), rsi_value) }
         self._rsi_cache: dict[str, tuple[tuple[float, int], float | None]] = {}
         
-        # НОВОЕ: Внутрипамятное хранилище цен для RSI (раз в 5 минут)
+        # Внутрипамятное хранилище цен для RSI (раз в 5 минут)
         self.rsi_prices: dict[str, deque[float]] = {}
         self.rsi_bars: dict[str, int] = {} # Хранит ID текущего 5-минутного бара
+
+        # Хранилище эмиссии монет (Fundamental Data)
+        self.circulating_supply: dict[str, float] = {}
 
     @staticmethod
     def _get_window_record(
@@ -30,7 +34,7 @@ class MarketAggregator:
         if not hist or window_minutes < 1:
             return None
 
-        target_idx = -(window_minutes + 1)
+        target_idx = -int(window_minutes + 1)
         target_time = now - (window_minutes * 60)
 
         # 1. Попытка прямого доступа по индексу
@@ -291,3 +295,15 @@ class MarketAggregator:
             "btc_price": btc_price,
             "btc_change_1h": btc_change_1h
         }
+
+    # === Управление данными об эмиссии ===
+
+    def update_supply(self, symbol: str, supply: float) -> None:
+        """Сохраняет данные об эмиссии для очищенного символа."""
+        clean_key = normalize_bybit_symbol(symbol).upper()
+        self.circulating_supply[clean_key] = supply
+
+    def get_supply(self, symbol: str) -> float | None:
+        """Возвращает эмиссию для символа."""
+        clean_key = normalize_bybit_symbol(symbol).upper()
+        return self.circulating_supply.get(clean_key)

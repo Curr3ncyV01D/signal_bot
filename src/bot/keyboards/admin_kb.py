@@ -85,16 +85,40 @@ def get_admin_channel_kb(settings) -> InlineKeyboardMarkup:
     lng = "✅" if settings.alert_longs else "❌"
     sht = "✅" if settings.alert_shorts else "❌"
     
-    # Тумблеры направлений
-    builder.row(
-        InlineKeyboardButton(text=f"🟢 LONG: {lng}", callback_data="admin_chan_toggle_longs"),
-        InlineKeyboardButton(text=f"🔴 SHORT: {sht}", callback_data="admin_chan_toggle_shorts")
-    )
-
+    # Режим порогов (Спринт 4.2)
+    mode_label = "💎 % MCAP" if settings.threshold_mode == "PERCENT" else "💵 USD"
+    
     builder.row(
         InlineKeyboardButton(text=f"{cas} Каскад", callback_data="admin_chan_toggle_cascade"),
         InlineKeyboardButton(text=f"{vol} Объем", callback_data="admin_chan_toggle_volume"),
         InlineKeyboardButton(text=f"{sqz} Сквиз", callback_data="admin_chan_toggle_squeeze")
+    )
+    
+    # Тумблер режима
+    builder.row(
+        InlineKeyboardButton(text=f"⚙️ Режим: {mode_label}", callback_data="admin_chan_toggle_threshold_mode")
+    )
+
+    # Кнопки порогов (динамические)
+    if settings.threshold_mode == "PERCENT":
+        builder.row(
+            InlineKeyboardButton(text="📊 Порог объема (%)", callback_data="admin_chan_set_mcap_pct"),
+            InlineKeyboardButton(text="🌋 Порог каскада (%)", callback_data="admin_chan_set_mcap_cas_pct")
+        )
+        builder.row(
+            InlineKeyboardButton(text="📉 Мин. пол ($)", callback_data="admin_chan_set_mcap_min_usd"),
+            InlineKeyboardButton(text="🌋 Мин. пол каскада ($)", callback_data="admin_chan_set_mcap_cas_min_usd")
+        )
+    else:
+        builder.row(
+            InlineKeyboardButton(text="💰 Порог объема ($)", callback_data="admin_chan_set_threshold"),
+            InlineKeyboardButton(text="⚡ Порог каскада ($)", callback_data="admin_chan_set_cascade_threshold")
+        )
+
+    # Ряд направлений
+    builder.row(
+        InlineKeyboardButton(text=f"🟢 LONG: {lng}", callback_data="admin_chan_toggle_longs"),
+        InlineKeyboardButton(text=f"🔴 SHORT: {sht}", callback_data="admin_chan_toggle_shorts")
     )
 
     # Тумблеры аналитики
@@ -107,11 +131,7 @@ def get_admin_channel_kb(settings) -> InlineKeyboardMarkup:
         InlineKeyboardButton(text=f"{cvd} CVD", callback_data="admin_chan_toggle_cvd")
     )
 
-    # Пороги
-    builder.row(
-        InlineKeyboardButton(text="💰 Порог объема ($)", callback_data="admin_chan_set_vol"),
-        InlineKeyboardButton(text="⚡ Порог каскада ($)", callback_data="admin_chan_set_cas")
-    )
+
     builder.row(
         InlineKeyboardButton(text="⚙️ Пороги OI (% и $)", callback_data="admin_chan_set_oi")
     )

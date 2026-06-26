@@ -1,9 +1,32 @@
 import asyncio
 import logging
 import time
+import re
 from datetime import datetime
 
 logger = logging.getLogger(__name__)
+
+# Ручной маппинг для случаев, когда тикер не совпадает с ID CoinGecko
+MANUAL_MAPPING = {
+    "BIT": "bitdao",
+    "WLD": "worldcoin-org",
+    "PEPE": "pepe",
+    "SHIB": "shiba-inu",
+    # Добавляйте сюда другие монеты по мере необходимости
+}
+
+
+def normalize_bybit_symbol(raw_symbol: str) -> str:
+    """
+    Нормализует тикер Bybit для поиска в CoinGecko или использования как ключ.
+    """
+    # В верхний регистр и убираем USDT
+    s = raw_symbol.upper().replace("USDT", "")
+
+    # Убираем префиксы 1000, 1000000 и т.д. в начале строки
+    s = re.sub(r'^\d+', '', s)
+
+    return s.lower()
 
 
 def format_datetime(dt: datetime | None) -> str:
@@ -13,19 +36,19 @@ def format_datetime(dt: datetime | None) -> str:
     return f"{dt.strftime('%d.%m.%Y %H:%M')} UTC"
 
 
-def format_smart_num(val: float | None, is_percent: bool = False, show_sign: bool = False) -> str:
-    """Форматирует число по-человечески: пробелы в тысячах и до 1 знака после запятой."""
+def format_smart_num(val: float | None, is_percent: bool = False, show_sign: bool = False, decimal_places: int = 1) -> str:
+    """Форматирует число"""
     if val is None:
         return "Н/Д"
         
     num = float(val)
-    rounded = round(num, 1)
+    rounded = round(num, decimal_places)
     is_integer = rounded.is_integer()
 
     if is_integer:
         formatted = f"{int(abs(rounded)):,}".replace(",", " ")
     else:
-        formatted = f"{abs(rounded):,.1f}".replace(",", " ").replace(".", ",")
+        formatted = f"{abs(rounded):,.{decimal_places}f}".replace(",", " ").replace(".", ",")
 
     # Добавляем знак
     sign = ""

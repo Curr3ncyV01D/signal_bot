@@ -16,6 +16,11 @@ class CachedAlertTarget(TypedDict):
     id: int | str
     threshold: float
     threshold_cascade: float
+    threshold_mode: str
+    threshold_mcap_pct: float
+    threshold_mcap_usd_min: float
+    threshold_cascade_mcap_pct: float
+    threshold_cascade_mcap_usd_min: float
     threshold_oi_percent: float
     threshold_oi_value: float
     alert_cascade: bool
@@ -26,7 +31,6 @@ class CachedAlertTarget(TypedDict):
     alert_shorts: bool
     alert_rsi: bool
     alert_cvd: bool
-
 
 class AlertHistoryEntry(TypedDict):
     time: datetime
@@ -52,6 +56,11 @@ def _build_cached_target(source: Any, target_id: int | str) -> CachedAlertTarget
         "id": target_id,
         "threshold": float(source.threshold),
         "threshold_cascade": float(source.threshold_cascade),
+        "threshold_mode": str(source.threshold_mode),
+        "threshold_mcap_pct": float(source.threshold_mcap_pct),
+        "threshold_mcap_usd_min": float(source.threshold_mcap_usd_min),
+        "threshold_cascade_mcap_pct": float(source.threshold_cascade_mcap_pct),
+        "threshold_cascade_mcap_usd_min": float(source.threshold_cascade_mcap_usd_min),
         "threshold_oi_percent": float(source.threshold_oi_percent),
         "threshold_oi_value": float(source.threshold_oi_value),
         "alert_cascade": bool(source.alert_cascade),
@@ -61,7 +70,7 @@ def _build_cached_target(source: Any, target_id: int | str) -> CachedAlertTarget
         "alert_longs": bool(source.alert_longs),
         "alert_shorts": bool(source.alert_shorts),
         "alert_rsi": bool(source.alert_rsi),
-        "alert_cvd": bool(source.alert_cvd),
+        "alert_cvd": bool(source.alert_cvd)
     }
 
 
@@ -120,18 +129,35 @@ async def process_liquidation_item(
         (count_cas < config.CASCADE_TRIGGER_COUNT or sum_cas < _min_system_cascade)):
         return
 
-    # 3. Тяжелые данные считаем один раз на событие.
+    # 3. Получение дополнительных данных из агрегатора
     m_data = market_aggregator.get_market_data(symbol, window_minutes=5)
-    
     _, _, delta_5m = trade_aggregator.get_cvd_metrics(symbol, minutes=5)
     _, _, delta_30m = trade_aggregator.get_cvd_metrics(symbol, minutes=30)
-
     rsi_val = market_aggregator.get_cached_rsi(symbol, config.RSI_PERIOD)
+
+    supply = market_aggregator.get_supply(symbol)
+    divisor = 1000 if symbol.startswith("1000") else 1
+    current_price = m_data['price'] if m_data else 0.0
+    
+    live_mcap = 0.0
+    force_usd_mode = False
+    impact_pct_5m = 0.0
+    impact_pct_1h = 0.0
+    impact_pct_cas = 0.0
+    
+    if supply and current_price > 0:
+        live_mcap = (current_price * supply) / divisor
+        impact_pct_5m = (sum_5m / live_mcap * 100) if live_mcap > 0 else 0.0
+        impact_pct_1h = (sum_1h / live_mcap * 100) if live_mcap > 0 else 0.0
+        impact_pct_cas = (sum_cas / live_mcap * 100) if live_mcap > 0 else 0.0
+    else:
+        force_usd_mode = True
+        logger.debug(f"Smart Fallback: No supply data for {symbol}, forcing USD mode.")
 
     # Расчет Impact (Влияния) на основе 24h Volume
     snap = market_aggregator.snapshots.get(symbol, {})
     vol24h = snap.get("vol24h", 0.0)
-    impact_pct = (sum_5m / vol24h * 100) if vol24h > 0 else None
+    vol_impact_pct = (sum_5m / vol24h * 100) if vol24h > 0 else None
 
     # 4. Подготовка базового payload (Atomic Payload)
     # Эти данные одинаковы для всех получателей
@@ -150,23 +176,37 @@ async def process_liquidation_item(
         "delta_5m": delta_5m,
         "delta_30m": delta_30m,
         "rsi": rsi_val,
-        "impact_pct": impact_pct,
+        "impact_pct": vol_impact_pct,
+        "live_mcap": live_mcap,
+        "impact_pct_5m": impact_pct_5m,
+        "impact_pct_1h": impact_pct_1h,
+        "impact_pct_cas": impact_pct_cas,
+        "force_usd_mode": force_usd_mode,
+        "is_fallback": force_usd_mode,
     }
 
     alert_tasks = []
 
     # 5. Single-pass рассылка по закэшированным адресатам.
     for target in targets:
-        trigger_result = _check_triggers(
-            target=target,
-            symbol=symbol,
-            side_label=side_label,
-            sum_5m=sum_5m,
-            sum_1h=sum_1h,
-            sum_cas=sum_cas,
-            count_cas=count_cas,
-            m_data=m_data,
-        )
+        try:
+            trigger_result = _check_triggers(
+                target=target,
+                symbol=symbol,
+                side_label=side_label,
+                sum_5m=sum_5m,
+                sum_1h=sum_1h,
+                sum_cas=sum_cas,
+                count_cas=count_cas,
+                m_data=m_data,
+                impact_pct_5m=impact_pct_5m,
+                impact_pct_1h=impact_pct_1h,
+                impact_pct_cas=impact_pct_cas,
+                force_usd_mode=force_usd_mode
+            )
+        except Exception as e:
+            logger.error(f"Ошибка проверки триггеров для {target['id']}: {e}")
+            continue
 
         if trigger_result:
             recipient_id = config.PRIVATE_CHANNEL_ID if target["id"] == "CHANNEL" else int(target["id"])
@@ -191,6 +231,10 @@ def _check_triggers(
     sum_cas: float,
     count_cas: int,
     m_data: dict[str, Any] | None,
+    impact_pct_5m: float,
+    impact_pct_1h: float,
+    impact_pct_cas: float,
+    force_usd_mode: bool,
 ) -> dict[str, Any] | None:
     """Универсальная логика проверки условий для пользователя или канала.
     Возвращает персональные настройки payload, если триггер сработал.
@@ -203,9 +247,28 @@ def _check_triggers(
 
     now = datetime.now(timezone.utc).replace(tzinfo=None)
     
-    # --- 1. ТРИГГЕРЫ (Определяем все возможные события) ---
-    has_cascade = (count_cas >= config.CASCADE_TRIGGER_COUNT and 
-                  sum_cas >= target["threshold_cascade"])
+    # --- 1. ОПРЕДЕЛЕНИЕ РЕЖИМА (Smart Fallback) ---
+    effective_mode = "USD" if force_usd_mode else target["threshold_mode"]
+    used_mcap = (effective_mode == "PERCENT")
+
+    # --- 2. ТРИГГЕРЫ (Определяем все возможные события) ---
+    if effective_mode == "PERCENT":
+        # Логика по капитализации
+        has_cascade = (count_cas >= config.CASCADE_TRIGGER_COUNT and 
+                     impact_pct_cas >= target["threshold_cascade_mcap_pct"] and
+                     sum_cas >= target["threshold_cascade_mcap_usd_min"])
+        
+        has_volume = (impact_pct_5m >= target["threshold_mcap_pct"] and 
+                    sum_5m >= target["threshold_mcap_usd_min"]) or \
+                   (impact_pct_1h >= (target["threshold_mcap_pct"] * config.VOLUME_MULTIPLIER) and 
+                    sum_1h >= (target["threshold_mcap_usd_min"] * config.VOLUME_MULTIPLIER))
+    else:
+        # Логика по USD (Классическая)
+        has_cascade = (count_cas >= config.CASCADE_TRIGGER_COUNT and 
+                     sum_cas >= target["threshold_cascade"])
+        
+        has_volume = (sum_5m >= target["threshold"] or 
+                    sum_1h >= (target["threshold"] * config.VOLUME_MULTIPLIER))
     
     has_oi_pump = False
     if m_data:
@@ -216,12 +279,9 @@ def _check_triggers(
                 abs(oi_val) >= target["threshold_oi_value"]):
                 has_oi_pump = True
 
-    has_volume = (sum_5m >= target["threshold"] or 
-                  sum_1h >= (target["threshold"] * config.VOLUME_MULTIPLIER))
-    
     has_squeeze = has_volume and sum_5m > (sum_1h * config.SQUEEZE_RATIO)
 
-    # --- 2. ВЫБОР ТИПА ПО ПРИОРИТЕТУ И НАСТРОЙКАМ ПОЛЬЗОВАТЕЛЯ ---
+    # --- 3. ВЫБОР ТИПА ПО ПРИОРИТЕТУ И НАСТРОЙКАМ ПОЛЬЗОВАТЕЛЯ ---
     alert_type = None
     alert_title = ""
 
@@ -242,7 +302,7 @@ def _check_triggers(
     if not alert_type:
         return None
 
-    # --- 3. АНТИ-СПАМ (Smart Threshold) ---
+    # --- 4. АНТИ-СПАМ (Smart Threshold) ---
     target_id = target["id"]
     history_key = (target_id, symbol, side_label)
     last_alert = user_alert_history.get(history_key)
@@ -258,7 +318,7 @@ def _check_triggers(
             if not grew_enough:
                 return None
 
-    # --- 4. ФОРМИРОВАНИЕ ПЕРСОНАЛЬНОГО ПЕЙЛОАДА ---
+    # --- 5. ФОРМИРОВАНИЕ ПЕРСОНАЛЬНОГО ПЕЙЛОАДА ---
     user_alert_history[history_key] = {
         'time': now,
         'sum_5m': sum_5m
@@ -270,7 +330,8 @@ def _check_triggers(
         "threshold_cascade": target["threshold_cascade"],
         "show_oi": target["alert_oi"],
         "show_cvd": target["alert_cvd"],
-        "show_rsi": target["alert_rsi"]
+        "show_rsi": target["alert_rsi"],
+        "used_mcap": used_mcap
     }
 
 async def cleanup_alert_history_task():

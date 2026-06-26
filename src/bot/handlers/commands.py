@@ -5,9 +5,9 @@ from aiogram import Router, types, F
 from aiogram.filters import Command
 from aiogram.utils.markdown import hbold
 from aiogram.exceptions import TelegramBadRequest
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.config import config
-from src.database.session import async_session
 from src.database.crud.user_service import get_or_create_user, activate_trial
 from src.database.models import User
 from src.bot.keyboards import get_start_kb, get_status_kb, get_close_button_kb
@@ -26,7 +26,7 @@ def get_main_menu_text(full_name: str) -> str:
     )
 
 @router.message(Command("start"))
-async def cmd_start(message: types.Message):
+async def cmd_start(message: types.Message, session: AsyncSession):
     # Парсинг реферального кода из команды (например: /start ref_12345 или /start 12345)
     referrer_id = None
     if message.text and len(message.text.split()) > 1:
@@ -38,35 +38,32 @@ async def cmd_start(message: types.Message):
             if parsed_ref != message.from_user.id:
                 referrer_id = parsed_ref
 
-    async with async_session() as session:
-        user = await get_or_create_user(
-            session, 
-            message.from_user.id, 
-            message.from_user.username,
-            referrer_id=referrer_id
-        )
+    user = await get_or_create_user(
+        session, 
+        message.from_user.id, 
+        message.from_user.username,
+        referrer_id=referrer_id
+    )
     
     text = get_main_menu_text(message.from_user.full_name)
     await message.answer(text, reply_markup=get_start_kb(user), parse_mode="HTML")
 
 @router.callback_query(F.data == "back_to_main")
-async def process_back_to_main(callback: types.CallbackQuery):
+async def process_back_to_main(callback: types.CallbackQuery, session: AsyncSession):
     """Возврат в главное меню из настроек"""
-    async with async_session() as session:
-        user = await session.get(User, callback.from_user.id)
-        if not user:
-            return await callback.answer("Ошибка профиля", show_alert=True)
+    user = await session.get(User, callback.from_user.id)
+    if not user:
+        return await callback.answer("Ошибка профиля", show_alert=True)
     
     text = get_main_menu_text(callback.from_user.full_name)
     await callback.message.edit_text(text, reply_markup=get_start_kb(user), parse_mode="HTML")
     await callback.answer()
 
 @router.callback_query(F.data == "activate_trial")
-async def process_activate_trial(callback: types.CallbackQuery):
+async def process_activate_trial(callback: types.CallbackQuery, session: AsyncSession):
     """Обработка нажатия на кнопку получения пробного периода"""
-    async with async_session() as session:
-        success, msg = await activate_trial(session, callback.from_user.id)
-        user = await session.get(User, callback.from_user.id)
+    success, msg = await activate_trial(session, callback.from_user.id)
+    user = await session.get(User, callback.from_user.id)
     
     if not success:
         return await callback.answer(msg, show_alert=True)

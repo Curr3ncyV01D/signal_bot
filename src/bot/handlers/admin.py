@@ -7,10 +7,9 @@ from aiogram.exceptions import TelegramForbiddenError
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.context import FSMContext
 from aiogram.utils.markdown import hbold
-
+from sqlalchemy.ext.asyncio import AsyncSession
 from src.core.config import config
 from src.database.models import User
-from src.database.session import async_session
 from src.database.crud.channel_service import ChannelService 
 from src.database.crud.user_service import (
     get_users_count, get_users_page, get_user_by_id, 
@@ -39,6 +38,66 @@ class AdminChannelStates(StatesGroup):
     waiting_for_oi = State()
     waiting_for_sub_days = State()
     waiting_for_symbol_search = State()
+    waiting_for_channel_mcap_pct = State()
+    waiting_for_channel_mcap_min_usd = State()
+    waiting_for_channel_mcap_cas_pct = State()
+    waiting_for_channel_mcap_cas_min_usd = State()
+
+
+@router.callback_query(F.data == "admin_chan_toggle_threshold_mode")
+async def admin_chan_toggle_threshold_mode_handler(callback: types.CallbackQuery, session: AsyncSession):
+    settings = await ChannelService.get_settings(session)
+    new_mode = "PERCENT" if settings.threshold_mode == "USD" else "USD"
+    await ChannelService.update_settings(session, threshold_mode=new_mode)
+    analyzer.invalidate_user_cache()
+    await render_channel_settings(callback, session)
+    await callback.answer(f"Режим канала изменен на {new_mode}")
+
+
+@router.callback_query(F.data.startswith("admin_chan_set_mcap_"))
+async def admin_chan_set_mcap_start(callback: types.CallbackQuery, state: FSMContext):
+    data = callback.data
+    if data == "admin_chan_set_mcap_pct":
+        await state.set_state(AdminChannelStates.waiting_for_channel_mcap_pct)
+        await callback.message.answer("КАНАЛ: Введите порог объема в % (например, 0.005).")
+    elif data == "admin_chan_set_mcap_min_usd":
+        await state.set_state(AdminChannelStates.waiting_for_channel_mcap_min_usd)
+        await callback.message.answer("КАНАЛ: Введите мин. пол объема в $ (например, 50000).")
+    elif data == "admin_chan_set_mcap_cas_pct":
+        await state.set_state(AdminChannelStates.waiting_for_channel_mcap_cas_pct)
+        await callback.message.answer("КАНАЛ: Введите порог каскада в % (например, 0.01).")
+    elif data == "admin_chan_set_mcap_cas_min_usd":
+        await state.set_state(AdminChannelStates.waiting_for_channel_mcap_cas_min_usd)
+        await callback.message.answer("КАНАЛ: Введите мин. пол каскада в $ (например, 100000).")
+    await callback.answer()
+
+
+@router.message(AdminChannelStates.waiting_for_channel_mcap_pct)
+@router.message(AdminChannelStates.waiting_for_channel_mcap_min_usd)
+@router.message(AdminChannelStates.waiting_for_channel_mcap_cas_pct)
+@router.message(AdminChannelStates.waiting_for_channel_mcap_cas_min_usd)
+async def process_admin_mcap_parameter(message: types.Message, state: FSMContext, session: AsyncSession):
+    val = parse_numeric_input(message.text)
+    if val is None or val < 0:
+        return await message.answer("❌ Введите положительное число.")
+
+    current_state = await state.get_state()
+    update_data = {}
+    
+    if current_state == AdminChannelStates.waiting_for_channel_mcap_pct:
+        update_data["threshold_mcap_pct"] = val
+    elif current_state == AdminChannelStates.waiting_for_channel_mcap_min_usd:
+        update_data["threshold_mcap_usd_min"] = val
+    elif current_state == AdminChannelStates.waiting_for_channel_mcap_cas_pct:
+        update_data["threshold_cascade_mcap_pct"] = val
+    elif current_state == AdminChannelStates.waiting_for_channel_mcap_cas_min_usd:
+        update_data["threshold_cascade_mcap_usd_min"] = val
+        
+    await ChannelService.update_settings(session, **update_data)
+    analyzer.invalidate_user_cache()
+    await state.clear()
+    await render_channel_settings(message, session)
+    await message.answer("✅ Настройки канала обновлены.")
 
 USERS_PER_PAGE = 10
 
@@ -87,20 +146,19 @@ async def process_admin_main(callback: types.CallbackQuery):
     await callback.answer()
 
 @router.callback_query(F.data.startswith("admin_page_"))
-async def process_admin_page(callback: types.CallbackQuery):
+async def process_admin_page(callback: types.CallbackQuery, session: AsyncSession):
     """Отображение списка пользователей (страницы)"""
     page = int(callback.data.split("_")[2])
     
-    async with async_session() as session:
-        total_users = await get_users_count(session)
-        total_pages = ceil(total_users / USERS_PER_PAGE) if total_users > 0 else 1
+    total_users = await get_users_count(session)
+    total_pages = ceil(total_users / USERS_PER_PAGE) if total_users > 0 else 1
+    
+    # Корректировка, если страница вышла за пределы
+    if page > total_pages: page = total_pages
+    if page < 1: page = 1
         
-        # Корректировка, если страница вышла за пределы
-        if page > total_pages: page = total_pages
-        if page < 1: page = 1
-            
-        offset = (page - 1) * USERS_PER_PAGE
-        users = await get_users_page(session, limit=USERS_PER_PAGE, offset=offset)
+    offset = (page - 1) * USERS_PER_PAGE
+    users = await get_users_page(session, limit=USERS_PER_PAGE, offset=offset)
         
     text = (
         f"👥 <b>Список пользователей (Всего: {total_users})</b>\n\n"
@@ -115,17 +173,16 @@ async def process_admin_page(callback: types.CallbackQuery):
     await callback.answer()
 
 @router.callback_query(F.data.startswith("admin_user_"))
-async def process_admin_user_card(callback: types.CallbackQuery):
+async def process_admin_user_card(callback: types.CallbackQuery, session: AsyncSession):
     """Отправляет НОВОЕ сообщение с карточкой пользователя"""
     user_id = int(callback.data.split("_")[2])
     
-    async with async_session() as session:
-        user = await get_user_by_id(session, user_id)
-        if not user:
-            return await callback.answer("Пользователь не найден в БД!", show_alert=True)
-            
-        text = _format_user_card_text(user)
-        is_blocked = user.is_blocked
+    user = await get_user_by_id(session, user_id)
+    if not user:
+        return await callback.answer("Пользователь не найден в БД!", show_alert=True)
+        
+    text = _format_user_card_text(user)
+    is_blocked = user.is_blocked
     
     await callback.message.answer(
         text, 
@@ -135,12 +192,11 @@ async def process_admin_user_card(callback: types.CallbackQuery):
     await callback.answer()
 
 @router.callback_query(F.data.startswith("admin_toggle_"))
-async def process_admin_toggle_block(callback: types.CallbackQuery, bot: Bot):
+async def process_admin_toggle_block(callback: types.CallbackQuery, bot: Bot, session: AsyncSession):
     """Блокировка / Разблокировка пользователя"""
     user_id = int(callback.data.split("_")[2])
     
-    async with async_session() as session:
-        new_status = await toggle_user_block(session, user_id)
+    new_status = await toggle_user_block(session, user_id)
         
     if new_status is None:
         return await callback.answer("Ошибка изменения статуса", show_alert=True)
@@ -212,46 +268,35 @@ async def render_channel_settings(message_or_call, session):
             logger.error(f"Ошибка при обновлении меню настроек: {e}")
 
 @router.callback_query(F.data == "admin_channel_settings")
-async def process_admin_channel_settings(callback: types.CallbackQuery):
-    async with async_session() as session:
-        await render_channel_settings(callback, session)
+async def process_admin_channel_settings(callback: types.CallbackQuery, session: AsyncSession):
+    await render_channel_settings(callback, session)
     await callback.answer()
 
 @router.callback_query(F.data.startswith("admin_chan_toggle_"))
-async def process_admin_chan_toggle(callback: types.CallbackQuery):
+async def process_admin_chan_toggle(callback: types.CallbackQuery, session: AsyncSession):
     """Универсальный обработчик всех тумблеров канала"""
     action = callback.data.replace("admin_chan_toggle_", "")
     
-    async with async_session() as session:
-        settings = await ChannelService.get_settings(session)
-        
-        # Меняем нужный флаг
-        if action == "active": settings.is_active = not settings.is_active
-        elif action == "cascade": settings.alert_cascade = not settings.alert_cascade
-        elif action == "volume": settings.alert_volume = not settings.alert_volume
-        elif action == "squeeze": settings.alert_squeeze = not settings.alert_squeeze
-        elif action == "oi": settings.alert_oi = not settings.alert_oi
-        elif action == "rsi": settings.alert_rsi = not settings.alert_rsi
-        elif action == "cvd": settings.alert_cvd = not settings.alert_cvd
-        elif action == "longs": settings.alert_longs = not settings.alert_longs
-        elif action == "shorts": settings.alert_shorts = not settings.alert_shorts
-        
-        # Обновляем через сервис (он сам обновит кэш)
-        await ChannelService.update_settings(session, **{
-            "is_active": settings.is_active,
-            "alert_cascade": settings.alert_cascade,
-            "alert_volume": settings.alert_volume,
-            "alert_squeeze": settings.alert_squeeze,
-            "alert_oi": settings.alert_oi,
-            "alert_rsi": settings.alert_rsi,
-            "alert_cvd": settings.alert_cvd,
-            "alert_longs": settings.alert_longs,
-            "alert_shorts": settings.alert_shorts
-        })
-        # Сбрасываем кэш анализатора для мгновенного применения
-        analyzer.invalidate_user_cache()
-        
-        await render_channel_settings(callback, session)
+    settings = await ChannelService.get_settings(session)
+    update_data = {}
+    
+    # Меняем нужный флаг
+    if action == "active": update_data["is_active"] = not settings.is_active
+    elif action == "cascade": update_data["alert_cascade"] = not settings.alert_cascade
+    elif action == "volume": update_data["alert_volume"] = not settings.alert_volume
+    elif action == "squeeze": update_data["alert_squeeze"] = not settings.alert_squeeze
+    elif action == "oi": update_data["alert_oi"] = not settings.alert_oi
+    elif action == "rsi": update_data["alert_rsi"] = not settings.alert_rsi
+    elif action == "cvd": update_data["alert_cvd"] = not settings.alert_cvd
+    elif action == "longs": update_data["alert_longs"] = not settings.alert_longs
+    elif action == "shorts": update_data["alert_shorts"] = not settings.alert_shorts
+    
+    # Обновляем через сервис
+    await ChannelService.update_settings(session, **update_data)
+    # Сбрасываем кэш анализатора для мгновенного применения
+    analyzer.invalidate_user_cache()
+    
+    await render_channel_settings(callback, session)
     await callback.answer("Настройка канала обновлена!")
 
 # --- ВВОД ПОРОГОВ КАНАЛА ---
@@ -263,18 +308,37 @@ async def set_chan_vol(callback: types.CallbackQuery, state: FSMContext):
     await callback.answer()
 
 @router.message(AdminChannelStates.waiting_for_volume)
-async def process_chan_vol(message: types.Message, state: FSMContext):
-    try:
+@router.message(AdminChannelStates.waiting_for_cascade)
+@router.message(AdminChannelStates.waiting_for_oi)
+async def process_admin_channel_thresholds(message: types.Message, state: FSMContext, session: AsyncSession):
+    current_state = await state.get_state()
+    update_data = {}
+
+    if current_state == AdminChannelStates.waiting_for_oi:
+        parts = message.text.replace("%", "").replace("$", "").split()
+        try:
+            if len(parts) != 2: raise ValueError
+            pct = parse_numeric_input(parts[0])
+            val = parse_numeric_input(parts[1])
+            if pct <= 0 or val <= 0: raise ValueError
+            update_data = {"threshold_oi_percent": pct, "threshold_oi_value": val}
+        except ValueError:
+            return await message.answer("❌ Введите 2 числа через пробел (процент и объем)")
+    else:
         val = parse_numeric_input(message.text.replace("$", ""))
-        if val <= 0:
-            raise ValueError
-        async with async_session() as session:
-            await ChannelService.update_settings(session, threshold=val)
-            analyzer.invalidate_user_cache()
-            await render_channel_settings(message, session)
-        await state.clear()
-    except ValueError:
-        await message.answer("❌ Пожалуйста, введите корректную сумму цифрами")
+        if val is None or val <= 0:
+            return await message.answer("❌ Введите корректное число")
+        
+        if current_state == AdminChannelStates.waiting_for_volume:
+            update_data["threshold"] = val
+        elif current_state == AdminChannelStates.waiting_for_cascade:
+            update_data["threshold_cascade"] = val
+            
+    await ChannelService.update_settings(session, **update_data)
+    analyzer.invalidate_user_cache()
+    await render_channel_settings(message, session)
+    await state.clear()
+    await message.answer("✅ Настройки канала обновлены.")
 
 @router.callback_query(F.data == "admin_chan_set_cas")
 async def set_chan_cas(callback: types.CallbackQuery, state: FSMContext):
@@ -282,51 +346,19 @@ async def set_chan_cas(callback: types.CallbackQuery, state: FSMContext):
     await state.set_state(AdminChannelStates.waiting_for_cascade)
     await callback.answer()
 
-@router.message(AdminChannelStates.waiting_for_cascade)
-async def process_chan_cas(message: types.Message, state: FSMContext):
-    try:
-        val = parse_numeric_input(message.text.replace("$", ""))
-        if val <= 0:
-            raise ValueError
-        async with async_session() as session:
-            await ChannelService.update_settings(session, threshold_cascade=val)
-            analyzer.invalidate_user_cache()
-            await render_channel_settings(message, session)
-        await state.clear()
-    except ValueError:
-        await message.answer("❌ Пожалуйста, введите корректную сумму цифрами")
-
 @router.callback_query(F.data == "admin_chan_set_oi")
 async def set_chan_oi(callback: types.CallbackQuery, state: FSMContext):
     await callback.message.answer("Введите пороги ОИ для канала (Процент и Сумма через пробел, например: 10 1000000):")
     await state.set_state(AdminChannelStates.waiting_for_oi)
     await callback.answer()
 
-@router.message(AdminChannelStates.waiting_for_oi)
-async def process_chan_oi(message: types.Message, state: FSMContext):
-    try:
-        parts = message.text.replace("%", "").replace("$", "").split()
-        if len(parts) != 2:
-            raise ValueError
-        pct = parse_numeric_input(parts[0])
-        val = parse_numeric_input(parts[1])
-        if pct <= 0 or val <= 0:
-            raise ValueError
-        
-        async with async_session() as session:
-            await ChannelService.update_settings(session, threshold_oi_percent=pct, threshold_oi_value=val)
-            analyzer.invalidate_user_cache()
-            await render_channel_settings(message, session)
-        await state.clear()
-    except ValueError:
-        await message.answer("❌ Пожалуйста, введите корректную сумму цифрами")
-
 @router.callback_query(F.data == "admin_chan_restart_dash")
 async def process_restart_dash(
     callback: types.CallbackQuery, 
     bot: Bot, 
     liq_aggregator, 
-    market_aggregator
+    market_aggregator,
+    session: AsyncSession
 ):
     try:
         message_id = await recreate_dashboard_logic(bot, liq_aggregator, market_aggregator)
@@ -335,8 +367,7 @@ async def process_restart_dash(
         else:
             await callback.answer("✅ Дэшборд успешно пересоздан и закреплен!", show_alert=True)
 
-        async with async_session() as session:
-            await render_channel_settings(callback, session)
+        await render_channel_settings(callback, session)
             
     except Exception as e:
         logger.error(f"Ошибка при перезапуске дэшборда: {e}", exc_info=True)
@@ -373,7 +404,7 @@ async def process_admin_subs_start(callback: types.CallbackQuery, state: FSMCont
     await callback.answer()
 
 @router.message(AdminChannelStates.waiting_for_sub_days)
-async def process_admin_subs_days(message: types.Message, state: FSMContext, bot: Bot):
+async def process_admin_subs_days(message: types.Message, state: FSMContext, bot: Bot, session: AsyncSession):
     """Обработка ввода количества дней"""
     data = await state.get_data()
     user_id = data.get("target_user_id")
@@ -386,14 +417,13 @@ async def process_admin_subs_days(message: types.Message, state: FSMContext, bot
     if days < 0 or days > config.MAX_SUB_DAYS:
         return await message.answer(f"❌ Введите число от 0 до {config.MAX_SUB_DAYS}.", reply_markup=get_cancel_fsm_kb())
         
-    async with async_session() as session:
-        user = await update_user_subscription(session, user_id, days)
+    user = await update_user_subscription(session, user_id, days)
         
-        if not user:
-            await state.clear()
-            return await message.answer("❌ Ошибка: пользователь не найден в базе данных.")
+    if not user:
+        await state.clear()
+        return await message.answer("❌ Ошибка: пользователь не найден в базе данных.")
             
-        sub_end = user.subscription_end
+    sub_end = user.subscription_end
 
     # Удаляем сообщение с вопросом
     if fsm_msg_id:

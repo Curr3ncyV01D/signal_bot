@@ -19,6 +19,13 @@ class ChannelSettingsData:
     alert_longs: bool = True
     alert_shorts: bool = True
     threshold_vol_pct: float = 0.0
+    
+    threshold_mode: str = "USD"
+    threshold_mcap_pct: float = 0.005
+    threshold_mcap_usd_min: float = 1000.0
+    threshold_cascade_mcap_pct: float = 0.01
+    threshold_cascade_mcap_usd_min: float = 5000.0
+
     alert_oi: bool = True
     threshold_oi_percent: float = 10.0
     threshold_oi_value: float = 1000000.0
