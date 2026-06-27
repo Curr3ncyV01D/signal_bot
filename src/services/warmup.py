@@ -56,7 +56,8 @@ async def warmup_system(market_aggregator, target_symbols: list[str]) -> None:
                                 price = float(ticker.get("lastPrice") or 0)
                                 oi = float(ticker.get("openInterestValue") or 0)
                                 funding = float(ticker.get("fundingRate") or 0)
-                                market_aggregator.update(symbol, price, oi, funding)
+                                vol24h = float(ticker.get("turnover24h")) if ticker.get("turnover24h") else None
+                                market_aggregator.update(symbol, price, oi, funding, vol24h)
         except Exception as e:
             logger.error(f"Ошибка прогрева тикеров: {e}")
 

@@ -1,9 +1,43 @@
 import asyncio
 import logging
 import time
+import re
 from datetime import datetime
 
 logger = logging.getLogger(__name__)
+
+# Ручной маппинг для случаев, когда тикер не совпадает с ID CoinGecko
+MANUAL_MAPPING = {
+    "BIT": "bitdao",
+    "WLD": "worldcoin-org",
+    "PEPE": "pepe",
+    "SHIB": "shiba-inu",
+    # Добавляйте сюда другие монеты по мере необходимости
+}
+
+
+SYMBOL_MULTIPLIER_REGEX = re.compile(r'^(\d+)')
+
+def normalize_bybit_symbol(raw_symbol: str) -> str:
+    """
+    Нормализует тикер Bybit для поиска в CoinGecko или использования как ключ.
+    """
+    # В верхний регистр и убираем USDT
+    s = raw_symbol.upper().replace("USDT", "")
+
+    # Убираем числовые префиксы в начале строки (например, 1000PEPE -> PEPE)
+    s = SYMBOL_MULTIPLIER_REGEX.sub('', s)
+
+    return s.lower()
+
+
+def get_symbol_multiplier(symbol: str) -> int:
+    """
+    Возвращает числовой префикс тикера (например, 1000 для 1000PEPE).
+    Если префикса нет, возвращает 1.
+    """
+    match = SYMBOL_MULTIPLIER_REGEX.match(symbol)
+    return int(match.group(1)) if match else 1
 
 
 def format_datetime(dt: datetime | None) -> str:
@@ -13,18 +47,29 @@ def format_datetime(dt: datetime | None) -> str:
     return f"{dt.strftime('%d.%m.%Y %H:%M')} UTC"
 
 
-def format_smart_num(val: float, is_percent: bool = False) -> str:
-    """Форматирует число по-человечески: пробелы в тысячах и до 1 знака после запятой."""
+def format_smart_num(val: float | None, is_percent: bool = False, show_sign: bool = False, decimal_places: int = 1) -> str:
+    """Форматирует число"""
+    if val is None:
+        return "Н/Д"
+        
     num = float(val)
-    rounded = round(num, 1)
+    rounded = round(num, decimal_places)
     is_integer = rounded.is_integer()
 
     if is_integer:
-        formatted = f"{int(rounded):,}".replace(",", " ")
+        formatted = f"{int(abs(rounded)):,}".replace(",", " ")
     else:
-        formatted = f"{rounded:,.1f}".replace(",", " ").replace(".", ",")
+        formatted = f"{abs(rounded):,.{decimal_places}f}".replace(",", " ").replace(".", ",")
 
-    return f"{formatted}%" if is_percent else formatted
+    # Добавляем знак
+    sign = ""
+    if rounded > 0 and show_sign:
+        sign = "+"
+    elif rounded < 0:
+        sign = "-"
+
+    res = f"{sign}{formatted}"
+    return f"{res}%" if is_percent else res
 
 
 def parse_numeric_input(text: str) -> float:

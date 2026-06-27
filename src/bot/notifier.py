@@ -5,6 +5,7 @@ from aiogram.utils.markdown import hbold, hlink
 from aiogram.types import LinkPreviewOptions
 from aiogram.exceptions import TelegramRetryAfter, TelegramForbiddenError
 from src.core.config import config
+from src.utils import format_smart_num
 
 logger = logging.getLogger(__name__)
 
@@ -68,8 +69,8 @@ class AlertFormatter:
         oi_val_marker = " ‼️" if oi_val is not None and abs(oi_val) >= 5_000_000 else " ❗️" if oi_val is not None and abs(oi_val) >= 1_000_000 else ""
         price_marker = " ❗️" if price_pct is not None and abs(price_pct) >= 10 else ""
 
-        oi_display = f"{oi_pct:+.2f}%" if oi_pct is not None else "⌛"
-        price_display = f"{price_pct:+.2f}%" if price_pct is not None else "⌛"
+        oi_display = format_smart_num(oi_pct, is_percent=True, show_sign=True) if oi_pct is not None else "⌛"
+        price_display = format_smart_num(price_pct, is_percent=True, show_sign=True) if price_pct is not None else "⌛"
         price_arrow = "↗️" if (price_pct or 0) > 0 else "↘️" if (price_pct or 0) < 0 else ""
 
         oi_str = f"{oi_display}{oi_pct_marker}"
@@ -91,7 +92,7 @@ class AlertFormatter:
         res = ""
         for period, val in [("5m", d5), ("30m", d30)]:
             if val is None:
-                res += f"📊 {hbold(f'CVD ({period}):')} ⌛\n"
+                res += f"⌛ {hbold(f'CVD ({period}):')} ⌛\n"
             elif val >= 0:
                 res += f"🟢 {hbold(f'More Buys ({period}):')} {self.format_money(val)}\n"
             else:
@@ -122,6 +123,52 @@ class AlertFormatter:
             
         res += f"{emoji_1h} {hbold(f'{side_1h} LIQ (1H):')} {self.format_money(sum_1h)}\n"
         return res
+
+    def _impact_block(self) -> str:
+        """Блок рыночного влияния ликвидаций на торги за 24часа (Vol Ratio)"""
+        vol_ratio = self.data.get("vol_ratio")
+        if vol_ratio is None:
+            return ""
+        
+        marker = ""
+        if vol_ratio >= 10.0:
+            marker = " 💎"
+        elif vol_ratio >= 5.0:
+            marker = " ⚠️"
+        elif vol_ratio >= 1.0:
+            marker = " ❗️"
+            
+        formatted_vol = format_smart_num(vol_ratio, is_percent=True, decimal_places=4)
+        return f"🌊 {hbold('Vol Ratio:')} {formatted_vol} {marker}\n"
+
+    def _fundamental_block(self) -> str:
+        """Блок фундаментальных данных (Market Cap и Cap Ratio)"""
+        live_mcap = self.data.get("live_mcap", 0.0)
+        cap_ratio = self.data.get("cap_ratio")
+        is_fallback = self.data.get("is_fallback", False)
+
+        if is_fallback:
+            return f"💎 {hbold('Market Cap:')} ⌛\n"
+        
+        if live_mcap <= 0:
+            return ""
+
+        marker = ""
+        if cap_ratio is not None:
+            if cap_ratio >= 0.1:
+                marker = " 💎"
+            elif cap_ratio >= 0.05:
+                marker = " ⚠️"
+            elif cap_ratio >= 0.01:
+                marker = " ❗️"
+
+        formatted_mcap = self.format_money(live_mcap)
+        formatted_cap = format_smart_num(cap_ratio, is_percent=True, decimal_places=4) if cap_ratio is not None else "⌛"
+        
+        return (
+            f"💎 {hbold('Market Cap:')} {formatted_mcap}\n"
+            f"⚖ {hbold('Cap Ratio:')} {formatted_cap}{marker}\n"
+        )
 
     def _indicators_block(self) -> str:
         """Технические индикаторы (RSI, Funding) с экстремумами"""
@@ -164,7 +211,11 @@ class AlertFormatter:
             self._header() +
             self._market_block() +
             self._cvd_block() +
+            '\n' +
             self._liq_block() +
+            self._impact_block() +
+            '\n' +
+            self._fundamental_block() +
             self._indicators_block() +
             self._footer()
         )

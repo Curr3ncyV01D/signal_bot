@@ -95,7 +95,7 @@ class MetricsService:
         diff = (now - BouncerManager.last_run).total_seconds()
         
         if diff < 60:
-            return "только что"
+            return "в эту минуту"
         return f"{int(diff // 60)} мин. назад"
 
     @staticmethod
@@ -108,8 +108,9 @@ class MetricsService:
             
         now = datetime.now(timezone.utc)
         diff = (now - PaymentManager.last_run).total_seconds()
-        
-        return f"{diff} сек. назад"
+        if diff < 60:
+            return "в эту минуту"
+        return f"{int(diff // 60)} мин. назад"
 
     @classmethod
     async def get_admin_bi_data(cls, session, listener, liq_aggregator, data_queue: asyncio.Queue) -> dict:

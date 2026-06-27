@@ -3,15 +3,14 @@ from typing import Any, Awaitable, Callable, Dict
 
 from aiogram import BaseMiddleware
 from aiogram.types import Update
-from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from src.core.security import SecurityManager
 
 logger = logging.getLogger(__name__)
 
 class BlockMiddleware(BaseMiddleware):
-    def __init__(self, session_pool: async_sessionmaker):
-        self.session_pool = session_pool
+    def __init__(self):
+        super().__init__()
 
     async def __call__(
         self,

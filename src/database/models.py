@@ -24,9 +24,18 @@ class User(Base):
     # Ликвидации (Аналитика)
     threshold: Mapped[float] = mapped_column(Float, default=10000.0) 
     threshold_cascade: Mapped[float] = mapped_column(Float, default=5000.0) 
+
+    threshold_mode: Mapped[str] = mapped_column(String(20), default="USD")
+    threshold_mcap_pct: Mapped[float] = mapped_column(Float, default=0.005)
+    threshold_mcap_usd_min: Mapped[float] = mapped_column(Float, default=1000.0)
+    threshold_cascade_mcap_pct: Mapped[float] = mapped_column(Float, default=0.01)
+    threshold_cascade_mcap_usd_min: Mapped[float] = mapped_column(Float, default=5000.0)
+
     alert_cascade: Mapped[bool] = mapped_column(Boolean, default=True)
     alert_volume: Mapped[bool] = mapped_column(Boolean, default=True)
     alert_squeeze: Mapped[bool] = mapped_column(Boolean, default=True)
+    alert_longs: Mapped[bool] = mapped_column(Boolean, default=True)
+    alert_shorts: Mapped[bool] = mapped_column(Boolean, default=True)
 
     # Открытый интерес (OI)
     alert_oi: Mapped[bool] = mapped_column(Boolean, default=True)
@@ -50,11 +59,21 @@ class ChannelSettings(Base):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
 
     # Ликвидация
-    threshold: Mapped[float] = mapped_column(Float, default=100000.0) # Пороги выше для канала
+    threshold: Mapped[float] = mapped_column(Float, default=100000.0)
     threshold_cascade: Mapped[float] = mapped_column(Float, default=50000.0)
+
+    threshold_mode: Mapped[str] = mapped_column(String(20), default="USD")
+    threshold_mcap_pct: Mapped[float] = mapped_column(Float, default=0.005)
+    threshold_mcap_usd_min: Mapped[float] = mapped_column(Float, default=1000.0)
+    threshold_cascade_mcap_pct: Mapped[float] = mapped_column(Float, default=0.01)
+    threshold_cascade_mcap_usd_min: Mapped[float] = mapped_column(Float, default=5000.0)
+
     alert_cascade: Mapped[bool] = mapped_column(Boolean, default=True)
     alert_volume: Mapped[bool] = mapped_column(Boolean, default=True)
     alert_squeeze: Mapped[bool] = mapped_column(Boolean, default=True)
+    alert_longs: Mapped[bool] = mapped_column(Boolean, default=True)
+    alert_shorts: Mapped[bool] = mapped_column(Boolean, default=True)
+    threshold_vol_pct: Mapped[float] = mapped_column(Float, default=0.0)
 
     # Открытый интерес (OI)
     alert_oi: Mapped[bool] = mapped_column(Boolean, default=True)
@@ -105,3 +124,16 @@ class Invoice(Base):
     crypto_pay_id: Mapped[str] = mapped_column(String(50), unique=True, nullable=False)
     status: Mapped[str] = mapped_column(String(20), nullable=False) # PENDING, PAID, EXPIRED
     created_at: Mapped[datetime] = mapped_column(DateTime, default=get_utc_now, nullable=False)
+
+
+class CoinFundamental(Base):
+    __tablename__ = "coin_fundamentals"
+
+    symbol: Mapped[str] = mapped_column(String(20), primary_key=True) # Базовый тикер (BTC, PEPE)
+    circulating_supply: Mapped[float] = mapped_column(Float, nullable=False)
+    cg_id: Mapped[str | None] = mapped_column(String(100), nullable=True) # CoinGecko ID
+    last_updated: Mapped[datetime] = mapped_column(
+        DateTime, 
+        default=get_utc_now, 
+        onupdate=get_utc_now
+    )

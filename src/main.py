@@ -9,17 +9,22 @@ from sqlalchemy import select
 from src.core.config import config, setup_logging
 from src.core.security import SecurityManager
 from src.database.session import async_session
-from src.database.models import User
+from src.database.models import User, CoinFundamental
 from src.database.crud.liq_service import get_recent_liquidations
 from src.database.crud.channel_service import ChannelService
 from src.bot.handlers import main_router as router
 from src.bot.middlewares.block_middleware import BlockMiddleware
 from src.bot.middlewares.fsm_cleaner import FSMCleanerMiddleware
+from src.bot.middlewares.db_session import DbSessionMiddleware
 from src.services.bybit_ws import BybitListener
 from src.services.aggregators.liq_aggregator import LiquidationAggregator
 from src.services.aggregators.market_aggregator import MarketAggregator
 from src.services.aggregators.trade_aggregator import TradeAggregator
-from src.services.analyzer import cleanup_alert_history_task
+from src.services.analyzer import (
+    cleanup_alert_history_task, 
+    user_cache_refresher_task, 
+    user_cache_refresher_task_once
+)
 from src.services.worker import DataWorker
 from src.services.retention import retention_policy_worker
 from src.services.warmup import warmup_system
@@ -28,6 +33,7 @@ from src.services.dashboard import dashboard_worker
 from src.services.payment_worker import payment_checker_worker
 from src.services.cryptopay import cryptopay
 from src.services.symbol_sync import build_target_symbols, symbol_sync_worker
+from src.services.supply_worker import supply_sync_worker
 from src.utils import lag_detector
 
 logger = logging.getLogger(__name__)
@@ -95,8 +101,12 @@ async def main():
     # Инициализация бота
     bot = Bot(token=config.BOT_TOKEN, session=session)
     dp = Dispatcher()
-    dp.update.outer_middleware(BlockMiddleware(async_session))
+    
+    # Регистрация Middleware
+    dp.update.outer_middleware(DbSessionMiddleware(async_session))
+    dp.update.outer_middleware(BlockMiddleware())
     dp.message.outer_middleware(FSMCleanerMiddleware())
+    
     dp.include_router(router)
 
     # Инициализация инфраструктуры данных (SOLID & DI)
@@ -120,7 +130,7 @@ async def main():
     all_symbols = await asyncio.to_thread(listener.get_all_usdt_symbols)
     target_symbols = build_target_symbols(all_symbols)
 
-    # 2. Прогрев ликвидаций из БД 
+    # 2. Прогрев данных из БД 
     logging.info("Прогрев ликвидаций из базы данных...")
     async with async_session() as session_db:
         historical_data = await get_recent_liquidations(session_db, minutes=60)
@@ -129,8 +139,19 @@ async def main():
         await ChannelService.get_settings(session_db)
         logging.info("⚙️ Настройки канала успешно загружены в кэш.")
 
+        # Загрузка данных об эмиссии монет
+        fundamentals_query = select(CoinFundamental)
+        fundamentals_result = await session_db.execute(fundamentals_query)
+        coins_data = fundamentals_result.scalars().all()
+        for coin in coins_data:
+            market_aggregator.update_supply(coin.symbol, coin.circulating_supply)
+        logging.info(f"📊 Загружены данные об эмиссии для {len(coins_data)} монет.")
+
     # 3. Принудительный прогрев ОИ и RSI из Bybit API 
     await warmup_system(market_aggregator, target_symbols)
+
+    # 3.1 Инициализация кэша пользователей до старта потока данных
+    await user_cache_refresher_task_once()
 
     # 4. Передаем прогретые монеты в листенер и запускаем сокеты 
     listener.target_symbols = target_symbols
@@ -145,12 +166,15 @@ async def main():
     )
     worker_task = asyncio.create_task(worker.run(queue))
     sync_task = asyncio.create_task(symbol_sync_worker(listener, market_aggregator))
+    supply_sync_task = asyncio.create_task(supply_sync_worker(market_aggregator))
 
     # 6. Запускаем фоновые задачи и Вышибалу
     lag_detector_task = asyncio.create_task(lag_detector(queue))
     retention_task = asyncio.create_task(retention_policy_worker(hours=4))
     aggregator_task = asyncio.create_task(liq_aggregator.cleanup_task())
-    alert_cleanup_task = asyncio.create_task(cleanup_alert_history_task())        
+    market_gc_task = asyncio.create_task(market_aggregator.cleanup_task())
+    alert_cleanup_task = asyncio.create_task(cleanup_alert_history_task())
+    user_cache_task = asyncio.create_task(user_cache_refresher_task())
     bouncer_task = asyncio.create_task(bouncer_worker(bot, interval_minutes=15))
     dashboard_task = asyncio.create_task(dashboard_worker(bot, liq_aggregator, market_aggregator))
     payment_task = asyncio.create_task(payment_checker_worker(bot))
@@ -197,10 +221,13 @@ async def main():
                 sync_task,
                 retention_task,
                 aggregator_task,
+                market_gc_task,
                 alert_cleanup_task,
+                user_cache_task,
                 bouncer_task,
                 dashboard_task,
-                payment_task
+                payment_task,
+                supply_sync_task
             ]
         )
 

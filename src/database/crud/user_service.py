@@ -215,6 +215,31 @@ async def update_user_subscription(session: AsyncSession, user_id: int, days: in
         logger.error(f"Непредвиденная ошибка при обновлении подписки для {user_id}: {e}")
         return None
 
+async def update_user_settings(session: AsyncSession, user_id: int, **kwargs) -> User | None:
+    """
+    Универсальный метод для обновления любых полей настроек пользователя.
+    """
+    try:
+        user = await session.get(User, user_id)
+        if not user:
+            return None
+
+        for key, value in kwargs.items():
+            if hasattr(user, key):
+                setattr(user, key, value)
+        
+        await session.commit()
+        await session.refresh(user)
+        return user
+    except SQLAlchemyError as e:
+        await session.rollback()
+        logger.error(f"Ошибка БД при обновлении настроек пользователя {user_id}: {e}")
+        return None
+    except Exception as e:
+        await session.rollback()
+        logger.error(f"Непредвиденная ошибка при обновлении настроек пользователя {user_id}: {e}")
+        return None
+
 async def get_all_receiver_ids(session: AsyncSession) -> list[int]:
     """Возвращает список ID всех пользователей, которые не заблокированы ботом."""
     try:
