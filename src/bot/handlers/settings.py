@@ -109,8 +109,7 @@ async def render_settings_menu(event: types.Message | types.CallbackQuery, user:
         sub_status = "❌ Нет активной подписки"
 
     text = (
-        f"⚙️ <b>Личный кабинет и настройки</b>\n\n"
-        f"👑 <b>Подписка:</b> {sub_status}\n\n"
+        f"⚙️ <b>Настройки</b>\n\n"
         f"<b>📊 Фильтры ликвидаций (Режим: {user.threshold_mode}):</b>\n"
         f"🔶 Порог объема: <b>${format_smart_num(user.threshold)}</b>\n"
         f"🔸 Порог каскада: <b>${format_smart_num(user.threshold_cascade)}</b>\n"
@@ -206,7 +205,7 @@ async def toggle_settings(callback: types.CallbackQuery, session: AsyncSession):
     
     if user:
         # Сбрасываем кэш анализатора для мгновенного применения
-        analyzer.invalidate_user_cache()
+        await analyzer.invalidate_user_cache()
         await callback.message.edit_reply_markup(reply_markup=get_settings_kb(user))
         await callback.answer("Настройка сохранена")
 
@@ -255,7 +254,7 @@ async def process_cascade_threshold(message: types.Message, state: FSMContext, s
     user = await update_user_settings(session, message.from_user.id, threshold_cascade=new_threshold)
     
     if user:
-        analyzer.invalidate_user_cache()
+        await analyzer.invalidate_user_cache()
         await state.clear()
         await message.answer(f"✅ Порог каскадов изменен на <b>${format_smart_num(new_threshold)}</b>!", parse_mode="HTML")
     else:

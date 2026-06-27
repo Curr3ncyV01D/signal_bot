@@ -1,12 +1,16 @@
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from src.core.config import config
+from src.database.models import User
 
-def get_wallet_main_kb(balance: float) -> InlineKeyboardMarkup:
+def get_wallet_main_kb(user: User) -> InlineKeyboardMarkup:
     """Главное меню кошелька"""
     builder = InlineKeyboardBuilder()
-    builder.row(InlineKeyboardButton(text="➕ Пополнить баланс", callback_data="deposit"))
-    builder.row(InlineKeyboardButton(text="💎 Купить подписку", callback_data="buy_subscription"))
+
+    builder.row(InlineKeyboardButton(text="💎 Продлить подписку", callback_data="buy_subscription"))
+    builder.row(InlineKeyboardButton(text="💰 Пополнить баланс", callback_data="deposit"))
+    auto_renewal_text = "🔁 Автопродление: ВКЛ" if user.auto_renewal else "🔁 Автопродление: ВЫКЛ"
+    builder.row(InlineKeyboardButton(text=auto_renewal_text, callback_data="toggle_auto_renewal"))
     builder.row(InlineKeyboardButton(text="🤝 Партнерская программа", callback_data="partner_cabinet"))
     builder.row(InlineKeyboardButton(text="📜 История транзакций", callback_data="tx_history"))
     builder.row(InlineKeyboardButton(text="⬅️ Назад в меню", callback_data="back_to_main"))
@@ -56,4 +60,16 @@ def get_subscription_tariffs_kb() -> InlineKeyboardMarkup:
         ))
     
     builder.row(InlineKeyboardButton(text="⬅️ Назад", callback_data="wallet_main"))
+    return builder.as_markup()
+
+def get_balance_purchase_confirm_kb(days: int) -> InlineKeyboardMarkup:
+    """Подтверждение покупки подписки с баланса."""
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        InlineKeyboardButton(
+            text="✅ Подтвердить списание",
+            callback_data=f"confirm_balance_purchase_{days}"
+        )
+    )
+    builder.row(InlineKeyboardButton(text="❌ Отмена", callback_data="cancel_balance_purchase"))
     return builder.as_markup()

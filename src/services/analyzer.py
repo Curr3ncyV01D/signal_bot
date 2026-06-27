@@ -105,6 +105,14 @@ async def user_cache_refresher_task():
             logger.error(f"Ошибка в задаче обновления кэша пользователей: {e}")
         await asyncio.sleep(60)
 
+async def invalidate_user_cache():
+    """Принудительное обновление кэша пользователей (например, после покупки подписки)."""
+    try:
+        await _update_cache_logic()
+        logger.info("♻️ Кэш пользователей принудительно обновлен.")
+    except Exception as e:
+        logger.error(f"Ошибка при инвалидации кэша пользователей: {e}")
+
 async def user_cache_refresher_task_once():
     """Однократное обновление кэша для Graceful Startup."""
     try:

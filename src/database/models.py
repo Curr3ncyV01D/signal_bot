@@ -17,6 +17,9 @@ class User(Base):
 
     # --- Подписка и Кошелёк ---
     subscription_end: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, default=None)
+    last_renewal_attempt: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, default=None)
+    last_expiry_warning_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, default=None)
+    auto_renewal: Mapped[bool] = mapped_column(Boolean, default=True)
     is_trial_used: Mapped[bool] = mapped_column(Boolean, default=False)
     balance: Mapped[float] = mapped_column(Float, default=0.0)
     referrer_id: Mapped[int | None] = mapped_column(BigInteger, ForeignKey("users.id"), nullable=True)
@@ -123,6 +126,8 @@ class Invoice(Base):
     amount: Mapped[float] = mapped_column(Float, nullable=False)
     crypto_pay_id: Mapped[str] = mapped_column(String(50), unique=True, nullable=False)
     status: Mapped[str] = mapped_column(String(20), nullable=False) # PENDING, PAID, EXPIRED
+    payload: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    is_reminder_sent: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=get_utc_now, nullable=False)
 
 

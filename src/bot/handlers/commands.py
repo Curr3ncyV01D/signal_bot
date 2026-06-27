@@ -2,6 +2,8 @@ import asyncio
 import logging
 from datetime import datetime, timezone
 from aiogram import Router, types, F
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiogram.filters import Command
 from aiogram.utils.markdown import hbold
 from aiogram.exceptions import TelegramBadRequest
@@ -10,20 +12,62 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.core.config import config
 from src.database.crud.user_service import get_or_create_user, activate_trial
 from src.database.models import User
+from src.database.functions import get_utc_now
 from src.bot.keyboards import get_start_kb, get_status_kb, get_close_button_kb
 from src.services.metrics_service import MetricsService
+from src.utils import format_datetime, format_smart_num
 
 logger = logging.getLogger(__name__)
 router = Router()
 
-def get_main_menu_text(full_name: str) -> str:
+async def _get_news_channel_url(bot) -> str | None:
+    try:
+        chat = await bot.get_chat(config.NEWS_CHANNEL_ID)
+        if getattr(chat, "username", None):
+            return f"https://t.me/{chat.username}"
+    except Exception as e:
+        logger.error(f"Не удалось получить URL новостного канала: {e}")
+    return None
+
+async def _is_user_subscribed_to_news_channel(bot, user_id: int) -> bool | None:
+    try:
+        member = await bot.get_chat_member(config.NEWS_CHANNEL_ID, user_id)
+        return member.status not in {"left", "kicked"}
+    except Exception as e:
+        logger.error(f"Не удалось проверить подписку пользователя {user_id} на news-канал: {e}")
+        return None
+
+async def _build_trial_subscription_kb(bot) -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    news_channel_url = await _get_news_channel_url(bot)
+    if news_channel_url:
+        builder.row(
+            InlineKeyboardButton(text="📢 Перейти в новостной канал", url=news_channel_url)
+        )
+    builder.row(
+        InlineKeyboardButton(
+            text="🔄 Проверить подписку и активировать",
+            callback_data="activate_trial"
+        )
+    )
+    return builder.as_markup()
+
+def get_main_menu_text(user: User, full_name: str) -> str:
     """Текст главного меню."""
+    now = get_utc_now()
+    has_sub = user.subscription_end and user.subscription_end > now
+    
+    status_text = f"✅ Активна до {format_datetime(user.subscription_end)}" if has_sub else "❌ Не активна"
+    
     return (
         f"👋 Добро пожаловать, {hbold(full_name)}!\n\n"
         f"Я профессиональный терминал для мониторинга ликвидаций на Bybit.\n"
         f"Вы будете получать уведомления, когда на рынке начнутся сильные движения.\n\n"
+        f"💎 Подписка: {hbold(status_text)}\n"
+        f"💰 Баланс: {hbold(f'{format_smart_num(user.balance)}')} USDT\n\n"
         f"👇 Выберите действие ниже:"
     )
+
 
 @router.message(Command("start"))
 async def cmd_start(message: types.Message, session: AsyncSession):
@@ -45,7 +89,7 @@ async def cmd_start(message: types.Message, session: AsyncSession):
         referrer_id=referrer_id
     )
     
-    text = get_main_menu_text(message.from_user.full_name)
+    text = get_main_menu_text(user, message.from_user.full_name)
     await message.answer(text, reply_markup=get_start_kb(user), parse_mode="HTML")
 
 @router.callback_query(F.data == "back_to_main")
@@ -55,13 +99,31 @@ async def process_back_to_main(callback: types.CallbackQuery, session: AsyncSess
     if not user:
         return await callback.answer("Ошибка профиля", show_alert=True)
     
-    text = get_main_menu_text(callback.from_user.full_name)
+    text = get_main_menu_text(user, callback.from_user.full_name)
     await callback.message.edit_text(text, reply_markup=get_start_kb(user), parse_mode="HTML")
     await callback.answer()
 
 @router.callback_query(F.data == "activate_trial")
 async def process_activate_trial(callback: types.CallbackQuery, session: AsyncSession):
     """Обработка нажатия на кнопку получения пробного периода"""
+    is_subscribed = await _is_user_subscribed_to_news_channel(callback.bot, callback.from_user.id)
+    if is_subscribed is False:
+        await callback.message.answer(
+            "❌ <b>Для активации пробного периода необходимо подписаться на наш новостной канал!</b>",
+            parse_mode="HTML",
+            reply_markup=await _build_trial_subscription_kb(callback.bot)
+        )
+        return await callback.answer("Сначала подпишитесь на новостной канал", show_alert=True)
+
+    if is_subscribed is None:
+        await callback.message.answer(
+            "⚠️ <b>Не удалось проверить подписку на новостной канал.</b>\n\n"
+            "Попробуйте позже или сообщите администратору, если проблема повторяется.",
+            parse_mode="HTML",
+            reply_markup=await _build_trial_subscription_kb(callback.bot)
+        )
+        return await callback.answer("Проверка подписки недоступна", show_alert=True)
+
     success, msg = await activate_trial(session, callback.from_user.id)
     user = await session.get(User, callback.from_user.id)
     
@@ -71,7 +133,7 @@ async def process_activate_trial(callback: types.CallbackQuery, session: AsyncSe
     await callback.answer("Успешно!", show_alert=False)
 
     await callback.message.edit_text(
-        get_main_menu_text(callback.from_user.full_name),
+        get_main_menu_text(user, callback.from_user.full_name),
         reply_markup=get_start_kb(user),
         parse_mode="HTML"
     )

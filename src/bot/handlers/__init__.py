@@ -13,12 +13,12 @@ from .shop import router as shop_router
 main_router = Router()
 main_router.include_routers(
     commands_router, 
+    wallet_router,
+    shop_router,
     settings_router, 
     join_requests_router, 
     common_router, 
     admin_router,
     admin_bi_router,
-    admin_broadcast_router,
-    wallet_router,
-    shop_router
+    admin_broadcast_router
 )

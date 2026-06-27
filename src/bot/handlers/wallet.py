@@ -1,12 +1,14 @@
-import logging
 import asyncio
-from aiogram import Router, types, F
+import logging
+
+from aiogram import F, Router, types
 from aiogram.filters import Command
 from aiogram.utils.markdown import hbold, hcode
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.config import config
 from src.database.crud import user_service, billing_service
+from src.services.analyzer import invalidate_user_cache
 from src.services.cryptopay import cryptopay
 from src.utils import format_datetime, format_smart_num
 from src.bot.keyboards.billing_kb import (
@@ -19,34 +21,52 @@ from src.bot.keyboards.billing_kb import (
 logger = logging.getLogger(__name__)
 router = Router()
 
+
+def render_wallet_text(user) -> str:
+    """Формирует карточку кошелька в стилистике главного меню."""
+    return (
+        f"👛 {hbold('Кошелек')}\n\n"
+        f"💰 Баланс: {hbold(f'{format_smart_num(user.balance)}')} USDT\n"
+        f"🆔 Твой ID: {hcode(user.id)}"
+    )
+
+
 @router.message(Command("wallet"))
-@router.message(F.text.contains("Кошелек"))
 async def cmd_wallet(message: types.Message, session: AsyncSession):
     """Главное меню кошелька"""
     user = await user_service.get_user_by_id(session, message.from_user.id)
     if not user:
         user = await user_service.get_or_create_user(session, message.from_user.id, message.from_user.username)
-    
-    text = (
-        f"💳 <b>Ваш кошелек</b>\n\n"
-        f"💰 Текущий баланс: {hbold(f'{format_smart_num(user.balance)} USDT')}\n"
-        f"🆔 Ваш ID: {hcode(user.id)}\n\n"
-        f"Выберите действие:"
-    )
-    await message.answer(text, reply_markup=get_wallet_main_kb(user.balance), parse_mode="HTML")
+    text = render_wallet_text(user)
+
+    await message.answer(text, reply_markup=get_wallet_main_kb(user), parse_mode="HTML")
 
 @router.callback_query(F.data == "wallet_main")
 async def callback_wallet_main(callback: types.CallbackQuery, session: AsyncSession):
     """Возврат в главное меню кошелька"""
     user = await user_service.get_user_by_id(session, callback.from_user.id)
-    
-    text = (
-        f"💳 <b>Ваш кошелек</b>\n\n"
-        f"💰 Текущий баланс: {hbold(f'{format_smart_num(user.balance)} USDT')}\n"
-        f"🆔 Ваш ID: {hcode(user.id)}\n\n"
-        f"Выберите действие:"
-    )
-    await callback.message.edit_text(text, reply_markup=get_wallet_main_kb(user.balance), parse_mode="HTML")
+    if not user:
+        user = await user_service.get_or_create_user(session, callback.from_user.id, callback.from_user.username)
+    text = render_wallet_text(user)
+
+    await callback.message.edit_text(text, reply_markup=get_wallet_main_kb(user), parse_mode="HTML")
+
+@router.callback_query(F.data == "toggle_auto_renewal")
+async def process_toggle_auto_renewal(callback: types.CallbackQuery, session: AsyncSession):
+    """Переключает статус автопродления в профиле пользователя."""
+    user = await user_service.get_user_by_id(session, callback.from_user.id)
+    if not user:
+        return await callback.answer("Ошибка профиля", show_alert=True)
+
+    user.auto_renewal = not user.auto_renewal
+    await session.commit()
+    await session.refresh(user)
+
+    text = render_wallet_text(user)
+    await callback.message.edit_text(text, reply_markup=get_wallet_main_kb(user), parse_mode="HTML")
+
+    status_text = "включено" if user.auto_renewal else "выключено"
+    await callback.answer(f"Автопродление {status_text}")
 
 @router.callback_query(F.data == "tx_history")
 async def callback_tx_history(callback: types.CallbackQuery, session: AsyncSession):
@@ -180,9 +200,45 @@ async def callback_check_payment(callback: types.CallbackQuery, session: AsyncSe
         return await callback.answer("❌ Ошибка CryptoPay API. Попробуйте позже.", show_alert=True)
     
     if status == 'paid':
-        # 2. Начисляем через атомарный метод
+        invoice = await billing_service.get_invoice_by_ext_id(session, str(invoice_id))
+        if not invoice:
+            return await callback.answer("❌ Счет не найден в базе.", show_alert=True)
+
         success = await billing_service.confirm_invoice_payment(session, str(invoice_id))
         if success:
+            if invoice.payload and invoice.payload.startswith("sub_"):
+                try:
+                    days = int(invoice.payload.split("_", 1)[1])
+                except (ValueError, IndexError):
+                    await session.rollback()
+                    return await callback.answer("❌ Некорректный payload подписки.", show_alert=True)
+
+                price = round(float(config.TARIFFS.get(days, invoice.amount)), 2)
+                activated, new_end, _ = await billing_service.charge_and_activate_subscription(
+                    session=session,
+                    user_id=callback.from_user.id,
+                    days=days,
+                    price=price,
+                    description=f"Direct Pay subscription via Invoice #{invoice_id}"
+                )
+                if not activated or not new_end:
+                    await session.rollback()
+                    return await callback.answer(
+                        "❌ Не удалось активировать подписку после оплаты. Обратитесь в поддержку.",
+                        show_alert=True
+                    )
+
+                await session.commit()
+                await invalidate_user_cache()
+
+                await callback.message.edit_text(
+                    "✅ <b>Оплата подтверждена!</b>\n\n"
+                    f"Подписка активирована до {hbold(format_datetime(new_end))}.",
+                    parse_mode="HTML"
+                )
+                return await callback.answer("Подписка активирована")
+
+            await session.commit()
             user = await user_service.get_user_by_id(session, callback.from_user.id)
             await callback.message.edit_text(
                 f"✅ <b>Оплата подтверждена!</b>\n\n"

@@ -24,6 +24,7 @@ class Settings(BaseSettings):
     BOT_TOKEN: str
     DB_URL: str
     PRIVATE_CHANNEL_ID: str
+    NEWS_CHANNEL_ID: str
     
     # === 2. ПЛАТЕЖНАЯ СИСТЕМА (Billing & CryptoPay) ===
     # Интеграция
@@ -38,6 +39,7 @@ class Settings(BaseSettings):
         60: 40.0,
         150: 100.0
     }
+    SUB_MONTHLY_PRICE: float = 20.0
     REFERRAL_BONUS_PERCENT: float = 15.0
 
     # === 3. ИНТЕРФЕЙС И UX (UI Logic) ===
@@ -92,7 +94,7 @@ class Settings(BaseSettings):
 
     # Режим разработки
     DEV_MODE: bool = False
-    DEV_SYMBOL_LIMIT: int = 200
+    DEV_SYMBOL_LIMIT: int = 20
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
