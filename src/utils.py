@@ -16,6 +16,8 @@ MANUAL_MAPPING = {
 }
 
 
+SYMBOL_MULTIPLIER_REGEX = re.compile(r'^(\d+)')
+
 def normalize_bybit_symbol(raw_symbol: str) -> str:
     """
     Нормализует тикер Bybit для поиска в CoinGecko или использования как ключ.
@@ -23,10 +25,19 @@ def normalize_bybit_symbol(raw_symbol: str) -> str:
     # В верхний регистр и убираем USDT
     s = raw_symbol.upper().replace("USDT", "")
 
-    # Убираем префиксы 1000, 1000000 и т.д. в начале строки
-    s = re.sub(r'^\d+', '', s)
+    # Убираем числовые префиксы в начале строки (например, 1000PEPE -> PEPE)
+    s = SYMBOL_MULTIPLIER_REGEX.sub('', s)
 
     return s.lower()
+
+
+def get_symbol_multiplier(symbol: str) -> int:
+    """
+    Возвращает числовой префикс тикера (например, 1000 для 1000PEPE).
+    Если префикса нет, возвращает 1.
+    """
+    match = SYMBOL_MULTIPLIER_REGEX.match(symbol)
+    return int(match.group(1)) if match else 1
 
 
 def format_datetime(dt: datetime | None) -> str:

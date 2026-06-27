@@ -111,11 +111,13 @@ async def render_settings_menu(event: types.Message | types.CallbackQuery, user:
     text = (
         f"⚙️ <b>Личный кабинет и настройки</b>\n\n"
         f"👑 <b>Подписка:</b> {sub_status}\n\n"
-        f"<b>📊 Фильтры ликвидаций:</b>\n"
-        f"🔸 Порог объема: <b>${format_smart_num(user.threshold)}</b>\n"
-        f"🔸 Порог каскада: <b>${format_smart_num(user.threshold_cascade)}</b>\n\n"
-        f"<b>📈 Фильтры аналитики (OI):</b>\n"
-        f"🔸 Мин. рост OI: <b>{format_smart_num(user.threshold_oi_percent, is_percent=True)}</b> и <b>${format_smart_num(user.threshold_oi_value)}</b>\n\n"
+        f"<b>📊 Фильтры ликвидаций (Режим: {user.threshold_mode}):</b>\n"
+        f"🔶 Порог объема: <b>${format_smart_num(user.threshold)}</b>\n"
+        f"🔸 Порог каскада: <b>${format_smart_num(user.threshold_cascade)}</b>\n"
+        f"🔷 Порог объема MCAP: <b>{user.threshold_mcap_pct}%</b> (мин. <b>${format_smart_num(user.threshold_mcap_usd_min)}</b>)\n"
+        f"🔹 Порог каскада MCAP: <b>{user.threshold_cascade_mcap_pct}%</b> (мин. <b>${format_smart_num(user.threshold_cascade_mcap_usd_min)}</b>)\n\n"
+        f"<b>📊 Фильтры аналитики (OI):</b>\n"
+        f"📈 Мин. рост OI: <b>{format_smart_num(user.threshold_oi_percent, is_percent=True)}</b> и <b>${format_smart_num(user.threshold_oi_value)}</b>\n\n"
         f"💡 <i>Подсказка: Отключайте неинтересующие индикаторы ниже, чтобы сделать уведомления компактнее.</i>\n"
         f"\n<i>Нажмите на кнопки '❓ Справка', чтобы узнать подробности.</i>"
     )

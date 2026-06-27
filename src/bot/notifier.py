@@ -125,48 +125,49 @@ class AlertFormatter:
         return res
 
     def _impact_block(self) -> str:
-        """Блок рыночного влияния ликвидаций на торги за 24часа"""
-        impact_pct = self.data.get("impact_pct")
-        if impact_pct is None:
+        """Блок рыночного влияния ликвидаций на торги за 24часа (Vol Ratio)"""
+        vol_ratio = self.data.get("vol_ratio")
+        if vol_ratio is None:
             return ""
         
         marker = ""
-        if impact_pct >= 10.0:
+        if vol_ratio >= 10.0:
             marker = " 💎"
-        elif impact_pct >= 5.0:
+        elif vol_ratio >= 5.0:
             marker = " ⚠️"
-        elif impact_pct >= 1.0:
+        elif vol_ratio >= 1.0:
             marker = " ❗️"
             
-        formatted_impact = format_smart_num(impact_pct, is_percent=True)
-        return f"📊 {hbold('Impact (24h):')} {formatted_impact} {marker}\n"
+        formatted_vol = format_smart_num(vol_ratio, is_percent=True, decimal_places=4)
+        return f"🌊 {hbold('Vol Ratio:')} {formatted_vol} {marker}\n"
 
     def _fundamental_block(self) -> str:
-        """Блок фундаментальных данных (Market Cap и Impact %)"""
+        """Блок фундаментальных данных (Market Cap и Cap Ratio)"""
         live_mcap = self.data.get("live_mcap", 0.0)
-        impact_pct_5m = self.data.get("impact_pct_5m", 0.0)
+        cap_ratio = self.data.get("cap_ratio")
         is_fallback = self.data.get("is_fallback", False)
 
         if is_fallback:
-            return f"💎 {hbold('Market Cap:')} ⌛ (Данные загружаются...)\n"
+            return f"💎 {hbold('Market Cap:')} ⌛\n"
         
         if live_mcap <= 0:
             return ""
 
         marker = ""
-        if impact_pct_5m >= 0.1:
-            marker = " 💎"
-        elif impact_pct_5m >= 0.05:
-            marker = " ⚠️"
-        elif impact_pct_5m >= 0.01:
-            marker = " ❗️"
+        if cap_ratio is not None:
+            if cap_ratio >= 0.1:
+                marker = " 💎"
+            elif cap_ratio >= 0.05:
+                marker = " ⚠️"
+            elif cap_ratio >= 0.01:
+                marker = " ❗️"
 
         formatted_mcap = self.format_money(live_mcap)
-        formatted_impact = format_smart_num(impact_pct_5m, is_percent=True, show_sign=False, decimal_places=4)
+        formatted_cap = format_smart_num(cap_ratio, is_percent=True, decimal_places=4) if cap_ratio is not None else "⌛"
         
         return (
             f"💎 {hbold('Market Cap:')} {formatted_mcap}\n"
-            f"📊 {hbold('Impact (Cap):')} {formatted_impact}{marker}\n"
+            f"⚖ {hbold('Cap Ratio:')} {formatted_cap}{marker}\n"
         )
 
     def _indicators_block(self) -> str:
@@ -210,9 +211,11 @@ class AlertFormatter:
             self._header() +
             self._market_block() +
             self._cvd_block() +
+            '\n' +
             self._liq_block() +
-            self._fundamental_block() +
             self._impact_block() +
+            '\n' +
+            self._fundamental_block() +
             self._indicators_block() +
             self._footer()
         )

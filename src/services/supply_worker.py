@@ -3,14 +3,16 @@ import logging
 import aiohttp
 import orjson
 from datetime import datetime, timezone
-from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert
 from src.core.config import config
+from src.database.session import async_session
 from src.database.models import CoinFundamental
+from src.database.functions import get_utc_now
 from src.utils import normalize_bybit_symbol, MANUAL_MAPPING
 
 logger = logging.getLogger(__name__)
 
-async def supply_sync_worker(market_aggregator, session_maker):
+async def supply_sync_worker(market_aggregator):
     """
     Фоновый воркер для синхронизации данных о Circulating Supply с CoinGecko.
     Интервал: 12 часов.
@@ -88,34 +90,40 @@ async def supply_sync_worker(market_aggregator, session_maker):
                             if resp.status == 200:
                                 markets_data = orjson.loads(await resp.read())
                                 
-                                async with session_maker() as db_session:
-                                    for coin_data in markets_data:
-                                        cg_id = coin_data["id"]
-                                        supply = coin_data.get("circulating_supply")
-                                        our_symbol = our_mapped_ids.get(cg_id)
+                                # Формируем пачку для Bulk Upsert
+                                upsert_payload = []
+                                for coin_data in markets_data:
+                                    cg_id = coin_data["id"]
+                                    supply = coin_data.get("circulating_supply")
+                                    our_symbol = our_mapped_ids.get(cg_id)
+                                    
+                                    if our_symbol and supply:
+                                        supply_val = float(supply)
+                                        upsert_payload.append({
+                                            "symbol": our_symbol,
+                                            "circulating_supply": supply_val,
+                                            "cg_id": cg_id,
+                                            "last_updated": get_utc_now()
+                                        })
+                                        # Обновляем в агрегаторе (In-Memory)
+                                        market_aggregator.update_supply(our_symbol, supply_val)
+                                        updated_count += 1
+                                
+                                if upsert_payload:
+                                    async with async_session() as db_session:
+                                        # Атомарный UPSERT через PostgreSQL dialect
+                                        stmt = insert(CoinFundamental).values(upsert_payload)
+                                        stmt = stmt.on_conflict_do_update(
+                                            index_elements=['symbol'],
+                                            set_={
+                                                "circulating_supply": stmt.excluded.circulating_supply,
+                                                "cg_id": stmt.excluded.cg_id,
+                                                "last_updated": stmt.excluded.last_updated
+                                            }
+                                        )
+                                        await db_session.execute(stmt)
+                                        await db_session.commit()
                                         
-                                        if our_symbol and supply:
-                                            # Обновляем в БД
-                                            stmt = select(CoinFundamental).where(CoinFundamental.symbol == our_symbol)
-                                            result = await db_session.execute(stmt)
-                                            db_coin = result.scalar_one_or_none()
-                                            
-                                            if db_coin:
-                                                db_coin.circulating_supply = float(supply)
-                                                db_coin.cg_id = cg_id
-                                            else:
-                                                new_coin = CoinFundamental(
-                                                    symbol=our_symbol,
-                                                    circulating_supply=float(supply),
-                                                    cg_id=cg_id
-                                                )
-                                                db_session.add(new_coin)
-                                            
-                                            # Обновляем в агрегаторе (In-Memory)
-                                            market_aggregator.update_supply(our_symbol, float(supply))
-                                            updated_count += 1
-                                            
-                                    await db_session.commit()
                             elif resp.status == 429:
                                 logger.warning(f"CoinGecko Rate Limit (429) на пачке {i}. Ждем 60с...")
                                 await asyncio.sleep(60)

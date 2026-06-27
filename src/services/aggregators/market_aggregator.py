@@ -1,12 +1,22 @@
+import asyncio
 import logging
 import heapq
-from typing import Any
+import time
+from typing import Any, TypedDict
 from collections import deque
 from datetime import datetime, timezone
 from src.services.indicators.rsi import rsi_indicator
-from src.utils import normalize_bybit_symbol
+from src.utils import normalize_bybit_symbol, get_symbol_multiplier
 
 logger = logging.getLogger(__name__)
+
+
+class SymbolImpactMetrics(TypedDict):
+    cap_ratio: float | None    # Ликвидация / Market Cap * 100
+    vol_ratio: float | None    # Ликвидация / Vol 24h * 100
+    live_mcap: float           # Price * (Supply / Multiplier)
+    is_fallback: bool          # True, если данных о Supply нет
+
 
 class MarketAggregator:
     def __init__(self) -> None:
@@ -307,3 +317,72 @@ class MarketAggregator:
         """Возвращает эмиссию для символа."""
         clean_key = normalize_bybit_symbol(symbol).upper()
         return self.circulating_supply.get(clean_key)
+
+    def get_impact_metrics(self, symbol: str, liq_value: float) -> SymbolImpactMetrics:
+        """Расчет метрик влияния ликвидации на рынок (Cap Ratio и Vol Ratio)."""
+        snap = self.snapshots.get(symbol, {})
+        price = snap.get("price", 0.0)
+        vol24h = snap.get("vol24h", 0.0)
+        supply = self.get_supply(symbol)
+        multiplier = get_symbol_multiplier(symbol)
+
+        live_mcap = 0.0
+        cap_ratio = None
+        vol_ratio = None
+        is_fallback = True
+
+        # 1. Защита от нулевых данных
+        if not supply or price <= 0 or vol24h <= 0:
+            return {
+                "cap_ratio": None,
+                "vol_ratio": None,
+                "live_mcap": 0.0,
+                "is_fallback": True
+            }
+
+        # 2. Расчет Market Cap и Cap Ratio
+        live_mcap = (price * supply) / multiplier
+        if live_mcap > 0:
+            cap_ratio = (liq_value / live_mcap * 100)
+            is_fallback = False
+
+        # 3. Расчет Vol Ratio
+        if vol24h > 0:
+            vol_ratio = (liq_value / vol24h * 100)
+
+        return {
+            "cap_ratio": cap_ratio,
+            "vol_ratio": vol_ratio,
+            "live_mcap": live_mcap,
+            "is_fallback": is_fallback
+        }
+
+    async def cleanup_task(self):
+        """Фоновая задача очистки памяти: удаление неактивных тикеров."""
+        while True:
+            try:
+                await asyncio.sleep(3600) # Раз в час
+                now = time.time()
+                expiry_seconds = 7200 # 2 часа
+                
+                # Используем копию ключей для безопасной итерации
+                current_symbols = list(self.snapshots.keys())
+                expired_symbols = []
+                
+                for symbol in current_symbols:
+                    snap = self.snapshots.get(symbol)
+                    if snap and now - snap.get("ts", 0) > expiry_seconds:
+                        expired_symbols.append(symbol)
+                
+                for symbol in expired_symbols:
+                    logger.info(f"Memory GC: Removing expired symbol {symbol}")
+                    self.snapshots.pop(symbol, None)
+                    self.history.pop(symbol, None)
+                    self.rsi_prices.pop(symbol, None)
+                    self.rsi_bars.pop(symbol, None)
+                    self._rsi_cache.pop(symbol, None)
+                    clean_key = normalize_bybit_symbol(symbol).upper()
+                    self.circulating_supply.pop(clean_key, None)
+                    
+            except Exception as e:
+                logger.error(f"Error in MarketAggregator cleanup: {e}")

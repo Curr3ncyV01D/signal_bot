@@ -20,7 +20,11 @@ from src.services.bybit_ws import BybitListener
 from src.services.aggregators.liq_aggregator import LiquidationAggregator
 from src.services.aggregators.market_aggregator import MarketAggregator
 from src.services.aggregators.trade_aggregator import TradeAggregator
-from src.services.analyzer import cleanup_alert_history_task
+from src.services.analyzer import (
+    cleanup_alert_history_task, 
+    user_cache_refresher_task, 
+    user_cache_refresher_task_once
+)
 from src.services.worker import DataWorker
 from src.services.retention import retention_policy_worker
 from src.services.warmup import warmup_system
@@ -146,6 +150,9 @@ async def main():
     # 3. Принудительный прогрев ОИ и RSI из Bybit API 
     await warmup_system(market_aggregator, target_symbols)
 
+    # 3.1 Инициализация кэша пользователей до старта потока данных
+    await user_cache_refresher_task_once()
+
     # 4. Передаем прогретые монеты в листенер и запускаем сокеты 
     listener.target_symbols = target_symbols
     await listener.start()
@@ -159,13 +166,15 @@ async def main():
     )
     worker_task = asyncio.create_task(worker.run(queue))
     sync_task = asyncio.create_task(symbol_sync_worker(listener, market_aggregator))
-    supply_sync_task = asyncio.create_task(supply_sync_worker(market_aggregator, async_session))
+    supply_sync_task = asyncio.create_task(supply_sync_worker(market_aggregator))
 
     # 6. Запускаем фоновые задачи и Вышибалу
     lag_detector_task = asyncio.create_task(lag_detector(queue))
     retention_task = asyncio.create_task(retention_policy_worker(hours=4))
     aggregator_task = asyncio.create_task(liq_aggregator.cleanup_task())
-    alert_cleanup_task = asyncio.create_task(cleanup_alert_history_task())        
+    market_gc_task = asyncio.create_task(market_aggregator.cleanup_task())
+    alert_cleanup_task = asyncio.create_task(cleanup_alert_history_task())
+    user_cache_task = asyncio.create_task(user_cache_refresher_task())
     bouncer_task = asyncio.create_task(bouncer_worker(bot, interval_minutes=15))
     dashboard_task = asyncio.create_task(dashboard_worker(bot, liq_aggregator, market_aggregator))
     payment_task = asyncio.create_task(payment_checker_worker(bot))
@@ -212,7 +221,9 @@ async def main():
                 sync_task,
                 retention_task,
                 aggregator_task,
+                market_gc_task,
                 alert_cleanup_task,
+                user_cache_task,
                 bouncer_task,
                 dashboard_task,
                 payment_task,

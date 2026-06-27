@@ -3,13 +3,12 @@ import asyncio
 from datetime import datetime, timezone, timedelta
 from typing import Any, TypedDict
 from src.core.config import config
+from src.database.session import async_session
 from src.database.crud.user_service import get_active_users
 from src.database.crud.channel_service import ChannelService
 from src.bot.notifier import send_liquidation_alert
 
 logger = logging.getLogger(__name__)
-
-USER_CACHE_TTL_SEC = 60.0
 
 
 class CachedAlertTarget(TypedDict):
@@ -40,15 +39,8 @@ class AlertHistoryEntry(TypedDict):
 # Память алертов для анти-спама и кэш адресатов
 user_alert_history: dict[tuple[int | str, str, str], AlertHistoryEntry] = {}
 _cached_users: list[CachedAlertTarget] = []
-_last_user_refresh: float = 0.0
 _min_system_threshold: float = float("inf")
 _min_system_cascade: float = float("inf")
-
-
-def invalidate_user_cache():
-    """Сбрасывает время обновления кэша, заставляя систему перечитать данные из БД."""
-    global _last_user_refresh
-    _last_user_refresh = 0.0
 
 
 def _build_cached_target(source: Any, target_id: int | str) -> CachedAlertTarget:
@@ -74,39 +66,56 @@ def _build_cached_target(source: Any, target_id: int | str) -> CachedAlertTarget
     }
 
 
-async def _refresh_user_cache(session) -> list[CachedAlertTarget]:
-    global _cached_users, _last_user_refresh, _min_system_threshold, _min_system_cascade
+async def _update_cache_logic():
+    """Внутренняя логика обновления кэша."""
+    global _cached_users, _min_system_threshold, _min_system_cascade
+    async with async_session() as session:
+        cached_targets: list[CachedAlertTarget] = []
+        min_threshold = float("inf")
+        min_cascade = float("inf")
 
-    now_ts = datetime.now(timezone.utc).timestamp()
-    if _last_user_refresh and (now_ts - _last_user_refresh) < USER_CACHE_TTL_SEC:
-        return _cached_users
+        # 1. Получаем активных пользователей
+        active_users = await get_active_users(session)
+        for user in active_users:
+            target = _build_cached_target(user, user.id)
+            cached_targets.append(target)
+            min_threshold = min(min_threshold, target["threshold"])
+            min_cascade = min(min_cascade, target["threshold_cascade"])
 
-    cached_targets: list[CachedAlertTarget] = []
-    min_threshold = float("inf")
-    min_cascade = float("inf")
+        # 2. Получаем настройки канала
+        channel_settings = await ChannelService.get_settings(session)
+        if channel_settings and channel_settings.is_active:
+            channel_target = _build_cached_target(channel_settings, "CHANNEL")
+            cached_targets.append(channel_target)
+            min_threshold = min(min_threshold, channel_target["threshold"])
+            min_cascade = min(min_cascade, channel_target["threshold_cascade"])
 
-    for user in await get_active_users(session):
-        target = _build_cached_target(user, user.id)
-        cached_targets.append(target)
-        min_threshold = min(min_threshold, target["threshold"])
-        min_cascade = min(min_cascade, target["threshold_cascade"])
+        # 3. Атомарно обновляем глобальные переменные
+        _cached_users = cached_targets
+        _min_system_threshold = (max(min_threshold, config.MIN_LIQ_VALUE_FILTER) 
+                                if cached_targets else config.MIN_LIQ_VALUE_FILTER)
+        _min_system_cascade = min_cascade if cached_targets else config.CASCADE_TRIGGER_COUNT * 1000
 
-    channel_settings = ChannelService.get_cached_settings()
-    if channel_settings and channel_settings.is_active:
-        channel_target = _build_cached_target(channel_settings, "CHANNEL")
-        cached_targets.append(channel_target)
-        min_threshold = min(min_threshold, channel_target["threshold"])
-        min_cascade = min(min_cascade, channel_target["threshold_cascade"])
+async def user_cache_refresher_task():
+    """Фоновая задача для обновления кэша пользователей и настроек канала."""
+    while True:
+        try:
+            await _update_cache_logic()
+        except Exception as e:
+            logger.error(f"Ошибка в задаче обновления кэша пользователей: {e}")
+        await asyncio.sleep(60)
 
-    _cached_users = cached_targets
-    _last_user_refresh = now_ts
-
-    _min_system_threshold = (max(min_threshold, config.MIN_LIQ_VALUE_FILTER) if cached_targets else config.MIN_LIQ_VALUE_FILTER)
-    _min_system_cascade = min_cascade if cached_targets else config.CASCADE_TRIGGER_COUNT * 1000
-    return _cached_users
+async def user_cache_refresher_task_once():
+    """Однократное обновление кэша для Graceful Startup."""
+    try:
+        await _update_cache_logic()
+        logger.info("✅ Первоначальный кэш пользователей успешно загружен.")
+    except Exception as e:
+        logger.error(f"❌ Критическая ошибка при начальной загрузке кэша: {e}")
+        # Не прокидываем ошибку дальше, чтобы не убить старт, 
+        # но система будет ждать следующего цикла обновления.
 
 async def process_liquidation_item(
-    session, 
     symbol: str, 
     side_label: str, 
     bot, 
@@ -114,13 +123,15 @@ async def process_liquidation_item(
     market_aggregator, 
     trade_aggregator
 ):
-    """Принимает решение об отправке уведомления и выполняет рассылку через gather"""
+    """Принимает решение об отправке уведомления и выполняет рассылку через gather.
+    Полностью In-Memory обработка.
+    """
 
     # 0. Получаем быструю статистику для раннего отсечения мелких событий.
     sum_5m, sum_1h, sum_cas, count_cas = liq_aggregator.get_metrics(symbol, side_label)
 
-    # 1. Обновляем локальный кэш адресатов максимум раз в минуту.
-    targets = await _refresh_user_cache(session)
+    # 1. Используем закэшированных адресатов.
+    targets = _cached_users
     if not targets:
         return
 
@@ -129,35 +140,19 @@ async def process_liquidation_item(
         (count_cas < config.CASCADE_TRIGGER_COUNT or sum_cas < _min_system_cascade)):
         return
 
-    # 3. Получение дополнительных данных из агрегатора
+    # 3. Получение дополнительных данных из агрегаторов
     m_data = market_aggregator.get_market_data(symbol, window_minutes=5)
     _, _, delta_5m = trade_aggregator.get_cvd_metrics(symbol, minutes=5)
     _, _, delta_30m = trade_aggregator.get_cvd_metrics(symbol, minutes=30)
     rsi_val = market_aggregator.get_cached_rsi(symbol, config.RSI_PERIOD)
 
-    supply = market_aggregator.get_supply(symbol)
-    divisor = 1000 if symbol.startswith("1000") else 1
-    current_price = m_data['price'] if m_data else 0.0
-    
-    live_mcap = 0.0
-    force_usd_mode = False
-    impact_pct_5m = 0.0
-    impact_pct_1h = 0.0
-    impact_pct_cas = 0.0
-    
-    if supply and current_price > 0:
-        live_mcap = (current_price * supply) / divisor
-        impact_pct_5m = (sum_5m / live_mcap * 100) if live_mcap > 0 else 0.0
-        impact_pct_1h = (sum_1h / live_mcap * 100) if live_mcap > 0 else 0.0
-        impact_pct_cas = (sum_cas / live_mcap * 100) if live_mcap > 0 else 0.0
-    else:
-        force_usd_mode = True
-        logger.debug(f"Smart Fallback: No supply data for {symbol}, forcing USD mode.")
+    # 3.1 Расчет метрик влияния на рынок (Cap Ratio, Vol Ratio)
+    impact = market_aggregator.get_impact_metrics(symbol, sum_5m)
+    impact_1h = market_aggregator.get_impact_metrics(symbol, sum_1h)
+    impact_cas = market_aggregator.get_impact_metrics(symbol, sum_cas)
 
-    # Расчет Impact (Влияния) на основе 24h Volume
-    snap = market_aggregator.snapshots.get(symbol, {})
-    vol24h = snap.get("vol24h", 0.0)
-    vol_impact_pct = (sum_5m / vol24h * 100) if vol24h > 0 else None
+    if impact["is_fallback"]:
+        logger.debug(f"Smart Fallback: Missing market data for {symbol}, forcing USD mode.")
 
     # 4. Подготовка базового payload (Atomic Payload)
     # Эти данные одинаковы для всех получателей
@@ -176,13 +171,10 @@ async def process_liquidation_item(
         "delta_5m": delta_5m,
         "delta_30m": delta_30m,
         "rsi": rsi_val,
-        "impact_pct": vol_impact_pct,
-        "live_mcap": live_mcap,
-        "impact_pct_5m": impact_pct_5m,
-        "impact_pct_1h": impact_pct_1h,
-        "impact_pct_cas": impact_pct_cas,
-        "force_usd_mode": force_usd_mode,
-        "is_fallback": force_usd_mode,
+        "vol_ratio": impact["vol_ratio"],
+        "live_mcap": impact["live_mcap"],
+        "cap_ratio": impact["cap_ratio"],
+        "is_fallback": impact["is_fallback"],
     }
 
     alert_tasks = []
@@ -199,10 +191,9 @@ async def process_liquidation_item(
                 sum_cas=sum_cas,
                 count_cas=count_cas,
                 m_data=m_data,
-                impact_pct_5m=impact_pct_5m,
-                impact_pct_1h=impact_pct_1h,
-                impact_pct_cas=impact_pct_cas,
-                force_usd_mode=force_usd_mode
+                impact=impact,
+                impact_1h=impact_1h,
+                impact_cas=impact_cas
             )
         except Exception as e:
             logger.error(f"Ошибка проверки триггеров для {target['id']}: {e}")
@@ -231,10 +222,9 @@ def _check_triggers(
     sum_cas: float,
     count_cas: int,
     m_data: dict[str, Any] | None,
-    impact_pct_5m: float,
-    impact_pct_1h: float,
-    impact_pct_cas: float,
-    force_usd_mode: bool,
+    impact: dict[str, Any],
+    impact_1h: dict[str, Any],
+    impact_cas: dict[str, Any]
 ) -> dict[str, Any] | None:
     """Универсальная логика проверки условий для пользователя или канала.
     Возвращает персональные настройки payload, если триггер сработал.
@@ -248,19 +238,23 @@ def _check_triggers(
     now = datetime.now(timezone.utc).replace(tzinfo=None)
     
     # --- 1. ОПРЕДЕЛЕНИЕ РЕЖИМА (Smart Fallback) ---
-    effective_mode = "USD" if force_usd_mode else target["threshold_mode"]
+    effective_mode = "USD" if impact["is_fallback"] else target["threshold_mode"]
     used_mcap = (effective_mode == "PERCENT")
 
     # --- 2. ТРИГГЕРЫ (Определяем все возможные события) ---
     if effective_mode == "PERCENT":
-        # Логика по капитализации
+        # Логика по капитализации (Cap Ratio)
+        cap_ratio_5m = impact["cap_ratio"] or 0.0
+        cap_ratio_1h = impact_1h["cap_ratio"] or 0.0
+        cap_ratio_cas = impact_cas["cap_ratio"] or 0.0
+
         has_cascade = (count_cas >= config.CASCADE_TRIGGER_COUNT and 
-                     impact_pct_cas >= target["threshold_cascade_mcap_pct"] and
+                     cap_ratio_cas >= target["threshold_cascade_mcap_pct"] and
                      sum_cas >= target["threshold_cascade_mcap_usd_min"])
         
-        has_volume = (impact_pct_5m >= target["threshold_mcap_pct"] and 
+        has_volume = (cap_ratio_5m >= target["threshold_mcap_pct"] and 
                     sum_5m >= target["threshold_mcap_usd_min"]) or \
-                   (impact_pct_1h >= (target["threshold_mcap_pct"] * config.VOLUME_MULTIPLIER) and 
+                   (cap_ratio_1h >= (target["threshold_mcap_pct"] * config.VOLUME_MULTIPLIER) and 
                     sum_1h >= (target["threshold_mcap_usd_min"] * config.VOLUME_MULTIPLIER))
     else:
         # Логика по USD (Классическая)

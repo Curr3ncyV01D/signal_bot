@@ -99,13 +99,12 @@ class DataWorker:
 
             async with async_session() as session:
                 await save_liquidation(session, item)
-                # Запускаем анализ и обогащение
-                await process_liquidation_item(
-                    session=session,
-                    symbol=symbol,
-                    side_label=side_label,
-                    bot=self.bot,
-                    liq_aggregator=self.liq_aggregator,
-                    market_aggregator=self.market_aggregator,
-                    trade_aggregator=self.trade_aggregator
-                )
+            
+            await process_liquidation_item(
+                symbol=symbol,
+                side_label=side_label,
+                bot=self.bot,
+                liq_aggregator=self.liq_aggregator,
+                market_aggregator=self.market_aggregator,
+                trade_aggregator=self.trade_aggregator
+            )
