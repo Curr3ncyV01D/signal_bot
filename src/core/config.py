@@ -74,6 +74,7 @@ class Settings(BaseSettings):
     RSI_PERIOD: int = 14                         
     RSI_KLINE_INTERVAL: str = "60"               
     OI_WINDOW_MINUTES: int = 5                   
+    TICKER_THROTTLE_SEC: float = 2.0
 
     # === 5. МОНИТОРИНГ И ПОДКЛЮЧЕНИЯ (Networking) ===
     # Фильтрация монет

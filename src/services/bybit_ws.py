@@ -29,6 +29,7 @@ class BybitListener:
         self.target_symbols = []
         self._start_count = 0
         self._launch_context = "primary"
+        self._ticker_throttle: dict[str, float] = {}
 
     def get_all_usdt_symbols(self) -> list[str]:
         """Получает список всех активных USDT-пар с Bybit."""
@@ -65,7 +66,7 @@ class BybitListener:
     def on_message(self, message, ws=None):
         """Единая точка входа для всех сообщений WebSocket."""
         if ws:
-            self.last_heartbeat[ws] = time.time()
+            self.last_heartbeat[ws] = time.monotonic()
 
         if not isinstance(message, dict):
             try:
@@ -113,7 +114,7 @@ class BybitListener:
             else:
                 return
         
-        self.last_message_time = time.time()
+        self.last_message_time = time.monotonic()
         
         if isinstance(data, list):
             for item in data:
@@ -124,9 +125,29 @@ class BybitListener:
     def handle_ticker(self, message):
         """Обработка тикеров: Открытый интерес (OI), Цена, Фандинг"""
         data = message.get("data")
-        if not data: return
+        if not data:
+            return
+
+        item = data[0] if isinstance(data, list) else data
+        if not isinstance(item, dict):
+            return
+
+        symbol = item.get("symbol")
+        if not symbol:
+            topic = message.get("topic", "")
+            symbol = topic.split(".")[-1] if topic else None
+        if not symbol:
+            return
+
+        now_monotonic = time.monotonic()
+        throttle_sec = float(getattr(config, "TICKER_THROTTLE_SEC", 2.0))
+        last_seen = self._ticker_throttle.get(symbol)
+        if last_seen is not None and (now_monotonic - last_seen) < throttle_sec:
+            return
+
+        self._ticker_throttle[symbol] = now_monotonic
         
-        self.last_message_time = time.time()
+        self.last_message_time = time.monotonic()
         topic = message.get("topic", "")
         
         # Оборачиваем в type: ticker
@@ -145,7 +166,7 @@ class BybitListener:
         
         if not filtered: return
 
-        self.last_message_time = time.time()
+        self.last_message_time = time.monotonic()
         topic = message.get("topic", "")
         self.loop.call_soon_threadsafe(self.queue.put_nowait, {"type": "trade", "topic": topic, "data": filtered})
 
@@ -221,7 +242,7 @@ class BybitListener:
         while True:
             try:
                 await asyncio.sleep(60)
-                now = time.time()
+                now = time.monotonic()
                 
                 # Если весь лисенер молчит слишком долго, возможно проблема с сетью вообще
                 total_silence = 0
@@ -273,7 +294,7 @@ class BybitListener:
         )
 
         self.ws_map[new_ws] = symbols
-        self.last_heartbeat[new_ws] = time.time()
+        self.last_heartbeat[new_ws] = time.monotonic()
 
         for symbol in symbols:
             await self.subscribe_to_symbol(new_ws, symbol)

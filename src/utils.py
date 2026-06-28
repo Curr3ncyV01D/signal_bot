@@ -111,11 +111,11 @@ async def lag_detector(queue: asyncio.Queue | None = None) -> None:
     logger.info("🕵️ Детектор лагов запущен.")
 
     while True:
-        start_time = time.time()
+        start_time = time.monotonic()
         await asyncio.sleep(1)
-        delay = time.time() - start_time - 1
+        delay = time.monotonic() - start_time - 1
 
-        if delay > 1.0:
+        if delay > 0.5:
             queue_info = f" Задач в очереди: {queue.qsize()}" if queue else ""
             if delay > 1.5:
                 tasks_info = f" Активных задач: {len(asyncio.all_tasks())}"
@@ -123,5 +123,7 @@ async def lag_detector(queue: asyncio.Queue | None = None) -> None:
                     f"🚨 Критическая блокировка Event Loop. "
                     f"Фактическая задержка составила {delay:.3f} сек.{queue_info}.{tasks_info}"
                 )
-            else:
+            elif delay > 1.0:
                 logger.warning(f"⚠️ ВНИМАНИЕ! Event Loop заблокирован. Задержка: {delay:.3f} сек.{queue_info}")
+            else:
+                logger.info(f"⏱️ Event Loop испытывает задержку: {delay:.3f} сек.{queue_info}")
