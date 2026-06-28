@@ -160,7 +160,7 @@ async def process_liquidation_item(
     impact_cas = market_aggregator.get_impact_metrics(symbol, sum_cas)
 
     if impact["is_fallback"]:
-        logger.debug(f"Smart Fallback: Missing market data for {symbol}, forcing USD mode.")
+        pass
 
     # 4. Подготовка базового payload (Atomic Payload)
     # Эти данные одинаковы для всех получателей

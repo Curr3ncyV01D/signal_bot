@@ -2,7 +2,7 @@ import asyncio
 import logging
 from datetime import datetime, timezone
 from aiogram import Router, types, F
-from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, FSInputFile, InputMediaPhoto
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiogram.filters import Command
 from aiogram.utils.markdown import hbold
@@ -10,6 +10,7 @@ from aiogram.exceptions import TelegramBadRequest
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.config import config
+from src.core.config import ImagePaths
 from src.database.crud.user_service import get_or_create_user, activate_trial
 from src.database.models import User
 from src.database.functions import get_utc_now
@@ -19,6 +20,45 @@ from src.utils import format_datetime, format_smart_num
 
 logger = logging.getLogger(__name__)
 router = Router()
+
+
+async def render_main_menu(
+    event: types.Message | types.CallbackQuery,
+    user: User,
+    full_name: str
+) -> None:
+    """Умный рендеринг главного меню с баннером WELCOME."""
+    text = get_main_menu_text(user, full_name)
+    markup = get_start_kb(user)
+    photo = FSInputFile(ImagePaths.WELCOME)
+
+    if isinstance(event, types.Message):
+        await event.answer_photo(
+            photo=photo,
+            caption=text,
+            reply_markup=markup,
+            parse_mode="HTML"
+        )
+        return
+
+    try:
+        await event.message.edit_media(
+            media=InputMediaPhoto(
+                media=photo,
+                caption=text,
+                parse_mode="HTML"
+            ),
+            reply_markup=markup
+        )
+    except Exception as e:
+        logger.warning(f"Не удалось обновить главное меню через edit_media: {e}")
+        await event.message.delete()
+        await event.message.answer_photo(
+            photo=FSInputFile(ImagePaths.WELCOME),
+            caption=text,
+            reply_markup=markup,
+            parse_mode="HTML"
+        )
 
 async def _get_news_channel_url(bot) -> str | None:
     try:
@@ -88,9 +128,8 @@ async def cmd_start(message: types.Message, session: AsyncSession):
         message.from_user.username,
         referrer_id=referrer_id
     )
-    
-    text = get_main_menu_text(user, message.from_user.full_name)
-    await message.answer(text, reply_markup=get_start_kb(user), parse_mode="HTML")
+
+    await render_main_menu(message, user, message.from_user.full_name)
 
 @router.callback_query(F.data == "back_to_main")
 async def process_back_to_main(callback: types.CallbackQuery, session: AsyncSession):
@@ -98,9 +137,8 @@ async def process_back_to_main(callback: types.CallbackQuery, session: AsyncSess
     user = await session.get(User, callback.from_user.id)
     if not user:
         return await callback.answer("Ошибка профиля", show_alert=True)
-    
-    text = get_main_menu_text(user, callback.from_user.full_name)
-    await callback.message.edit_text(text, reply_markup=get_start_kb(user), parse_mode="HTML")
+
+    await render_main_menu(callback, user, callback.from_user.full_name)
     await callback.answer()
 
 @router.callback_query(F.data == "activate_trial")
@@ -131,12 +169,6 @@ async def process_activate_trial(callback: types.CallbackQuery, session: AsyncSe
         return await callback.answer(msg, show_alert=True)
         
     await callback.answer("Успешно!", show_alert=False)
-
-    await callback.message.edit_text(
-        get_main_menu_text(user, callback.from_user.full_name),
-        reply_markup=get_start_kb(user),
-        parse_mode="HTML"
-    )
     
     try:
         invite_link = await callback.bot.create_chat_invite_link(
@@ -144,20 +176,26 @@ async def process_activate_trial(callback: types.CallbackQuery, session: AsyncSe
             name=f"Trial_{callback.from_user.id}",
             creates_join_request=True
         )
-        await callback.message.answer(
-            f"🎉 <b>Пробный период успешно активирован!</b>\n\n"
-            f"К вашему доступу добавлены <b>24 часа</b>.\n\n"
-            f"Подайте заявку на вступление в закрытый канал по ссылке ниже. "
-            f"Бот автоматически её одобрит.\n\n👉 {invite_link.invite_link}",
+        await callback.message.answer_photo(
+            photo=FSInputFile(ImagePaths.WELCOME),
+            caption=(
+                f"🎉 <b>Пробный период успешно активирован!</b>\n\n"
+                f"К вашему доступу добавлены <b>24 часа</b>.\n\n"
+                f"Подайте заявку на вступление в закрытый канал по ссылке ниже. "
+                f"Бот автоматически её одобрит.\n\n👉 {invite_link.invite_link}"
+            ),
             parse_mode="HTML",
             reply_markup=get_close_button_kb()
         )
     except Exception as e:
         logger.error(f"Ошибка создания ссылки в канал: {e}")
-        await callback.message.answer(
-            "✅ Пробный период активирован!\n\n"
-            "<i>(Ошибка: Бот не имеет прав администратора в закрытом канале для создания ссылки. "
-            "Пожалуйста, сообщите администратору.)</i>",
+        await callback.message.answer_photo(
+            photo=FSInputFile(ImagePaths.WELCOME),
+            caption=(
+                "✅ Пробный период активирован!\n\n"
+                "<i>(Ошибка: Бот не имеет прав администратора в закрытом канале для создания ссылки. "
+                "Пожалуйста, сообщите администратору.)</i>"
+            ),
             parse_mode="HTML",
             reply_markup=get_close_button_kb()
         )
@@ -171,8 +209,11 @@ async def process_get_channel_link(callback: types.CallbackQuery):
             name=f"Sub_{callback.from_user.id}",
             creates_join_request=True
         )
-        await callback.message.answer(f"👉 Ваша ссылка для входа в канал:\n{invite_link.invite_link}",
-        reply_markup=get_close_button_kb())
+        await callback.message.answer_photo(
+            photo=FSInputFile(ImagePaths.WELCOME),
+            caption=f"👉 Ваша ссылка для входа в канал:\n{invite_link.invite_link}",
+            reply_markup=get_close_button_kb()
+        )
         await callback.answer()
     except Exception as e:
         logger.error(f"Ошибка выдачи ссылки: {e}")

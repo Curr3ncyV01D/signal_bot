@@ -2,6 +2,7 @@ import asyncio
 import logging
 
 from aiogram import Router, types, F
+from aiogram.types import FSInputFile, InputMediaPhoto
 from aiogram.utils.markdown import hbold
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -11,7 +12,7 @@ from src.bot.keyboards.billing_kb import (
     get_payment_link_kb,
     get_subscription_tariffs_kb,
 )
-from src.core.config import config
+from src.core.config import config, ImagePaths
 from src.database.crud import billing_service, user_service
 from src.services.analyzer import invalidate_user_cache
 from src.services.cryptopay import cryptopay
@@ -30,6 +31,64 @@ def _format_plan_label(days: int) -> str:
             return f"{months} месяца"
         return f"{months} месяцев"
     return f"{days} дней"
+
+
+def _get_subscription_menu_text() -> str:
+    return (
+        "💎 <b>VIP-Подписка</b>\n\n"
+        "Преимущества VIP-доступа:\n"
+        "• Доступ в закрытый канал с алертами\n"
+        "• Персональные настройки в боте\n"
+        "• Аналитика в реальном времени\n\n"
+        "Выберите подходящий тариф:"
+    )
+
+
+async def _render_shop_screen(
+    callback: types.CallbackQuery,
+    caption: str,
+    reply_markup=None,
+    image_path: str | None = None
+) -> None:
+    """Умный рендеринг экранов подписки: с баннером или без него."""
+    if image_path:
+        try:
+            await callback.message.edit_media(
+                media=InputMediaPhoto(
+                    media=FSInputFile(image_path),
+                    caption=caption,
+                    parse_mode="HTML"
+                ),
+                reply_markup=reply_markup
+            )
+            return
+        except Exception as e:
+            pass
+    else:
+        try:
+            await callback.message.edit_text(
+                caption,
+                reply_markup=reply_markup,
+                parse_mode="HTML"
+            )
+            return
+        except Exception as e:
+            pass
+
+    await callback.message.delete()
+    if image_path:
+        await callback.message.answer_photo(
+            photo=FSInputFile(image_path),
+            caption=caption,
+            reply_markup=reply_markup,
+            parse_mode="HTML"
+        )
+    else:
+        await callback.message.answer(
+            caption,
+            reply_markup=reply_markup,
+            parse_mode="HTML"
+        )
 
 
 async def _send_referral_bonus_notification(
@@ -69,15 +128,12 @@ async def _build_invite_link_text(callback: types.CallbackQuery, user_id: int) -
 @router.callback_query(F.data == "buy_subscription")
 async def callback_buy_subscription(callback: types.CallbackQuery):
     """Меню выбора тарифа"""
-    text = (
-        f"💎 <b>VIP-Подписка</b>\n\n"
-        f"Преимущества VIP-доступа:\n"
-        f"• Доступ в закрытый канал с алертами\n"
-        f"• Персональные настройки в боте\n"
-        f"• Аналитика в реальном времени\n\n"
-        f"Выберите подходящий тариф:"
+    await _render_shop_screen(
+        callback,
+        _get_subscription_menu_text(),
+        get_subscription_tariffs_kb()
     )
-    await callback.message.edit_text(text, reply_markup=get_subscription_tariffs_kb(), parse_mode="HTML")
+    await callback.answer()
 
 @router.callback_query(F.data.startswith("buy_plan_"))
 async def callback_process_purchase(callback: types.CallbackQuery, session: AsyncSession):
@@ -106,11 +162,7 @@ async def callback_process_purchase(callback: types.CallbackQuery, session: Asyn
             f"У вас достаточно средств на балансе: {hbold(f'{format_smart_num(user.balance)} USDT')}.\n\n"
             f"Хотите продлить подписку на {hbold(plan_label)} за {hbold(f'{format_smart_num(price)} USDT')}?"
         )
-        await callback.message.edit_text(
-            text,
-            reply_markup=get_balance_purchase_confirm_kb(days),
-            parse_mode="HTML"
-        )
+        await _render_shop_screen(callback, text, get_balance_purchase_confirm_kb(days))
         return await callback.answer()
 
     await callback.answer()
@@ -145,11 +197,7 @@ async def callback_process_purchase(callback: types.CallbackQuery, session: Asyn
         f"💳 На балансе сейчас: {hbold(f'{format_smart_num(user.balance)} USDT')}\n\n"
         "На балансе недостаточно средств, поэтому мы подготовили ссылку на оплату в CryptoBot."
     )
-    await callback.message.edit_text(
-        text,
-        reply_markup=get_payment_link_kb(pay_url, invoice_id),
-        parse_mode="HTML"
-    )
+    await _render_shop_screen(callback, text, get_payment_link_kb(pay_url, invoice_id))
 
 @router.callback_query(F.data.startswith("confirm_balance_purchase_"))
 async def callback_confirm_balance_purchase(callback: types.CallbackQuery, session: AsyncSession):
@@ -167,7 +215,7 @@ async def callback_confirm_balance_purchase(callback: types.CallbackQuery, sessi
     success, new_end, bonus_amount = await billing_service.purchase_subscription(session, user_id, days, price)
     if not success or not new_end:
         return await callback.answer("❌ Недостаточно средств на балансе.", show_alert=True)
-
+        
     await invalidate_user_cache()
     purchaser = await user_service.get_user_by_id(session, user_id)
     referrer_id = purchaser.referrer_id if purchaser else None
@@ -179,7 +227,8 @@ async def callback_confirm_balance_purchase(callback: types.CallbackQuery, sessi
         f"💰 Списано с баланса: {hbold(f'{format_smart_num(price)} USDT')}"
         f"{link_text}"
     )
-    await callback.message.edit_text(text, parse_mode="HTML")
+
+    await _render_shop_screen(callback, text, image_path=ImagePaths.PAYMENT)
     await callback.answer("Подписка продлена")
 
     await _send_referral_bonus_notification(callback, referrer_id, bonus_amount)
@@ -187,5 +236,9 @@ async def callback_confirm_balance_purchase(callback: types.CallbackQuery, sessi
 @router.callback_query(F.data == "cancel_balance_purchase")
 async def callback_cancel_balance_purchase(callback: types.CallbackQuery):
     """Отмена быстрого продления и возврат к выбору тарифов."""
-    await callback_buy_subscription(callback)
+    await _render_shop_screen(
+        callback,
+        _get_subscription_menu_text(),
+        get_subscription_tariffs_kb()
+    )
     await callback.answer("Покупка отменена")

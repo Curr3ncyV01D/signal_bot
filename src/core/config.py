@@ -1,6 +1,8 @@
+import os
 import orjson
 import logging
 import sys
+from pathlib import Path
 from datetime import datetime
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import field_validator
@@ -98,6 +100,20 @@ class Settings(BaseSettings):
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
+config = Settings()
+
+
+BASE_DIR = Path(__file__).resolve().parent.parent.parent
+ASSETS_DIR = BASE_DIR / "assets" / "images"
+
+
+class ImagePaths:
+    WELCOME = str(ASSETS_DIR / "1_welcome.png")
+    PAYMENT = str(ASSETS_DIR / "2_payment.png")
+    SETTINGS = str(ASSETS_DIR / "3_settings.png")
+    WALLET = str(ASSETS_DIR / "4_wallet.png")
+    AFFILIATE = str(ASSETS_DIR / "5_affiliate.png")
+
 
 def setup_logging() -> None:
     # 1. Получаем уровень из конфига
@@ -130,5 +146,3 @@ def setup_logging() -> None:
         logging.getLogger("aiogram.event").setLevel(logging.INFO)
     else:
         logging.getLogger("aiogram.event").setLevel(logging.WARNING)
-
-config = Settings()
