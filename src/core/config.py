@@ -27,6 +27,7 @@ class Settings(BaseSettings):
     DB_URL: str
     PRIVATE_CHANNEL_ID: str
     NEWS_CHANNEL_ID: str
+    NEWS_CHANNEL_URL: str | None = None
     
     # === 2. ПЛАТЕЖНАЯ СИСТЕМА (Billing & CryptoPay) ===
     # Интеграция
@@ -42,6 +43,7 @@ class Settings(BaseSettings):
         150: 100.0
     }
     SUB_MONTHLY_PRICE: float = 20.0
+    TRIAL_DURATION_DAYS: int = 3
     REFERRAL_BONUS_PERCENT: float = 15.0
 
     # === 3. ИНТЕРФЕЙС И UX (UI Logic) ===

@@ -11,10 +11,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.config import config
 from src.core.config import ImagePaths
+from src.database.crud import billing_service
 from src.database.crud.user_service import get_or_create_user, activate_trial
 from src.database.models import User
 from src.database.functions import get_utc_now
 from src.bot.keyboards import get_start_kb, get_status_kb, get_close_button_kb
+from src.services.analyzer import invalidate_user_cache
 from src.services.metrics_service import MetricsService
 from src.utils import format_datetime, format_smart_num
 
@@ -61,6 +63,8 @@ async def render_main_menu(
         )
 
 async def _get_news_channel_url(bot) -> str | None:
+    if config.NEWS_CHANNEL_URL:
+        return config.NEWS_CHANNEL_URL
     try:
         chat = await bot.get_chat(config.NEWS_CHANNEL_ID)
         if getattr(chat, "username", None):
@@ -87,7 +91,7 @@ async def _build_trial_subscription_kb(bot) -> InlineKeyboardMarkup:
     builder.row(
         InlineKeyboardButton(
             text="🔄 Проверить подписку и активировать",
-            callback_data="activate_trial"
+            callback_data="check_sub_and_activate"
         )
     )
     return builder.as_markup()
@@ -142,63 +146,124 @@ async def process_back_to_main(callback: types.CallbackQuery, session: AsyncSess
     await callback.answer()
 
 @router.callback_query(F.data == "activate_trial")
-async def process_activate_trial(callback: types.CallbackQuery, session: AsyncSession):
-    """Обработка нажатия на кнопку получения пробного периода"""
-    is_subscribed = await _is_user_subscribed_to_news_channel(callback.bot, callback.from_user.id)
-    if is_subscribed is False:
-        await callback.message.answer(
-            "❌ <b>Для активации пробного периода необходимо подписаться на наш новостной канал!</b>",
-            parse_mode="HTML",
-            reply_markup=await _build_trial_subscription_kb(callback.bot)
-        )
-        return await callback.answer("Сначала подпишитесь на новостной канал", show_alert=True)
+async def process_activate_trial(callback: types.CallbackQuery):
+    """Показывает условия активации триала перед фактической проверкой подписки."""
+    text = (
+        "❗ Для активации пробного периода (24ч) необходимо быть участником нашего новостного канала. ❗\n"
+        f"В качестве бонуса за подписку вам будет начислено дополнительно {hbold('48 часов')} доступа!"
+    )
+    markup = await _build_trial_subscription_kb(callback.bot)
+    photo = FSInputFile(ImagePaths.WELCOME)
 
-    if is_subscribed is None:
-        await callback.message.answer(
-            "⚠️ <b>Не удалось проверить подписку на новостной канал.</b>\n\n"
-            "Попробуйте позже или сообщите администратору, если проблема повторяется.",
-            parse_mode="HTML",
-            reply_markup=await _build_trial_subscription_kb(callback.bot)
+    try:
+        await callback.message.edit_media(
+            media=InputMediaPhoto(
+                media=photo,
+                caption=text,
+                parse_mode="HTML"
+            ),
+            reply_markup=markup
         )
-        return await callback.answer("Проверка подписки недоступна", show_alert=True)
+    except Exception as e:
+        logger.warning(f"Не удалось обновить экран условий триала через edit_media: {e}")
+        await callback.message.delete()
+        await callback.message.answer_photo(
+            photo=photo,
+            caption=text,
+            reply_markup=markup,
+            parse_mode="HTML"
+        )
+    await callback.answer()
+
+@router.callback_query(F.data == "check_sub_and_activate")
+async def process_check_sub_and_activate(callback: types.CallbackQuery, session: AsyncSession):
+    """Проверяет подписку на новостной канал и активирует триал на 72 часа."""
+    user = await session.get(User, callback.from_user.id)
+    if not user:
+        return await callback.answer("Профиль не найден. Нажмите /start.", show_alert=True)
+
+    if user.is_trial_used:
+        return await callback.answer("Пробный период уже был использован.", show_alert=True)
+
+    try:
+        member = await callback.bot.get_chat_member(
+            chat_id=config.NEWS_CHANNEL_ID,
+            user_id=callback.from_user.id
+        )
+    except Exception as e:
+        logger.error(f"Не удалось проверить подписку пользователя {callback.from_user.id}: {e}")
+        return await callback.answer(
+            "Проверка подписки временно недоступна. Попробуйте чуть позже.",
+            show_alert=True
+        )
+
+    if member.status not in {"member", "administrator", "creator"}:
+        return await callback.answer(
+            "Подписка не обнаружена. Пожалуйста, подпишитесь на канал для активации 3-х дневного доступа.",
+            show_alert=True
+        )
 
     success, msg = await activate_trial(session, callback.from_user.id)
-    user = await session.get(User, callback.from_user.id)
-    
     if not success:
+        await session.rollback()
         return await callback.answer(msg, show_alert=True)
-        
-    await callback.answer("Успешно!", show_alert=False)
-    
+
+    activated, new_end = await billing_service.activate_subscription_logic(
+        session=session,
+        user_id=callback.from_user.id,
+        days=config.TRIAL_DURATION_DAYS,
+        price=0,
+        description="Trial 72h"
+    )
+    if not activated or not new_end:
+        await session.rollback()
+        return await callback.answer("Не удалось активировать пробный период. Попробуйте позже.", show_alert=True)
+
+    await session.commit()
+    await invalidate_user_cache()
+
+    # Формируем экран успеха
     try:
         invite_link = await callback.bot.create_chat_invite_link(
             chat_id=config.PRIVATE_CHANNEL_ID,
             name=f"Trial_{callback.from_user.id}",
             creates_join_request=True
         )
-        await callback.message.answer_photo(
-            photo=FSInputFile(ImagePaths.WELCOME),
-            caption=(
-                f"🎉 <b>Пробный период успешно активирован!</b>\n\n"
-                f"К вашему доступу добавлены <b>24 часа</b>.\n\n"
-                f"Подайте заявку на вступление в закрытый канал по ссылке ниже. "
-                f"Бот автоматически её одобрит.\n\n👉 {invite_link.invite_link}"
-            ),
-            parse_mode="HTML",
-            reply_markup=get_close_button_kb()
-        )
+        link_url = invite_link.invite_link
     except Exception as e:
         logger.error(f"Ошибка создания ссылки в канал: {e}")
-        await callback.message.answer_photo(
-            photo=FSInputFile(ImagePaths.WELCOME),
-            caption=(
-                "✅ Пробный период активирован!\n\n"
-                "<i>(Ошибка: Бот не имеет прав администратора в закрытом канале для создания ссылки. "
-                "Пожалуйста, сообщите администратору.)</i>"
+        link_url = None
+
+    success_text = f"✅ {hbold('Пробный период 72ч активирован!')}"
+    
+    builder = InlineKeyboardBuilder()
+    if link_url:
+        builder.row(InlineKeyboardButton(text="🚀 Зайти в закрытый канал", url=link_url))
+    builder.row(InlineKeyboardButton(text="🏠 Главное меню", callback_data="back_to_main"))
+    markup = builder.as_markup()
+    
+    photo = FSInputFile(ImagePaths.WELCOME)
+
+    try:
+        await callback.message.edit_media(
+            media=InputMediaPhoto(
+                media=photo,
+                caption=success_text,
+                parse_mode="HTML"
             ),
-            parse_mode="HTML",
-            reply_markup=get_close_button_kb()
+            reply_markup=markup
         )
+    except Exception as e:
+        logger.warning(f"Не удалось показать экран успеха триала через edit_media: {e}")
+        await callback.message.delete()
+        await callback.message.answer_photo(
+            photo=photo,
+            caption=success_text,
+            reply_markup=markup,
+            parse_mode="HTML"
+        )
+    
+    await callback.answer("Подписка активирована")
 
 @router.callback_query(F.data == "get_channel_link")
 async def process_get_channel_link(callback: types.CallbackQuery):
