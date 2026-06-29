@@ -82,16 +82,8 @@ class DataWorker:
         raw_side = item.get("S") or item.get("side")
         
         try:
-            price_raw = item.get("p")
-            if price_raw is None:
-                price_raw = item.get("price")
-
-            qty_raw = item.get("v")
-            if qty_raw is None:
-                qty_raw = item.get("qty")
-
-            price = float(price_raw or 0)
-            qty = float(qty_raw or 0)
+            price = float(item.get("p") or item.get("price", 0))
+            qty = float(item.get("v") or item.get("qty", 0))
         except (ValueError, TypeError):
             return
 

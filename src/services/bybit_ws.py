@@ -65,6 +65,8 @@ class BybitListener:
 
     def on_message(self, message, ws=None):
         """Единая точка входа для всех сообщений WebSocket."""
+        self.last_message_time = time.time()
+
         if ws:
             self.last_heartbeat[ws] = time.monotonic()
 
@@ -74,28 +76,42 @@ class BybitListener:
             except Exception:
                 return
 
-        # Перехват служебных сообщений (подтверждения подписок)
-        if "success" in message:
+        # Системные пакеты никогда не должны попадать под throttling.
+        if any(key in message for key in ("success", "ret_msg", "op")):
             try:
                 is_success = message.get("success")
                 req_id = message.get("req_id", "N/A")
                 ret_msg = message.get("ret_msg", "")
-                
-                if is_success:
+                op = message.get("op", "")
+
+                if op == "ping" or ret_msg.lower() == "pong":
+                    logger.debug("Получен системный ответ Bybit ping/pong")
+                elif is_success:
                     logger.debug(f"Подписка подтверждена: {req_id or message.get('conn_id')}")
-                else:
+                elif "success" in message:
                     logger.error(f"Bybit ОТКЛОНИЛ подписку: {ret_msg}. Данные по части монет могут не поступать!")
             except Exception as e:
                 logger.error(f"Ошибка при обработке подтверждения подписки: {e}")
             return
 
         topic = message.get("topic", "")
+        if topic.startswith("ticker"):
+            symbol = topic.split(".", 1)[1] if "." in topic else ""
+            if symbol:
+                now_monotonic = time.monotonic()
+                throttle_sec = float(getattr(config, "TICKER_THROTTLE_SEC", 2.0))
+                last_seen = self._ticker_throttle.get(symbol)
+                if last_seen is not None and (now_monotonic - last_seen) < throttle_sec:
+                    logger.debug(f"Тикер {symbol} отсечен throttling-шлюзом")
+                    return
+                self._ticker_throttle[symbol] = now_monotonic
+            self.handle_ticker(message)
+            return
+
         topic_lower = topic.lower()
         
         if topic and "liquidation" in topic_lower:
             self.handle_liquidation(message)
-        elif topic and "ticker" in topic_lower:
-            self.handle_ticker(message)
         elif topic and "publictrade" in topic_lower:
             self.handle_trade(message)
         elif not topic:
@@ -114,8 +130,6 @@ class BybitListener:
             else:
                 return
         
-        self.last_message_time = time.monotonic()
-        
         if isinstance(data, list):
             for item in data:
                 self.loop.call_soon_threadsafe(self.queue.put_nowait, {"type": "liquidation", "data": item})
@@ -127,27 +141,6 @@ class BybitListener:
         data = message.get("data")
         if not data:
             return
-
-        item = data[0] if isinstance(data, list) else data
-        if not isinstance(item, dict):
-            return
-
-        symbol = item.get("symbol")
-        if not symbol:
-            topic = message.get("topic", "")
-            symbol = topic.split(".")[-1] if topic else None
-        if not symbol:
-            return
-
-        now_monotonic = time.monotonic()
-        throttle_sec = float(getattr(config, "TICKER_THROTTLE_SEC", 2.0))
-        last_seen = self._ticker_throttle.get(symbol)
-        if last_seen is not None and (now_monotonic - last_seen) < throttle_sec:
-            return
-
-        self._ticker_throttle[symbol] = now_monotonic
-        
-        self.last_message_time = time.monotonic()
         topic = message.get("topic", "")
         
         # Оборачиваем в type: ticker
@@ -166,7 +159,6 @@ class BybitListener:
         
         if not filtered: return
 
-        self.last_message_time = time.monotonic()
         topic = message.get("topic", "")
         self.loop.call_soon_threadsafe(self.queue.put_nowait, {"type": "trade", "topic": topic, "data": filtered})
 
