@@ -261,7 +261,7 @@ async def process_admin_chan_toggle(callback: types.CallbackQuery, session: Asyn
             await ChannelService.update_settings(session, **{field: not getattr(settings, field)})
             await callback.answer("Настройка обновлена!")
 
-    analyzer.invalidate_user_cache()
+    await analyzer.invalidate_user_cache()
     await render_channel_settings(callback, session)
 
 
@@ -305,7 +305,7 @@ async def process_admin_channel_thresholds(message: types.Message, state: FSMCon
         update_data[field] = val
             
     await ChannelService.update_settings(session, **update_data)
-    analyzer.invalidate_user_cache()
+    await analyzer.invalidate_user_cache()
     await state.clear()
     await render_channel_settings(message, session)
     await message.answer("✅ Настройки канала обновлены.")
@@ -352,7 +352,7 @@ async def process_admin_mcap_parameter(message: types.Message, state: FSMContext
     
     if current_state in field_map:
         await ChannelService.update_settings(session, **{field_map[current_state]: val})
-        analyzer.invalidate_user_cache()
+        await analyzer.invalidate_user_cache()
         await state.clear()
         await render_channel_settings(message, session)
         await message.answer("✅ Настройки канала обновлены.")
