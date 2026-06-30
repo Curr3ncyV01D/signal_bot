@@ -29,7 +29,7 @@ def render_wallet_text(user: User) -> str:
     return (
         f"👛 {hbold('Кошелек')}\n\n"
         f"💰 Текущий баланс: {hbold(f'{format_smart_num(user.balance)}')} USDT\n"
-        f"Стоимость подписки в месяц 20 USDT\n\n"
+        f"Стоимость подписки в месяц {config.SUB_MONTHLY_PRICE} USDT\n\n"
         f"🆔 Ваш ID: {hcode(user.id)}\n\n"
         f"Если у вас возникли проблемы с оплатой, обратитесь в техническую поддержку"
     )
