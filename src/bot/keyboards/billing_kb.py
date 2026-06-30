@@ -32,6 +32,7 @@ def get_payment_link_kb(url: str, invoice_id: int) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     builder.row(InlineKeyboardButton(text="🔗 Оплатить (CryptoBot)", url=url))
     builder.row(InlineKeyboardButton(text="🔄 Проверить оплату", callback_data=f"check_pay_{invoice_id}"))
+    builder.row(InlineKeyboardButton(text="👨‍💻 Проблема с оплатой?", url=config.SUPPORT_URL))
     builder.row(InlineKeyboardButton(text="⬅️ Назад", callback_data="deposit"))
     return builder.as_markup()
 
@@ -59,6 +60,7 @@ def get_subscription_tariffs_kb() -> InlineKeyboardMarkup:
             callback_data=f"buy_plan_{days}"
         ))
     
+    builder.row(InlineKeyboardButton(text="👨‍💻 Тех. поддержка", url=config.SUPPORT_URL))
     builder.row(InlineKeyboardButton(text="⬅️ Назад", callback_data="wallet_main"))
     return builder.as_markup()
 

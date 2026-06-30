@@ -11,7 +11,7 @@ from src.database.crud.user_service import update_user_settings
 from src.bot.keyboards import get_settings_kb, get_back_to_settings_kb, get_start_kb
 from src.utils import format_smart_num, parse_numeric_input
 from src.services import analyzer
-from src.core.config import ImagePaths
+from src.core.config import ImagePaths, config
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -128,7 +128,6 @@ async def _render_settings_screen(
             )
             return
         except Exception as e:
-            logger.warning(f"Не удалось обновить экран настроек через edit_media: {e}")
             await event.message.delete()
             await event.message.answer_photo(
                 photo=photo,
@@ -152,7 +151,6 @@ async def _render_settings_screen(
                 parse_mode="HTML"
             )
         except Exception as e:
-            logger.warning(f"Не удалось обновить экран настроек через edit_text: {e}")
             await event.message.delete()
             await event.message.answer(
                 caption,
@@ -224,7 +222,8 @@ async def show_help_liq(callback: types.CallbackQuery):
         "📊 <b>Объем:</b> Накопленная сумма ликвидаций за 1 час.\n"
         "<i>Как применять:</i> Показывает, кого глобально «бреют» на рынке.\n\n"
         "🔥 <b>Сквиз:</b> Резкий всплеск, когда 5-минутный объем почти равен часовому.\n"
-        "<i>Как применять:</i> Вход на локальных прострелах волатильности."
+        "<i>Как применять:</i> Вход на локальных прострелах волатильности.\n\n"
+        "<i>Остались вопросы по работе алгоритмов? Напишите нашему специалисту.</i>\n"
     )
     await _render_settings_screen(callback, text, get_back_to_settings_kb())
     await callback.answer()
@@ -240,7 +239,8 @@ async def show_help_analytics(callback: types.CallbackQuery):
         "📊 <b>CVD (Дельта):</b> Разница между рыночными покупками и продажами.\n"
         "<i>Как применять:</i> «More Buys» означает агрессию покупателей в моменте. Идеально для поиска точки входа.\n\n"
         "⚠️ <b>RSI (5m):</b> Индикатор перегретости актива.\n"
-        "<i>Как применять:</i> RSI > 70 — актив перекуплен. В комбинации с ликвидацией шортов — сильнейший сигнал на разворот вниз."
+        "<i>Как применять:</i> RSI > 70 — актив перекуплен. В комбинации с ликвидацией шортов — сильнейший сигнал на разворот вниз.\n\n"
+        "<i>Остались вопросы по работе алгоритмов? Напишите нашему специалисту.</i>\n"
     )
     await _render_settings_screen(callback, text, get_back_to_settings_kb())
     await callback.answer()

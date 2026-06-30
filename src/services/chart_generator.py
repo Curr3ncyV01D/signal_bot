@@ -199,7 +199,7 @@ async def get_chart(symbol: str, ohlc_data: list[OhlcRecord], alert_title: str) 
     try:
         return await asyncio.wait_for(
             loop.run_in_executor(_chart_executor, _render_sync, ohlc_data, symbol, alert_title),
-            timeout=1.5,
+            timeout=2.5,
         )
     except asyncio.TimeoutError:
         logger.warning(f"Таймаут рендера графика для {symbol}")

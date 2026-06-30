@@ -1,5 +1,6 @@
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from aiogram.utils.keyboard import InlineKeyboardBuilder
+from src.core.config import config
 from src.database.models import User
 from src.bot.utils.kb_helper import Kb_Helper
 
@@ -57,5 +58,6 @@ def get_settings_kb(user: User) -> InlineKeyboardMarkup:
 def get_back_to_settings_kb() -> InlineKeyboardMarkup:
     """Клавиатура для возврата из справки обратно в настройки"""
     builder = InlineKeyboardBuilder()
+    builder.row(InlineKeyboardButton(text="💬 Задать вопрос", url=config.SUPPORT_URL))
     builder.row(InlineKeyboardButton(text="⬅️ Назад к настройкам", callback_data="back_to_settings"))
     return builder.as_markup()

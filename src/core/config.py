@@ -48,6 +48,7 @@ class Settings(BaseSettings):
 
     # === 3. ИНТЕРФЕЙС И UX (UI Logic) ===
     GUIDE_URL: str = "https://google.com"
+    SUPPORT_URL: str = "https://t.me/Helper_CSL"
     TRANSACTION_HISTORY_LIMIT: int = 10          # Количество последних транзакций отображаемых в истории
     MAX_SUB_DAYS: int = 3650                     # Максимальный срок подписки, что может задать админ(в днях)
     CASCADE_UI_DISPLAY_COUNT: int = 5            # С какой строки показывать каскад в тексте
