@@ -1,71 +1,200 @@
 import asyncio
 import logging
-from aiogram import Bot
-from aiogram.exceptions import TelegramForbiddenError, TelegramBadRequest
+from datetime import datetime, timedelta, timezone
 
-from datetime import datetime, timezone
+from aiogram import Bot
+from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.config import config
+from src.database.crud import billing_service
+from src.database.functions import get_utc_now
+from src.database.models import User
 from src.database.session import async_session
-from src.database.crud.user_service import get_expired_users, clear_expired_subscription
+from src.services.analyzer import invalidate_user_cache
 
 logger = logging.getLogger(__name__)
+
+AUTO_RENEWAL_DAYS = 30
+AUTO_RENEWAL_WINDOW_MINUTES = 60
+AUTO_RENEWAL_COOLDOWN_HOURS = 24
+EXPIRY_WARNING_MIN_HOURS = 23
+EXPIRY_WARNING_MAX_HOURS = 25
 
 class BouncerManager:
     last_run: datetime | None = None
 
+async def _safe_send_message(bot: Bot, user_id: int, text: str) -> bool:
+    try:
+        await bot.send_message(user_id, text, parse_mode="HTML")
+        return True
+    except TelegramForbiddenError:
+        logger.warning(f"Не удалось отправить сообщение {user_id}: пользователь недоступен боту.")
+        return False
+    except Exception as e:
+        logger.error(f"Ошибка отправки сообщения пользователю {user_id}: {e}")
+        return False
+
+async def _handle_expiry_warning(
+    session: AsyncSession,
+    bot: Bot,
+    user: User,
+    now: datetime
+) -> None:
+    if not user.subscription_end:
+        return
+
+    hours_left = (user.subscription_end - now).total_seconds() / 3600
+    in_warning_window = EXPIRY_WARNING_MIN_HOURS <= hours_left <= EXPIRY_WARNING_MAX_HOURS
+    if not in_warning_window:
+        return
+
+    warning_threshold = user.subscription_end - timedelta(hours=EXPIRY_WARNING_MAX_HOURS)
+    if user.last_expiry_warning_at and user.last_expiry_warning_at >= warning_threshold:
+        return
+
+    sent = await _safe_send_message(
+        bot,
+        user.id,
+        (
+            "⏳ <b>Ваша подписка истекает через 24 часа.</b>\n\n"
+            "Убедитесь, что на балансе достаточно средств для автопродления, "
+            "или продлите её вручную в меню /start."
+        )
+    )
+    if sent:
+        user.last_expiry_warning_at = now
+        await session.commit()
+
+async def _handle_auto_renewal(
+    session: AsyncSession,
+    bot: Bot,
+    user: User,
+    now: datetime
+) -> bool:
+    if not user.subscription_end:
+        return False
+
+    minutes_left = (user.subscription_end - now).total_seconds() / 60
+    in_renew_window = 0 <= minutes_left <= AUTO_RENEWAL_WINDOW_MINUTES
+    if not in_renew_window or not user.auto_renewal:
+        return False
+
+    monthly_price = round(float(config.SUB_MONTHLY_PRICE), 2)
+    if round(float(user.balance), 2) >= monthly_price:
+        success, new_end, _ = await billing_service.charge_and_activate_subscription(
+            session=session,
+            user_id=user.id,
+            days=AUTO_RENEWAL_DAYS,
+            price=monthly_price,
+            description="Автопродление подписки на 30 дн."
+        )
+        if not success or not new_end:
+            return False
+
+        user.last_renewal_attempt = None
+        user.last_expiry_warning_at = None
+        await session.commit()
+        await invalidate_user_cache()
+        await _safe_send_message(
+            bot,
+            user.id,
+            (
+                "✅ <b>Подписка продлена!</b>\n\n"
+                f"Мы успешно списали {monthly_price:.2f} USDT с вашего баланса. "
+                "Спасибо, что остаетесь с нами."
+            )
+        )
+        return True
+
+    should_notify = (
+        user.last_renewal_attempt is None
+        or (now - user.last_renewal_attempt) >= timedelta(hours=AUTO_RENEWAL_COOLDOWN_HOURS)
+    )
+    if should_notify:
+        sent = await _safe_send_message(
+            bot,
+            user.id,
+            (
+                "⚠️ <b>Недостаточно средств!</b>\n\n"
+                "Мы не смогли продлить подписку автоматически. Пополните баланс, "
+                "чтобы не потерять доступ к каналу через 1 час."
+            )
+        )
+        if sent:
+            user.last_renewal_attempt = now
+            await session.commit()
+
+    return False
+
+async def _kick_expired_user(session: AsyncSession, bot: Bot, user: User) -> None:
+    try:
+        await bot.ban_chat_member(chat_id=config.PRIVATE_CHANNEL_ID, user_id=user.id)
+        await bot.unban_chat_member(chat_id=config.PRIVATE_CHANNEL_ID, user_id=user.id)
+        logger.info(f"Пользователь {user.id} исключен из канала.")
+    except TelegramBadRequest as e:
+        logger.warning(f"Ошибка при исключении {user.id} (возможно, уже покинул канал сам): {e}")
+
+    await _safe_send_message(
+        bot,
+        user.id,
+        (
+            "⚠️ <b>Срок действия вашей подписки/триала истек.</b>\n\n"
+            "Вы были исключены из VIP-канала, а рассылка сигналов приостановлена.\n"
+            "Нажмите /start для обновления доступа."
+        )
+    )
+
+    user.subscription_end = None
+    user.last_expiry_warning_at = None
+    await session.commit()
+    await invalidate_user_cache()
+
 async def bouncer_worker(bot: Bot, interval_minutes: int = 15):
     """
     Фоновая задача "Вышибала".
-    Ищет юзеров с истекшей подпиской, кикает из канала и обнуляет дату в БД.
+    Проверяет автопродление, уведомляет о нехватке средств и удаляет
+    пользователей из канала после истечения подписки.
     """
     logger.info(f"👮‍♂️ Вышибала (Bouncer) запущен. Проверка каждые {interval_minutes} минут.")
-    
+
     while True:
         try:
             BouncerManager.last_run = datetime.now(timezone.utc)
             async with async_session() as session:
-                expired_users = await get_expired_users(session)
-                
-                if expired_users:
-                    logger.info(f"👮‍♂️ Вышибала нашел {len(expired_users)} пользователей с истекшей подпиской/триалом.")
-                
-                for user in expired_users:
+                now = get_utc_now()
+                query = select(User.id).where(
+                    User.subscription_end.is_not(None),
+                    User.subscription_end <= now + timedelta(hours=EXPIRY_WARNING_MAX_HOURS)
+                )
+                result = await session.execute(query)
+                candidate_ids = list(result.scalars().all())
+
+                if candidate_ids:
+                    logger.info(
+                        f"👮‍♂️ Вышибала нашел {len(candidate_ids)} пользователей "
+                        "в окне автопродления/истечения."
+                    )
+
+                for user_id in candidate_ids:
+                    user = await session.get(User, user_id, with_for_update=True)
+                    if not user or not user.subscription_end:
+                        continue
+
+                    now = get_utc_now()
                     try:
-                        # 1. Удаляем из закрытого канала (бан + сразу анбан, чтобы мог вернуться в будущем)
-                        await bot.ban_chat_member(
-                            chat_id=config.PRIVATE_CHANNEL_ID,
-                            user_id=user.id
-                        )
-                        await bot.unban_chat_member(
-                            chat_id=config.PRIVATE_CHANNEL_ID,
-                            user_id=user.id
-                        )
-                        logger.info(f"Пользователь {user.id} исключен из канала.")
-                        
-                        # 2. Отправляем уведомление в ЛС
-                        try:
-                            text = (
-                                "⚠️ <b>Срок действия вашей подписки/триала истек.</b>\n\n"
-                                "Вы были исключены из VIP-канала, а рассылка сигналов приостановлена.\n"
-                                "Нажмите /start для обновления доступа."
-                            )
-                            await bot.send_message(user.id, text, parse_mode="HTML")
-                        except TelegramForbiddenError:
-                            logger.warning(f"Не удалось отправить прощальное сообщение {user.id} (этот пользователь недоступен бота).")
-                        
-                        # 3. Обнуляем дату в БД, чтобы Вышибала больше его не трогал
-                        await clear_expired_subscription(session, user.id)
-                        
-                    except TelegramBadRequest as e:
-                        # Если юзер уже сам вышел из канала или бот не админ
-                        logger.warning(f"Ошибка при исключении {user.id} (возможно, уже покинул канал сам): {e}")
-                        # Все равно обнуляем подписку, чтобы не долбить API Telegram
-                        await clear_expired_subscription(session, user.id)
+                        await _handle_expiry_warning(session, bot, user, now)
+                        renewed = await _handle_auto_renewal(session, bot, user, now)
+                        if renewed:
+                            continue
+
+                        if user.subscription_end <= now:
+                            await _kick_expired_user(session, bot, user)
                     except Exception as e:
+                        await session.rollback()
                         logger.error(f"Неизвестная ошибка при обработке {user.id}: {e}")
-                    
-                    # Защита от лимитов Telegram API (FloodWait) при массовом исключении
+
                     await asyncio.sleep(0.5)
 
         except asyncio.CancelledError:
@@ -73,6 +202,5 @@ async def bouncer_worker(bot: Bot, interval_minutes: int = 15):
             break
         except Exception as e:
             logger.error(f"Ошибка в основном цикле Вышибалы: {e}")
-        
-        # Ждем до следующей проверки (переводим минуты в секунды)
+
         await asyncio.sleep(interval_minutes * 60)

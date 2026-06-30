@@ -73,11 +73,18 @@ class MetricsService:
         """
         Расчет задержки последнего сигнала.
         """
-        if not listener or not hasattr(listener, 'last_message_time') or not listener.last_message_time:
-            return "N/A"
+        if not listener or not hasattr(listener, 'last_message_time'):
+            return "⌛ Инициализация..."
+
+        last_message_time = listener.last_message_time
+        if last_message_time in (None, 0):
+            return "⌛ Инициализация..."
             
         now = time.time()
-        diff = now - listener.last_message_time
+        diff = now - last_message_time
+
+        if diff < 0 or diff > 1000000:
+            return "⌛ Инициализация..."
         
         if diff < 1:
             return f"{diff:.2f} сек."
@@ -95,7 +102,7 @@ class MetricsService:
         diff = (now - BouncerManager.last_run).total_seconds()
         
         if diff < 60:
-            return "только что"
+            return "в эту минуту"
         return f"{int(diff // 60)} мин. назад"
 
     @staticmethod
@@ -108,8 +115,9 @@ class MetricsService:
             
         now = datetime.now(timezone.utc)
         diff = (now - PaymentManager.last_run).total_seconds()
-        
-        return f"{diff} сек. назад"
+        if diff < 60:
+            return "в эту минуту"
+        return f"{int(diff // 60)} мин. назад"
 
     @classmethod
     async def get_admin_bi_data(cls, session, listener, liq_aggregator, data_queue: asyncio.Queue) -> dict:

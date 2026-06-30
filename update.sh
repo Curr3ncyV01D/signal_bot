@@ -11,9 +11,11 @@ CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
 
 echo -e "${YELLOW}🚀 --- Обновление Gruzbery Screener [Ветка: $CURRENT_BRANCH] ---${NC}"
 
-# Загружаем переменные из .env (чтобы знать PROJECT_NAME)
+# Загружаем переменные из .env
 if [ -f .env ]; then
-    export $(grep -v '^#' .env | xargs)
+    set -a
+    source <(sed 's/\r$//' .env)
+    set +a
 else
     echo -e "${RED}❌ Ошибка: Файл .env не найден!${NC}"
     exit 1

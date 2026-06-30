@@ -11,6 +11,15 @@ logger = logging.getLogger(__name__)
 # Семафор для ограничения одновременных задач анализа (защита от OOM)
 worker_semaphore = asyncio.Semaphore(100)
 
+
+def _safe_float(value):
+    if value is None or value == "":
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
 class DataWorker:
     def __init__(self, bot: Bot, liq_aggregator, market_aggregator, trade_aggregator):
         self.bot = bot
@@ -48,15 +57,16 @@ class DataWorker:
                     # Извлекаем значения через прямой доступ (структура Bybit V5 гарантирована)
                     # Если какого-то поля нет в дельта-апдейте, используем .get
                     try:
-                        price = float(item["lastPrice"]) if "lastPrice" in item else None
-                        oi = float(item["openInterestValue"]) if "openInterestValue" in item else None
-                        funding = float(item["fundingRate"]) if "fundingRate" in item else None
+                        price = _safe_float(item["lastPrice"]) if "lastPrice" in item else None
+                        oi = _safe_float(item["openInterestValue"]) if "openInterestValue" in item else None
+                        funding = _safe_float(item["fundingRate"]) if "fundingRate" in item else None
+                        vol24h = _safe_float(item["turnover24h"]) if "turnover24h" in item else None
                     except (ValueError, TypeError, KeyError):
-                        price = oi = funding = None
+                        price = oi = funding = vol24h = None
 
                     # ТИКЕРЫ: Записываем в агрегатор ДАЖЕ ЕСЛИ символ в IGNORED_SYMBOLS (нужно для BTC в дэшборде)
-                    if price is not None or oi is not None or funding is not None:
-                        self.market_aggregator.update(symbol, price, oi, funding)
+                    if price is not None or oi is not None or funding is not None or vol24h is not None:
+                        self.market_aggregator.update(symbol, price, oi, funding, vol24h)
 
                 elif msg_type == "trade":
                     symbol = msg.get("topic", "").split(".")[-1]
@@ -98,13 +108,12 @@ class DataWorker:
 
             async with async_session() as session:
                 await save_liquidation(session, item)
-                # Запускаем анализ и обогащение
-                await process_liquidation_item(
-                    session=session,
-                    symbol=symbol,
-                    side_label=side_label,
-                    bot=self.bot,
-                    liq_aggregator=self.liq_aggregator,
-                    market_aggregator=self.market_aggregator,
-                    trade_aggregator=self.trade_aggregator
-                )
+            
+            await process_liquidation_item(
+                symbol=symbol,
+                side_label=side_label,
+                bot=self.bot,
+                liq_aggregator=self.liq_aggregator,
+                market_aggregator=self.market_aggregator,
+                trade_aggregator=self.trade_aggregator
+            )

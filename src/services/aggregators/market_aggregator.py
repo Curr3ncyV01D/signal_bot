@@ -1,24 +1,65 @@
+import asyncio
 import logging
 import heapq
-from typing import Any
+import time
+from typing import Any, TypedDict
 from collections import deque
 from datetime import datetime, timezone
 from src.services.indicators.rsi import rsi_indicator
+from src.utils import normalize_bybit_symbol, get_symbol_multiplier
 
 logger = logging.getLogger(__name__)
+
+
+class SymbolImpactMetrics(TypedDict):
+    cap_ratio: float | None    # Ликвидация / Market Cap * 100
+    vol_ratio: float | None    # Ликвидация / Vol 24h * 100
+    live_mcap: float           # Price * (Supply / Multiplier)
+    price: float               # Текущая цена для валидации кэша графиков
+    is_fallback: bool          # True, если данных о Supply нет
+
 
 class MarketAggregator:
     def __init__(self) -> None:
         # Структура: { "BTCUSDT": deque([(ts, price, oi), ...], maxlen=61) }
         self.history: dict[str, deque[tuple[float, float, float]]] = {}
+        # История минутных OHLCV свечей для графиков
+        self.ohlc_history: dict[str, deque[dict[str, int | float]]] = {}
         # Текущие снапшоты для быстрого доступа
         self.snapshots: dict[str, dict[str, Any]] = {}
         # L1-кэш RSI: { "BTCUSDT": ((current_price, bars_count), rsi_value) }
         self._rsi_cache: dict[str, tuple[tuple[float, int], float | None]] = {}
+        # Последнее значение суточного turnover для расчета объема текущей свечи
+        self._last_turnover: dict[str, float] = {}
         
-        # НОВОЕ: Внутрипамятное хранилище цен для RSI (раз в 5 минут)
+        # Внутрипамятное хранилище цен для RSI (раз в 5 минут)
         self.rsi_prices: dict[str, deque[float]] = {}
         self.rsi_bars: dict[str, int] = {} # Хранит ID текущего 5-минутного бара
+
+        # Хранилище эмиссии монет (Fundamental Data)
+        self.circulating_supply: dict[str, float] = {}
+
+    def seed_ohlc_history(self, symbol: str, candles: list[dict[str, int | float]]) -> None:
+        """Предварительное наполнение минутной истории свечей."""
+        if not candles:
+            return
+
+        history = self.ohlc_history.get(symbol)
+        if history is None:
+            history = deque(maxlen=100)
+            self.ohlc_history[symbol] = history
+        else:
+            history.clear()
+
+        for candle in candles[-100:]:
+            history.append({
+                "t": int(candle["t"]),
+                "o": float(candle["o"]),
+                "h": float(candle["h"]),
+                "l": float(candle["l"]),
+                "c": float(candle["c"]),
+                "v": float(candle["v"]),
+            })
 
     @staticmethod
     def _get_window_record(
@@ -30,7 +71,7 @@ class MarketAggregator:
         if not hist or window_minutes < 1:
             return None
 
-        target_idx = -(window_minutes + 1)
+        target_idx = -int(window_minutes + 1)
         target_time = now - (window_minutes * 60)
 
         # 1. Попытка прямого доступа по индексу
@@ -115,16 +156,18 @@ class MarketAggregator:
 
             self.history[symbol].append((float(ts_sec), float(price), float(current_oi)))
 
-    def update(self, symbol: str, price: float | None, oi: float | None, funding: float | None) -> None:
-        now = datetime.now(timezone.utc).timestamp()
+    def update(self, symbol: str, price: float | None, oi: float | None, funding: float | None, vol24h: float | None = None) -> None:
+        now = time.time()
+        current_min = int(now // 60) * 60
         
         if symbol not in self.snapshots:
-            self.snapshots[symbol] = {"price": 0.0, "oi": 0.0, "funding": 0.0, "ts": now}
+            self.snapshots[symbol] = {"price": 0.0, "oi": 0.0, "funding": 0.0, "vol24h": 0.0, "ts": now}
         
         # Обновляем только если значение пришло (не None)
         if price is not None: self.snapshots[symbol]["price"] = price
         if oi is not None: self.snapshots[symbol]["oi"] = oi
         if funding is not None: self.snapshots[symbol]["funding"] = funding
+        if vol24h is not None: self.snapshots[symbol]["vol24h"] = vol24h
         
         self.snapshots[symbol]["ts"] = now
 
@@ -137,7 +180,34 @@ class MarketAggregator:
             snap = self.snapshots[symbol]
             self.history[symbol].append((now, snap["price"], snap["oi"]))
 
-        # 2. НОВОЕ: Логика формирования часовых свечей для RSI в ОЗУ
+        # 2. Минутные свечи OHLCV для графиков
+        if price is not None and vol24h is not None:
+            turnover_delta = max(0.0, vol24h - self._last_turnover.get(symbol, vol24h))
+            self._last_turnover[symbol] = vol24h
+
+            if price > 0:
+                candles = self.ohlc_history.get(symbol)
+                if candles is None:
+                    candles = deque(maxlen=100)
+                    self.ohlc_history[symbol] = candles
+
+                last_candle = candles[-1] if candles else None
+                if last_candle is None or current_min > int(last_candle["t"]):
+                    candles.append({
+                        "t": current_min,
+                        "o": price,
+                        "h": price,
+                        "l": price,
+                        "c": price,
+                        "v": turnover_delta,
+                    })
+                else:
+                    last_candle["h"] = max(float(last_candle["h"]), price)
+                    last_candle["l"] = min(float(last_candle["l"]), price)
+                    last_candle["c"] = price
+                    last_candle["v"] = float(last_candle["v"]) + turnover_delta
+
+        # 3. Логика формирования часовых свечей для RSI в ОЗУ
         if price is not None and price > 0:
             now_bar = int(now // 3600) # ID текущего часового интервала
             
@@ -290,3 +360,88 @@ class MarketAggregator:
             "btc_price": btc_price,
             "btc_change_1h": btc_change_1h
         }
+
+    # === Управление данными об эмиссии ===
+
+    def update_supply(self, symbol: str, supply: float) -> None:
+        """Сохраняет данные об эмиссии для очищенного символа."""
+        clean_key = normalize_bybit_symbol(symbol).upper()
+        self.circulating_supply[clean_key] = supply
+
+    def get_supply(self, symbol: str) -> float | None:
+        """Возвращает эмиссию для символа."""
+        clean_key = normalize_bybit_symbol(symbol).upper()
+        return self.circulating_supply.get(clean_key)
+
+    def get_impact_metrics(self, symbol: str, liq_value: float) -> SymbolImpactMetrics:
+        """Расчет метрик влияния ликвидации на рынок (Cap Ratio и Vol Ratio)."""
+        snap = self.snapshots.get(symbol, {})
+        price = snap.get("price", 0.0)
+        vol24h = snap.get("vol24h", 0.0)
+        supply = self.get_supply(symbol)
+        multiplier = get_symbol_multiplier(symbol)
+
+        live_mcap = 0.0
+        cap_ratio = None
+        vol_ratio = None
+        is_fallback = True
+
+        # 1. Защита от нулевых данных
+        if not supply or price <= 0 or vol24h <= 0:
+            return {
+                "cap_ratio": None,
+                "vol_ratio": None,
+                "live_mcap": 0.0,
+                "price": float(price),
+                "is_fallback": True
+            }
+
+        # 2. Расчет Market Cap и Cap Ratio
+        live_mcap = (price * supply) / multiplier
+        if live_mcap > 0:
+            cap_ratio = (liq_value / live_mcap * 100)
+            is_fallback = False
+
+        # 3. Расчет Vol Ratio
+        if vol24h > 0:
+            vol_ratio = (liq_value / vol24h * 100)
+
+        return {
+            "cap_ratio": cap_ratio,
+            "vol_ratio": vol_ratio,
+            "live_mcap": live_mcap,
+            "price": float(price),
+            "is_fallback": is_fallback
+        }
+
+    async def cleanup_task(self):
+        """Фоновая задача очистки памяти: удаление неактивных тикеров."""
+        while True:
+            try:
+                await asyncio.sleep(3600) # Раз в час
+                now = time.time()
+                expiry_seconds = 7200 # 2 часа
+                
+                # Используем копию ключей для безопасной итерации
+                current_symbols = list(self.snapshots.keys())
+                expired_symbols = []
+                
+                for symbol in current_symbols:
+                    snap = self.snapshots.get(symbol)
+                    if snap and now - snap.get("ts", 0) > expiry_seconds:
+                        expired_symbols.append(symbol)
+                
+                for symbol in expired_symbols:
+                    logger.info(f"Memory GC: Removing expired symbol {symbol}")
+                    self.snapshots.pop(symbol, None)
+                    self.history.pop(symbol, None)
+                    self.ohlc_history.pop(symbol, None)
+                    self.rsi_prices.pop(symbol, None)
+                    self.rsi_bars.pop(symbol, None)
+                    self._rsi_cache.pop(symbol, None)
+                    self._last_turnover.pop(symbol, None)
+                    clean_key = normalize_bybit_symbol(symbol).upper()
+                    self.circulating_supply.pop(clean_key, None)
+                    
+            except Exception as e:
+                logger.error(f"Error in MarketAggregator cleanup: {e}")

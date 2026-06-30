@@ -8,8 +8,8 @@ from aiogram import Router, types, F
 from aiogram.utils.markdown import hbold
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.fsm.context import FSMContext
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.database.session import async_session
 from src.bot.filters.admin import IsAdminFilter
 from src.services.metrics_service import MetricsService
 from src.bot.utils.admin_bi_formatter import BIFormatter
@@ -39,12 +39,11 @@ async def process_admin_bi_main(callback: types.CallbackQuery):
     await callback.answer()
 
 @router.callback_query(F.data == "admin_bi_finance")
-async def process_bi_finance(callback: types.CallbackQuery, listener, liq_aggregator, data_queue: asyncio.Queue):
+async def process_bi_finance(callback: types.CallbackQuery, listener, liq_aggregator, data_queue: asyncio.Queue, session: AsyncSession):
     """Экран финансовых метрик"""
-    async with async_session() as session:
-        data = await MetricsService.get_admin_bi_data(
-            session, listener, liq_aggregator, data_queue
-        )
+    data = await MetricsService.get_admin_bi_data(
+        session, listener, liq_aggregator, data_queue
+    )
         
     text = BIFormatter.format_finance_text(data['financial'])
     try:
@@ -54,12 +53,11 @@ async def process_bi_finance(callback: types.CallbackQuery, listener, liq_aggreg
     await callback.answer()
 
 @router.callback_query(F.data == "admin_bi_audience")
-async def process_bi_audience(callback: types.CallbackQuery, listener, liq_aggregator, data_queue: asyncio.Queue):
+async def process_bi_audience(callback: types.CallbackQuery, listener, liq_aggregator, data_queue: asyncio.Queue, session: AsyncSession):
     """Экран метрик аудитории"""
-    async with async_session() as session:
-        data = await MetricsService.get_admin_bi_data(
-            session, listener, liq_aggregator, data_queue
-        )
+    data = await MetricsService.get_admin_bi_data(
+        session, listener, liq_aggregator, data_queue
+    )
         
     text = BIFormatter.format_audience_text(data['audience'])
     try:
@@ -69,12 +67,11 @@ async def process_bi_audience(callback: types.CallbackQuery, listener, liq_aggre
     await callback.answer()
 
 @router.callback_query(F.data == "admin_bi_system")
-async def process_bi_system(callback: types.CallbackQuery, listener, liq_aggregator, data_queue: asyncio.Queue):
+async def process_bi_system(callback: types.CallbackQuery, listener, liq_aggregator, data_queue: asyncio.Queue, session: AsyncSession):
     """Экран системных метрик"""
-    async with async_session() as session:
-        data = await MetricsService.get_admin_bi_data(
-            session, listener, liq_aggregator, data_queue
-        )
+    data = await MetricsService.get_admin_bi_data(
+        session, listener, liq_aggregator, data_queue
+    )
         
     text = BIFormatter.format_system_text(data['tech'])
     try:
@@ -84,12 +81,11 @@ async def process_bi_system(callback: types.CallbackQuery, listener, liq_aggrega
     await callback.answer()
 
 @router.callback_query(F.data == "admin_bi_export_csv")
-async def process_bi_export_csv(callback: types.CallbackQuery):
+async def process_bi_export_csv(callback: types.CallbackQuery, session: AsyncSession):
     """Экспорт истории транзакций (DEPOSIT) в CSV"""
     await callback.answer("⏳ Формирую отчет...")
     
-    async with async_session() as session:
-        deposits = await get_all_deposits(session)
+    deposits = await get_all_deposits(session)
         
     if not deposits:
         return await callback.message.answer("❌ Нет данных для экспорта (транзакции DEPOSIT отсутствуют).")

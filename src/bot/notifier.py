@@ -1,15 +1,18 @@
 import asyncio
 import logging
+import re
 from aiogram import Bot
 from aiogram.utils.markdown import hbold, hlink
-from aiogram.types import LinkPreviewOptions
+from aiogram.types import LinkPreviewOptions, BufferedInputFile, InputFile
 from aiogram.exceptions import TelegramRetryAfter, TelegramForbiddenError
 from src.core.config import config
+from src.utils import format_smart_num
 
 logger = logging.getLogger(__name__)
 
 # Глобальный семафор для контроля FloodWait (~25 сообщений в секунду)
 broadcaster_semaphore = asyncio.Semaphore(25)
+MAX_PHOTO_CAPTION_LEN = 1024
 
 class AlertFormatter:
     """Профессиональный конструктор уведомлений (SOLID)"""
@@ -68,8 +71,8 @@ class AlertFormatter:
         oi_val_marker = " ‼️" if oi_val is not None and abs(oi_val) >= 5_000_000 else " ❗️" if oi_val is not None and abs(oi_val) >= 1_000_000 else ""
         price_marker = " ❗️" if price_pct is not None and abs(price_pct) >= 10 else ""
 
-        oi_display = f"{oi_pct:+.2f}%" if oi_pct is not None else "⌛"
-        price_display = f"{price_pct:+.2f}%" if price_pct is not None else "⌛"
+        oi_display = format_smart_num(oi_pct, is_percent=True, show_sign=True) if oi_pct is not None else "⌛"
+        price_display = format_smart_num(price_pct, is_percent=True, show_sign=True) if price_pct is not None else "⌛"
         price_arrow = "↗️" if (price_pct or 0) > 0 else "↘️" if (price_pct or 0) < 0 else ""
 
         oi_str = f"{oi_display}{oi_pct_marker}"
@@ -91,7 +94,7 @@ class AlertFormatter:
         res = ""
         for period, val in [("5m", d5), ("30m", d30)]:
             if val is None:
-                res += f"📊 {hbold(f'CVD ({period}):')} ⌛\n"
+                res += f"⌛ {hbold(f'CVD ({period}):')} ⌛\n"
             elif val >= 0:
                 res += f"🟢 {hbold(f'More Buys ({period}):')} {self.format_money(val)}\n"
             else:
@@ -122,6 +125,52 @@ class AlertFormatter:
             
         res += f"{emoji_1h} {hbold(f'{side_1h} LIQ (1H):')} {self.format_money(sum_1h)}\n"
         return res
+
+    def _impact_block(self) -> str:
+        """Блок рыночного влияния ликвидаций на торги за 24часа (Vol Ratio)"""
+        vol_ratio = self.data.get("vol_ratio")
+        if vol_ratio is None:
+            return ""
+        
+        marker = ""
+        if vol_ratio >= 10.0:
+            marker = " 💎"
+        elif vol_ratio >= 5.0:
+            marker = " ⚠️"
+        elif vol_ratio >= 1.0:
+            marker = " ❗️"
+            
+        formatted_vol = format_smart_num(vol_ratio, is_percent=True, decimal_places=4)
+        return f"🌊 {hbold('Vol Ratio:')} {formatted_vol} {marker}\n"
+
+    def _fundamental_block(self) -> str:
+        """Блок фундаментальных данных (Market Cap и Cap Ratio)"""
+        live_mcap = self.data.get("live_mcap", 0.0)
+        cap_ratio = self.data.get("cap_ratio")
+        is_fallback = self.data.get("is_fallback", False)
+
+        if is_fallback:
+            return f"💎 {hbold('Market Cap:')} ⌛\n"
+        
+        if live_mcap <= 0:
+            return ""
+
+        marker = ""
+        if cap_ratio is not None:
+            if cap_ratio >= 0.1:
+                marker = " 💎"
+            elif cap_ratio >= 0.05:
+                marker = " ⚠️"
+            elif cap_ratio >= 0.01:
+                marker = " ❗️"
+
+        formatted_mcap = self.format_money(live_mcap)
+        formatted_cap = format_smart_num(cap_ratio, is_percent=True, decimal_places=4) if cap_ratio is not None else "⌛"
+        
+        return (
+            f"💎 {hbold('Market Cap:')} {formatted_mcap}\n"
+            f"⚖ {hbold('Cap Ratio:')} {formatted_cap}{marker}\n"
+        )
 
     def _indicators_block(self) -> str:
         """Технические индикаторы (RSI, Funding) с экстремумами"""
@@ -158,18 +207,53 @@ class AlertFormatter:
         
         return f"\n{links}{guide}"
 
-    def compile_text(self) -> str:
+    def compile_text(self, include_footer: bool = True) -> str:
         """Итоговая сборка сообщения"""
-        return (
+        text = (
             self._header() +
             self._market_block() +
             self._cvd_block() +
+            '\n' +
             self._liq_block() +
-            self._indicators_block() +
-            self._footer()
+            self._impact_block() +
+            '\n' +
+            self._fundamental_block() +
+            self._indicators_block()
         )
+        if include_footer:
+            text += self._footer()
+        return text
 
-async def send_liquidation_alert(bot: Bot, user_id: int, retry_count: int = 0, **kwargs):
+
+def _trim_photo_caption(formatter: AlertFormatter, full_text: str) -> str:
+    if len(full_text) <= MAX_PHOTO_CAPTION_LEN:
+        return full_text
+
+    variants = [
+        formatter.compile_text(include_footer=False),
+        formatter._header() + formatter._market_block() + formatter._liq_block() + formatter._impact_block(),
+        formatter._header() + formatter._liq_block(),
+    ]
+
+    for variant in variants:
+        trimmed = variant.strip()
+        if len(trimmed) <= MAX_PHOTO_CAPTION_LEN:
+            return trimmed
+
+    plain_text = re.sub(r"<[^>]+>", "", full_text)
+    plain_text = re.sub(r"\n{3,}", "\n\n", plain_text).strip()
+    if len(plain_text) <= MAX_PHOTO_CAPTION_LEN:
+        return plain_text
+    return f"{plain_text[: MAX_PHOTO_CAPTION_LEN - 1].rstrip()}…"
+
+async def send_liquidation_alert(
+    bot: Bot,
+    user_id: int,
+    retry_count: int = 0,
+    photo_bytes: bytes | None = None,
+    photo_file_id: str | None = None,
+    **kwargs,
+) -> str | None:
     """Единая точка входа для отправки алертов с защитой от FloodWait"""
     if retry_count > 3:
         logger.error(f"❌ Превышено число попыток отправки для {user_id}")
@@ -180,18 +264,43 @@ async def send_liquidation_alert(bot: Bot, user_id: int, retry_count: int = 0, *
             formatter = AlertFormatter(kwargs)
             text = formatter.compile_text()
 
-            return await bot.send_message(
+            if photo_bytes or photo_file_id:
+                caption = _trim_photo_caption(formatter, text)
+                photo: InputFile | str
+                if photo_bytes is not None:
+                    photo = BufferedInputFile(photo_bytes, filename=f"{formatter.symbol.lower()}_chart.png")
+                else:
+                    photo = photo_file_id or ""
+
+                sent_msg = await bot.send_photo(
+                    chat_id=user_id,
+                    photo=photo,
+                    caption=caption,
+                    parse_mode="HTML",
+                    protect_content=True,
+                )
+                return sent_msg.photo[-1].file_id if sent_msg.photo else None
+
+            await bot.send_message(
                 chat_id=user_id,
                 text=text,
                 parse_mode="HTML",
                 protect_content=True,
                 link_preview_options=LinkPreviewOptions(is_disabled=True)
             )
+            return None
             
         except TelegramRetryAfter as e:
             logger.warning(f"⏳ Flood limit ({e.retry_after}s) для {user_id}. Попытка #{retry_count + 1}")
             await asyncio.sleep(e.retry_after)
-            return await send_liquidation_alert(bot, user_id, retry_count + 1, **kwargs)
+            return await send_liquidation_alert(
+                bot,
+                user_id,
+                retry_count + 1,
+                photo_bytes=photo_bytes,
+                photo_file_id=photo_file_id,
+                **kwargs,
+            )
             
         except TelegramForbiddenError:
             logger.debug(f"🚫 Юзер {user_id} заблокировал бота.")

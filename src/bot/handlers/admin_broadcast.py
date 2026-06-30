@@ -4,6 +4,7 @@ from aiogram import Router, types, F, Bot
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.utils.markdown import hbold
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.bot.filters.admin import IsAdminFilter
 from src.bot.keyboards.admin_broadcast_kb import (
@@ -11,7 +12,6 @@ from src.bot.keyboards.admin_broadcast_kb import (
     get_broadcast_confirm_kb
 )
 from src.bot.keyboards.admin_kb import get_admin_main_kb
-from src.database.session import async_session
 from src.database.crud.user_service import (
     get_all_receiver_ids, 
     get_vip_receiver_ids, 
@@ -80,7 +80,7 @@ async def process_broadcast_content(message: types.Message, state: FSMContext):
     )
 
 @router.callback_query(F.data == "broadcast_confirm_start", BroadcastStates.confirm_broadcast)
-async def process_broadcast_confirm(callback: types.CallbackQuery, state: FSMContext, bot: Bot):
+async def process_broadcast_confirm(callback: types.CallbackQuery, state: FSMContext, bot: Bot, session: AsyncSession):
     """Запуск рассылки в фоновом режиме"""
     data = await state.get_data()
     segment = data.get("target_segment")
@@ -88,13 +88,12 @@ async def process_broadcast_confirm(callback: types.CallbackQuery, state: FSMCon
     message_id = data.get("message_id")
     
     # Получаем список ID согласно сегменту
-    async with async_session() as session:
-        if segment == "all":
-            user_ids = await get_all_receiver_ids(session)
-        elif segment == "vip":
-            user_ids = await get_vip_receiver_ids(session)
-        else: # free
-            user_ids = await get_free_receiver_ids(session)
+    if segment == "all":
+        user_ids = await get_all_receiver_ids(session)
+    elif segment == "vip":
+        user_ids = await get_vip_receiver_ids(session)
+    else: # free
+        user_ids = await get_free_receiver_ids(session)
             
     if not user_ids:
         await callback.message.answer("❌ Ошибка: В выбранном сегменте 0 пользователей.")

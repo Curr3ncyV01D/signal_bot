@@ -85,21 +85,16 @@ async def get_active_users(session: AsyncSession) -> list[User]:
         return _active_users_cache # Возвращаем старый кеш при ошибке БД
 
 async def activate_trial(session: AsyncSession, user_id: int) -> tuple[bool, str]:
-    """Активирует пробный период на 24 часа. Возвращает (успех, сообщение)."""
+    """Помечает пробный период как использованный. Начисление срока делает billing_service."""
     try:
         user = await session.get(User, user_id, with_for_update=True)
         if not user:
             return False, "Пользователь не найден. Нажмите /start."
             
         if user.is_trial_used:
-            return False, "❌ Вы уже использовали пробный период."
-            
-        now = get_utc_now()
-        trial_start = max(now, user.subscription_end or now)
-        user.subscription_end = trial_start + timedelta(hours=24)
-            
+            return False, "Пробный период уже был использован."
+
         user.is_trial_used = True
-        await session.commit()
         return True, "✅ Пробный период на 24 часа успешно активирован!"
     except SQLAlchemyError as e:
         await session.rollback()
@@ -213,6 +208,31 @@ async def update_user_subscription(session: AsyncSession, user_id: int, days: in
     except Exception as e:
         await session.rollback()
         logger.error(f"Непредвиденная ошибка при обновлении подписки для {user_id}: {e}")
+        return None
+
+async def update_user_settings(session: AsyncSession, user_id: int, **kwargs) -> User | None:
+    """
+    Универсальный метод для обновления любых полей настроек пользователя.
+    """
+    try:
+        user = await session.get(User, user_id)
+        if not user:
+            return None
+
+        for key, value in kwargs.items():
+            if hasattr(user, key):
+                setattr(user, key, value)
+        
+        await session.commit()
+        await session.refresh(user)
+        return user
+    except SQLAlchemyError as e:
+        await session.rollback()
+        logger.error(f"Ошибка БД при обновлении настроек пользователя {user_id}: {e}")
+        return None
+    except Exception as e:
+        await session.rollback()
+        logger.error(f"Непредвиденная ошибка при обновлении настроек пользователя {user_id}: {e}")
         return None
 
 async def get_all_receiver_ids(session: AsyncSession) -> list[int]:

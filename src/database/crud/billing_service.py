@@ -3,8 +3,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update, func, desc
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import joinedload
-from datetime import datetime
+from datetime import datetime, timedelta
 from src.database.models import User, Transaction, Invoice
+from src.database.functions import get_utc_now
+from src.core.config import config
 
 logger = logging.getLogger(__name__)
 
@@ -105,7 +107,8 @@ async def create_invoice(
     session: AsyncSession,
     user_id: int,
     amount: float,
-    crypto_pay_id: str
+    crypto_pay_id: str,
+    payload: str | None = None
 ) -> Invoice | None:
     """
     Создает новый инвойс для оплаты.
@@ -114,6 +117,7 @@ async def create_invoice(
     :param user_id: ID пользователя
     :param amount: Сумма инвойса
     :param crypto_pay_id: Внешний ID из CryptoPay
+    :param payload: Дополнительная информация (например, 'sub_30')
     :return: Объект Invoice или None при ошибке
     """
     try:
@@ -121,11 +125,12 @@ async def create_invoice(
             user_id=user_id,
             amount=round(float(amount), 2),
             crypto_pay_id=crypto_pay_id,
-            status='PENDING'
+            status='PENDING',
+            payload=payload
         )
         session.add(invoice)
         await session.commit()
-        logger.info(f"Создан инвойс {crypto_pay_id} для пользователя {user_id} на сумму {amount}")
+        logger.info(f"Создан инвойс {crypto_pay_id} для пользователя {user_id} на сумму {amount} (payload={payload})")
         return invoice
     except SQLAlchemyError as e:
         await session.rollback()
@@ -268,13 +273,14 @@ async def get_partner_stats(session: AsyncSession, user_id: int) -> tuple[int, f
 
 async def confirm_invoice_payment(session: AsyncSession, ext_id: str) -> bool:
     """
-    Атомарно подтверждает оплату инвойса: 
+    Атомарно подтверждает оплату инвойса:
     1. Начисляет баланс пользователю.
     2. Создает транзакцию DEPOSIT.
     3. Меняет статус инвойса на 'PAID'.
-    
-    Все операции выполняются в рамках одной транзакции БД.
-    
+
+    Не делает session.commit(), чтобы можно было продолжить сценарий
+    в рамках той же транзакции.
+
     :param session: Асинхронная сессия SQLAlchemy
     :param ext_id: Внешний ID инвойса (crypto_pay_id)
     :return: True если успешно, иначе False
@@ -315,8 +321,6 @@ async def confirm_invoice_payment(session: AsyncSession, ext_id: str) -> bool:
         # 5. Обновляем статус инвойса
         invoice.status = 'PAID'
         
-        # 6. Фиксируем всё разом
-        await session.commit()
         logger.info(f"Оплата инвойса {ext_id} успешно подтверждена. Пользователю {invoice.user_id} начислено {amount} USDT.")
         return True
     except SQLAlchemyError as e:
@@ -328,68 +332,126 @@ async def confirm_invoice_payment(session: AsyncSession, ext_id: str) -> bool:
         logger.error(f"Непредвиденная ошибка при подтверждении оплаты инвойса {ext_id}: {e}")
         return False
 
-async def purchase_subscription(session: AsyncSession, user_id: int, days: int, price: float) -> tuple[bool, datetime | None, float]:
+async def activate_subscription_logic(
+    session: AsyncSession, 
+    user_id: int, 
+    days: int, 
+    price: float, 
+    description: str
+) -> tuple[bool, datetime | None]:
     """
-    Атомарная покупка подписки:
-    1. Проверяет баланс пользователя.
-    2. Списывает средства (WITHDRAW).
-    3. Создает запись транзакции.
-    4. Продлевает подписка (subscription_end).
-    
-    Все операции в одной транзакции с блокировкой строки пользователя.
-    
-    :return: (успех, новая_дата_окончания, сумма_реф_бонуса)
+    Унифицированная логика активации подписки.
+    Выполняет начисление дней, создание транзакции и расчет реф-бонуса.
+    НЕ делает session.commit().
     """
-    from src.database.functions import get_utc_now
-    from datetime import timedelta
-    
-    bonus_amount = 0.0
     try:
-        # 1. Получаем пользователя и блокируем строку
+        # 1. Получаем пользователя с блокировкой
         user = await session.get(User, user_id, with_for_update=True)
         if not user:
-            logger.warning(f"Попытка покупки подписки несуществующим пользователем {user_id}")
-            return False, None, 0.0
-            
-        price = round(float(price), 2)
-        if user.balance < price:
-            logger.info(f"Недостаточно средств у {user_id}: {user.balance} < {price}")
-            return False, None, 0.0
-            
-        # 2. Списываем баланс
-        user.balance = round(user.balance - price, 2)
-        
-        # 3. Продлеваем подписку
+            logger.error(f"Пользователь {user_id} не найден для активации подписки")
+            return False, None
+
+        # 2. Расчет даты
         now = get_utc_now()
         current_end = user.subscription_end if user.subscription_end and user.subscription_end > now else now
         new_end = current_end + timedelta(days=days)
         user.subscription_end = new_end
-        
-        # 4. Создаем транзакцию
+
+        # 3. Транзакция списания (для истории)
+        price = round(float(price), 2)
         tx = Transaction(
             user_id=user_id,
             amount=-price,
             type='WITHDRAW',
-            description=f"Покупка подписки на {days} дн."
+            description=description
         )
         session.add(tx)
-        # 5. Реферальный бонус
+
+        # 4. Реферальная система
         if user.referrer_id:
-            from src.core.config import config
-            bonus_amount = round(price * (config.REFERRAL_BONUS_PERCENT / 100.0), 2)
+            bonus_percent = getattr(config, "REFERRAL_BONUS_PERCENT", 15.0)
+            bonus_amount = round(price * (bonus_percent / 100.0), 2)
             if bonus_amount > 0:
                 referrer = await session.get(User, user.referrer_id, with_for_update=True)
                 if referrer:
                     referrer.balance = round(referrer.balance + bonus_amount, 2)
-                    bonus_tx = Transaction(
+                    reward_tx = Transaction(
                         user_id=referrer.id,
                         amount=bonus_amount,
                         type='REWARD',
-                        description=f"Бонус за покупку реферала {user_id}"
+                        description=f"Бонус за активацию подписки рефералом {user_id}"
                     )
-                    session.add(bonus_tx)
-                    logger.info(f"Начислен бонус {bonus_amount} USDT пользователю {referrer.id} за покупку {user_id}")
-        
+                    session.add(reward_tx)
+                    logger.info(f"Начислен реф-бонус {bonus_amount} пользователю {referrer.id}")
+
+        return True, new_end
+    except Exception as e:
+        logger.error(f"Ошибка в activate_subscription_logic для {user_id}: {e}")
+        return False, None
+
+async def charge_and_activate_subscription(
+    session: AsyncSession,
+    user_id: int,
+    days: int,
+    price: float,
+    description: str
+) -> tuple[bool, datetime | None, float]:
+    """
+    Списывает баланс пользователя и активирует подписку в рамках одной транзакции.
+    Не делает session.commit().
+    """
+    try:
+        user = await session.get(User, user_id, with_for_update=True)
+        if not user:
+            logger.warning(f"Попытка активации подписки несуществующим пользователем {user_id}")
+            return False, None, 0.0
+
+        price = round(float(price), 2)
+        if user.balance < price:
+            logger.info(f"Недостаточно средств у {user_id}: {user.balance} < {price}")
+            return False, None, 0.0
+
+        user.balance = round(user.balance - price, 2)
+
+        success, new_end = await activate_subscription_logic(
+            session=session,
+            user_id=user_id,
+            days=days,
+            price=price,
+            description=description
+        )
+        if not success:
+            return False, None, 0.0
+
+        bonus_amount = 0.0
+        if user.referrer_id:
+            bonus_amount = round(price * (config.REFERRAL_BONUS_PERCENT / 100.0), 2)
+
+        return True, new_end, bonus_amount
+    except Exception as e:
+        logger.error(f"Ошибка в charge_and_activate_subscription для {user_id}: {e}")
+        return False, None, 0.0
+
+async def purchase_subscription(session: AsyncSession, user_id: int, days: int, price: float) -> tuple[bool, datetime | None, float]:
+    """
+    Атомарная покупка подписки:
+    1. Проверяет баланс пользователя.
+    2. Вызывает логику активации.
+    3. Делает commit.
+    
+    :return: (успех, новая_дата_окончания, сумма_реф_бонуса)
+    """
+    try:
+        success, new_end, bonus_amount = await charge_and_activate_subscription(
+            session=session,
+            user_id=user_id,
+            days=days,
+            price=price,
+            description=f"Покупка подписки на {days} дн."
+        )
+        if not success:
+            return False, None, 0.0
+
         await session.commit()
         logger.info(f"Пользователь {user_id} успешно купил подписку на {days} дн. за {price} USDT")
         return True, new_end, bonus_amount

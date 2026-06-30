@@ -25,3 +25,7 @@ class Kb_Helper:
             builder.row(InlineKeyboardButton(text="❌ Закрыть", callback_data="common_close"))
         
         return builder
+
+    @staticmethod
+    def toggle_icon(status: bool) -> str:
+        return "✅" if status else "❌"
