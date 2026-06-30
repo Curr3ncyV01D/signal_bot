@@ -55,7 +55,7 @@ async def recreate_dashboard_logic(bot: Bot, liq_aggregator, market_aggregator) 
             try:
                 await asyncio.wait_for(
                     bot.delete_message(
-                        chat_id=config.PRIVATE_CHANNEL_ID,
+                        chat_id=config.NEWS_CHANNEL_ID,
                         message_id=old_message_id,
                     ),
                     timeout=10.0,
@@ -69,7 +69,7 @@ async def recreate_dashboard_logic(bot: Bot, liq_aggregator, market_aggregator) 
 
         msg = await asyncio.wait_for(
             bot.send_message(
-                chat_id=config.PRIVATE_CHANNEL_ID,
+                chat_id=config.NEWS_CHANNEL_ID,
                 text=text,
                 parse_mode="HTML",
                 link_preview_options=LinkPreviewOptions(is_disabled=True),
@@ -81,7 +81,7 @@ async def recreate_dashboard_logic(bot: Bot, liq_aggregator, market_aggregator) 
         try:
             await asyncio.wait_for(
                 bot.pin_chat_message(
-                    chat_id=config.PRIVATE_CHANNEL_ID,
+                    chat_id=config.NEWS_CHANNEL_ID,
                     message_id=msg.message_id,
                 ),
                 timeout=10.0,
@@ -136,7 +136,7 @@ async def dashboard_worker(bot: Bot, liq_aggregator, market_aggregator):
 
                     await asyncio.wait_for(
                         bot.edit_message_text(
-                            chat_id=config.PRIVATE_CHANNEL_ID,
+                            chat_id=config.NEWS_CHANNEL_ID,
                             message_id=message_id,
                             text=text,
                             parse_mode="HTML",
@@ -149,7 +149,7 @@ async def dashboard_worker(bot: Bot, liq_aggregator, market_aggregator):
                     logger.error("❌ Таймаут при редактировании дэшборда (10 сек).")
                     
                 except TelegramForbiddenError:
-                    logger.error(f"❌ Бот не имеет прав для редактирования сообщений в канале {config.PRIVATE_CHANNEL_ID}. Проверьте права администратора.")
+                    logger.error(f"❌ Бот не имеет прав для редактирования сообщений в канале {config.NEWS_CHANNEL_ID}. Проверьте права администратора.")
                     
                 except TelegramBadRequest as e:
                     error_msg = str(e).lower()
