@@ -7,6 +7,8 @@ from src.database.session import async_session
 from src.database.crud.user_service import get_active_users
 from src.database.crud.channel_service import ChannelService
 from src.bot.notifier import send_liquidation_alert
+from src.services import chart_generator
+from src.utils import strip_emojis
 
 logger = logging.getLogger(__name__)
 
@@ -105,6 +107,14 @@ async def user_cache_refresher_task():
             logger.error(f"Ошибка в задаче обновления кэша пользователей: {e}")
         await asyncio.sleep(60)
 
+async def invalidate_user_cache():
+    """Принудительное обновление кэша пользователей (например, после покупки подписки)."""
+    try:
+        await _update_cache_logic()
+        logger.info("♻️ Кэш пользователей принудительно обновлен.")
+    except Exception as e:
+        logger.error(f"Ошибка при инвалидации кэша пользователей: {e}")
+
 async def user_cache_refresher_task_once():
     """Однократное обновление кэша для Graceful Startup."""
     try:
@@ -152,7 +162,7 @@ async def process_liquidation_item(
     impact_cas = market_aggregator.get_impact_metrics(symbol, sum_cas)
 
     if impact["is_fallback"]:
-        logger.debug(f"Smart Fallback: Missing market data for {symbol}, forcing USD mode.")
+        pass
 
     # 4. Подготовка базового payload (Atomic Payload)
     # Эти данные одинаковы для всех получателей
@@ -177,7 +187,8 @@ async def process_liquidation_item(
         "is_fallback": impact["is_fallback"],
     }
 
-    alert_tasks = []
+    ohlc_data = list(market_aggregator.ohlc_history.get(symbol, []))
+    prepared_alerts: list[tuple[int | str, dict[str, Any]]] = []
 
     # 5. Single-pass рассылка по закэшированным адресатам.
     for target in targets:
@@ -201,17 +212,83 @@ async def process_liquidation_item(
 
         if trigger_result:
             recipient_id = config.PRIVATE_CHANNEL_ID if target["id"] == "CHANNEL" else int(target["id"])
-            
             # Объединяем общие данные с персональными (заголовок, тип, фильтры отображения)
             full_payload = {**base_payload, **trigger_result}
-            alert_tasks.append(send_liquidation_alert(bot, recipient_id, **full_payload))
+            prepared_alerts.append((recipient_id, full_payload))
 
-    if alert_tasks:
+    if not prepared_alerts:
+        return
+
+    async def _dispatch_batches(alert_tasks: list[Any]) -> None:
         batch_size = 50
         for i in range(0, len(alert_tasks), batch_size):
             batch = alert_tasks[i:i + batch_size]
             await asyncio.gather(*batch, return_exceptions=True)
             await asyncio.sleep(0.01)
+
+    current_price = float(impact["price"])
+
+    # 6. Fallback на текст, если график еще не готов или цена некорректна.
+    if len(ohlc_data) < 30 or current_price <= 0:
+        await _dispatch_batches([
+            send_liquidation_alert(bot, recipient_id, **payload)
+            for recipient_id, payload in prepared_alerts
+        ])
+        return
+
+    # 7. Сценарий cache-hit: мгновенная массовая рассылка по file_id.
+    cached_id = chart_generator.get_cached_id(symbol, current_price)
+    if cached_id:
+        await _dispatch_batches([
+            send_liquidation_alert(bot, recipient_id, photo_file_id=cached_id, **payload)
+            for recipient_id, payload in prepared_alerts
+        ])
+        return
+
+    # 8. Cache-miss: один рендер на символ под локом + harvesting первого успешного file_id.
+    async with chart_generator.locks[symbol]:
+        cached_id = chart_generator.get_cached_id(symbol, current_price)
+        if cached_id:
+            await _dispatch_batches([
+                send_liquidation_alert(bot, recipient_id, photo_file_id=cached_id, **payload)
+                for recipient_id, payload in prepared_alerts
+            ])
+            return
+
+        alert_title = str(prepared_alerts[0][1].get("alert_title", "LIQUIDATION ALERT"))
+        chart_title = strip_emojis(alert_title)
+
+        chart_bytes = await chart_generator.get_chart(symbol, ohlc_data, chart_title)
+        if chart_bytes is None:
+            await _dispatch_batches([
+                send_liquidation_alert(bot, recipient_id, **payload)
+                for recipient_id, payload in prepared_alerts
+            ])
+            return
+
+        remaining_alerts = prepared_alerts.copy()
+        harvested_file_id: str | None = None
+
+        while remaining_alerts and harvested_file_id is None:
+            first_recipient, first_payload = remaining_alerts.pop(0)
+            harvested_file_id = await send_liquidation_alert(
+                bot,
+                first_recipient,
+                photo_bytes=chart_bytes,
+                **first_payload,
+            )
+
+        if harvested_file_id:
+            chart_generator.update_cache(symbol, harvested_file_id, current_price)
+            if remaining_alerts:
+                await _dispatch_batches([
+                    send_liquidation_alert(bot, recipient_id, photo_file_id=harvested_file_id, **payload)
+                    for recipient_id, payload in remaining_alerts
+                ])
+            return
+
+        # Если harvesting не удался ни у одного получателя, дополнительных повторов не делаем.
+        return
 
 def _check_triggers(
     target: CachedAlertTarget,

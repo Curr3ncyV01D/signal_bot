@@ -29,6 +29,7 @@ class BybitListener:
         self.target_symbols = []
         self._start_count = 0
         self._launch_context = "primary"
+        self._ticker_throttle: dict[str, float] = {}
 
     def get_all_usdt_symbols(self) -> list[str]:
         """Получает список всех активных USDT-пар с Bybit."""
@@ -64,8 +65,10 @@ class BybitListener:
 
     def on_message(self, message, ws=None):
         """Единая точка входа для всех сообщений WebSocket."""
+        self.last_message_time = time.time()
+
         if ws:
-            self.last_heartbeat[ws] = time.time()
+            self.last_heartbeat[ws] = time.monotonic()
 
         if not isinstance(message, dict):
             try:
@@ -73,28 +76,42 @@ class BybitListener:
             except Exception:
                 return
 
-        # Перехват служебных сообщений (подтверждения подписок)
-        if "success" in message:
+        # Системные пакеты никогда не должны попадать под throttling.
+        if any(key in message for key in ("success", "ret_msg", "op")):
             try:
                 is_success = message.get("success")
                 req_id = message.get("req_id", "N/A")
                 ret_msg = message.get("ret_msg", "")
-                
-                if is_success:
+                op = message.get("op", "")
+
+                if op == "ping" or ret_msg.lower() == "pong":
+                    logger.debug("Получен системный ответ Bybit ping/pong")
+                elif is_success:
                     logger.debug(f"Подписка подтверждена: {req_id or message.get('conn_id')}")
-                else:
+                elif "success" in message:
                     logger.error(f"Bybit ОТКЛОНИЛ подписку: {ret_msg}. Данные по части монет могут не поступать!")
             except Exception as e:
                 logger.error(f"Ошибка при обработке подтверждения подписки: {e}")
             return
 
         topic = message.get("topic", "")
+        if topic.startswith("ticker"):
+            symbol = topic.split(".", 1)[1] if "." in topic else ""
+            if symbol:
+                now_monotonic = time.monotonic()
+                throttle_sec = float(getattr(config, "TICKER_THROTTLE_SEC", 2.0))
+                last_seen = self._ticker_throttle.get(symbol)
+                if last_seen is not None and (now_monotonic - last_seen) < throttle_sec:
+                    logger.debug(f"Тикер {symbol} отсечен throttling-шлюзом")
+                    return
+                self._ticker_throttle[symbol] = now_monotonic
+            self.handle_ticker(message)
+            return
+
         topic_lower = topic.lower()
         
         if topic and "liquidation" in topic_lower:
             self.handle_liquidation(message)
-        elif topic and "ticker" in topic_lower:
-            self.handle_ticker(message)
         elif topic and "publictrade" in topic_lower:
             self.handle_trade(message)
         elif not topic:
@@ -113,8 +130,6 @@ class BybitListener:
             else:
                 return
         
-        self.last_message_time = time.time()
-        
         if isinstance(data, list):
             for item in data:
                 self.loop.call_soon_threadsafe(self.queue.put_nowait, {"type": "liquidation", "data": item})
@@ -124,9 +139,8 @@ class BybitListener:
     def handle_ticker(self, message):
         """Обработка тикеров: Открытый интерес (OI), Цена, Фандинг"""
         data = message.get("data")
-        if not data: return
-        
-        self.last_message_time = time.time()
+        if not data:
+            return
         topic = message.get("topic", "")
         
         # Оборачиваем в type: ticker
@@ -145,7 +159,6 @@ class BybitListener:
         
         if not filtered: return
 
-        self.last_message_time = time.time()
         topic = message.get("topic", "")
         self.loop.call_soon_threadsafe(self.queue.put_nowait, {"type": "trade", "topic": topic, "data": filtered})
 
@@ -221,7 +234,7 @@ class BybitListener:
         while True:
             try:
                 await asyncio.sleep(60)
-                now = time.time()
+                now = time.monotonic()
                 
                 # Если весь лисенер молчит слишком долго, возможно проблема с сетью вообще
                 total_silence = 0
@@ -273,7 +286,7 @@ class BybitListener:
         )
 
         self.ws_map[new_ws] = symbols
-        self.last_heartbeat[new_ws] = time.time()
+        self.last_heartbeat[new_ws] = time.monotonic()
 
         for symbol in symbols:
             await self.subscribe_to_symbol(new_ws, symbol)

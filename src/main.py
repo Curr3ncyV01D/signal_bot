@@ -27,7 +27,7 @@ from src.services.analyzer import (
 )
 from src.services.worker import DataWorker
 from src.services.retention import retention_policy_worker
-from src.services.warmup import warmup_system
+from src.services.warmup import warmup_ohlc, warmup_system
 from src.services.bouncer import bouncer_worker
 from src.services.dashboard import dashboard_worker
 from src.services.payment_worker import payment_checker_worker
@@ -150,7 +150,10 @@ async def main():
     # 3. Принудительный прогрев ОИ и RSI из Bybit API 
     await warmup_system(market_aggregator, target_symbols)
 
-    # 3.1 Инициализация кэша пользователей до старта потока данных
+    # 3.1 Прогрев минутных свечей для графиков до старта WebSocket
+    await warmup_ohlc(market_aggregator, target_symbols)
+
+    # 3.2 Инициализация кэша пользователей до старта потока данных
     await user_cache_refresher_task_once()
 
     # 4. Передаем прогретые монеты в листенер и запускаем сокеты 

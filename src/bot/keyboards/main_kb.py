@@ -3,6 +3,7 @@ from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from src.database.models import User
 from src.database.functions import get_utc_now
 from src.bot.utils.kb_helper import Kb_Helper
+from src.utils import format_smart_num
 
 def get_start_kb(user: User) -> InlineKeyboardMarkup:
     """Клавиатура для главного меню (/start)"""
@@ -16,11 +17,14 @@ def get_start_kb(user: User) -> InlineKeyboardMarkup:
         builder.row(InlineKeyboardButton(text="🎁 Пробный период на 24ч", callback_data="activate_trial"))
 
     if not has_sub:
-        builder.row(InlineKeyboardButton(text="💳 Купить подписку", callback_data="buy_subscription"))
+        builder.row(InlineKeyboardButton(text="⚡️ Продлить подписку", callback_data="buy_subscription"))
     else:
         builder.row(InlineKeyboardButton(text="🚀 Зайти в закрытый канал", callback_data="get_channel_link"))
         
-    builder.row(InlineKeyboardButton(text="💰 Кошелек", callback_data="wallet_main"))
+    builder.row(InlineKeyboardButton(
+        text=f"💰 Кошелек ({format_smart_num(user.balance)} USDT)",
+        callback_data="wallet_main"
+    ))
     builder.row(InlineKeyboardButton(text="⚙️ Настройки и фильтры", callback_data="open_settings"))
     return builder.as_markup()
 

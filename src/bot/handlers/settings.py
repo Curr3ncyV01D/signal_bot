@@ -3,6 +3,7 @@ from aiogram import Router, types, F
 from aiogram.filters import Command
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.context import FSMContext
+from aiogram.types import FSInputFile, InputMediaPhoto
 from sqlalchemy.ext.asyncio import AsyncSession
 from src.database.models import User
 from src.database.functions import get_utc_now
@@ -10,6 +11,7 @@ from src.database.crud.user_service import update_user_settings
 from src.bot.keyboards import get_settings_kb, get_back_to_settings_kb, get_start_kb
 from src.utils import format_smart_num, parse_numeric_input
 from src.services import analyzer
+from src.core.config import ImagePaths
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -38,7 +40,7 @@ async def toggle_threshold_mode_handler(callback: types.CallbackQuery, session: 
     if not user:
         return await callback.answer("Ошибка сохранения", show_alert=True)
     
-    analyzer.invalidate_user_cache()
+    await analyzer.invalidate_user_cache()
     await callback.message.edit_reply_markup(reply_markup=get_settings_kb(user))
     await callback.answer(f"Режим изменен на {user.threshold_mode}")
 
@@ -91,12 +93,73 @@ async def process_mcap_parameter(message: types.Message, state: FSMContext, sess
     user = await update_user_settings(session, message.from_user.id, **update_data)
     
     if user:
-        analyzer.invalidate_user_cache()
+        await analyzer.invalidate_user_cache()
         await state.clear()
         await message.answer(msg)
-        await message.answer("Вернуться в настройки:", reply_markup=get_settings_kb(user))
     else:
         await message.answer("❌ Ошибка при сохранении настроек.")
+
+async def _render_settings_screen(
+    event: types.Message | types.CallbackQuery,
+    caption: str,
+    reply_markup=None,
+    image_path: str | None = None
+) -> None:
+    """Умный рендеринг экранов настроек: с баннером или без него."""
+    if image_path:
+        photo = FSInputFile(image_path)
+        if isinstance(event, types.Message):
+            await event.answer_photo(
+                photo=photo,
+                caption=caption,
+                reply_markup=reply_markup,
+                parse_mode="HTML"
+            )
+            return
+
+        try:
+            await event.message.edit_media(
+                media=InputMediaPhoto(
+                    media=photo,
+                    caption=caption,
+                    parse_mode="HTML"
+                ),
+                reply_markup=reply_markup
+            )
+            return
+        except Exception as e:
+            logger.warning(f"Не удалось обновить экран настроек через edit_media: {e}")
+            await event.message.delete()
+            await event.message.answer_photo(
+                photo=photo,
+                caption=caption,
+                reply_markup=reply_markup,
+                parse_mode="HTML"
+            )
+    else:
+        if isinstance(event, types.Message):
+            await event.answer(
+                caption,
+                reply_markup=reply_markup,
+                parse_mode="HTML"
+            )
+            return
+
+        try:
+            await event.message.edit_text(
+                caption,
+                reply_markup=reply_markup,
+                parse_mode="HTML"
+            )
+        except Exception as e:
+            logger.warning(f"Не удалось обновить экран настроек через edit_text: {e}")
+            await event.message.delete()
+            await event.message.answer(
+                caption,
+                reply_markup=reply_markup,
+                parse_mode="HTML"
+            )
+
 
 async def render_settings_menu(event: types.Message | types.CallbackQuery, user: User):
     """Единая функция для отрисовки меню настроек (из команды или кнопки 'Назад')"""
@@ -109,8 +172,6 @@ async def render_settings_menu(event: types.Message | types.CallbackQuery, user:
         sub_status = "❌ Нет активной подписки"
 
     text = (
-        f"⚙️ <b>Личный кабинет и настройки</b>\n\n"
-        f"👑 <b>Подписка:</b> {sub_status}\n\n"
         f"<b>📊 Фильтры ликвидаций (Режим: {user.threshold_mode}):</b>\n"
         f"🔶 Порог объема: <b>${format_smart_num(user.threshold)}</b>\n"
         f"🔸 Порог каскада: <b>${format_smart_num(user.threshold_cascade)}</b>\n"
@@ -121,12 +182,9 @@ async def render_settings_menu(event: types.Message | types.CallbackQuery, user:
         f"💡 <i>Подсказка: Отключайте неинтересующие индикаторы ниже, чтобы сделать уведомления компактнее.</i>\n"
         f"\n<i>Нажмите на кнопки '❓ Справка', чтобы узнать подробности.</i>"
     )
-    markup = get_settings_kb(user)
-    
-    if isinstance(event, types.Message):
-        await event.answer(text, reply_markup=markup, parse_mode="HTML")
-    else:
-        await event.message.edit_text(text, reply_markup=markup, parse_mode="HTML")
+
+    await _render_settings_screen(event, text, get_settings_kb(user), image_path=ImagePaths.SETTINGS)
+
 
 @router.message(Command("settings"))
 async def cmd_settings(message: types.Message, session: AsyncSession):
@@ -135,6 +193,7 @@ async def cmd_settings(message: types.Message, session: AsyncSession):
     if not user:
         return await message.answer("❌ Ошибка при получении профиля. Нажмите /start")
     await render_settings_menu(message, user)
+
 
 @router.callback_query(F.data == "open_settings")
 async def process_open_settings(callback: types.CallbackQuery, session: AsyncSession):
@@ -145,6 +204,7 @@ async def process_open_settings(callback: types.CallbackQuery, session: AsyncSes
     await render_settings_menu(callback, user)
     await callback.answer()
 
+
 @router.callback_query(F.data == "back_to_settings")
 async def back_to_settings(callback: types.CallbackQuery, session: AsyncSession):
     user = await session.get(User, callback.from_user.id)
@@ -152,6 +212,7 @@ async def back_to_settings(callback: types.CallbackQuery, session: AsyncSession)
         return await callback.message.answer("❌ Ошибка при получении профиля. Нажмите /start")
     await render_settings_menu(callback, user)
     await callback.answer()
+
 
 @router.callback_query(F.data == "help_liq")
 async def show_help_liq(callback: types.CallbackQuery):
@@ -165,8 +226,9 @@ async def show_help_liq(callback: types.CallbackQuery):
         "🔥 <b>Сквиз:</b> Резкий всплеск, когда 5-минутный объем почти равен часовому.\n"
         "<i>Как применять:</i> Вход на локальных прострелах волатильности."
     )
-    await callback.message.edit_text(text, reply_markup=get_back_to_settings_kb(), parse_mode="HTML")
+    await _render_settings_screen(callback, text, get_back_to_settings_kb())
     await callback.answer()
+
 
 @router.callback_query(F.data == "help_analytics")
 async def show_help_analytics(callback: types.CallbackQuery):
@@ -180,8 +242,9 @@ async def show_help_analytics(callback: types.CallbackQuery):
         "⚠️ <b>RSI (5m):</b> Индикатор перегретости актива.\n"
         "<i>Как применять:</i> RSI > 70 — актив перекуплен. В комбинации с ликвидацией шортов — сильнейший сигнал на разворот вниз."
     )
-    await callback.message.edit_text(text, reply_markup=get_back_to_settings_kb(), parse_mode="HTML")
+    await _render_settings_screen(callback, text, get_back_to_settings_kb())
     await callback.answer()
+
 
 @router.callback_query(F.data.startswith("toggle_"))
 async def toggle_settings(callback: types.CallbackQuery, session: AsyncSession):
@@ -206,7 +269,7 @@ async def toggle_settings(callback: types.CallbackQuery, session: AsyncSession):
     
     if user:
         # Сбрасываем кэш анализатора для мгновенного применения
-        analyzer.invalidate_user_cache()
+        await analyzer.invalidate_user_cache()
         await callback.message.edit_reply_markup(reply_markup=get_settings_kb(user))
         await callback.answer("Настройка сохранена")
 
@@ -230,7 +293,7 @@ async def process_threshold(message: types.Message, state: FSMContext, session: 
     user = await update_user_settings(session, message.from_user.id, threshold=new_threshold)
     
     if user:
-        analyzer.invalidate_user_cache()
+        await analyzer.invalidate_user_cache()
         await state.clear()
         await message.answer(f"✅ Порог объема изменен на <b>${format_smart_num(new_threshold)}</b>!", parse_mode="HTML")
     else:
@@ -255,7 +318,7 @@ async def process_cascade_threshold(message: types.Message, state: FSMContext, s
     user = await update_user_settings(session, message.from_user.id, threshold_cascade=new_threshold)
     
     if user:
-        analyzer.invalidate_user_cache()
+        await analyzer.invalidate_user_cache()
         await state.clear()
         await message.answer(f"✅ Порог каскадов изменен на <b>${format_smart_num(new_threshold)}</b>!", parse_mode="HTML")
     else:
@@ -298,7 +361,7 @@ async def process_oi_thresholds(message: types.Message, state: FSMContext, sessi
     )
     
     if user:
-        analyzer.invalidate_user_cache()
+        await analyzer.invalidate_user_cache()
         await state.clear()
         await message.answer(
             f"✅ Пороги ОИ изменены!\nПроцент: <b>{format_smart_num(new_pct, is_percent=True)}</b>\nОбъем: <b>${format_smart_num(new_val)}</b>", 

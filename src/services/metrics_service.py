@@ -73,11 +73,18 @@ class MetricsService:
         """
         Расчет задержки последнего сигнала.
         """
-        if not listener or not hasattr(listener, 'last_message_time') or not listener.last_message_time:
-            return "N/A"
+        if not listener or not hasattr(listener, 'last_message_time'):
+            return "⌛ Инициализация..."
+
+        last_message_time = listener.last_message_time
+        if last_message_time in (None, 0):
+            return "⌛ Инициализация..."
             
         now = time.time()
-        diff = now - listener.last_message_time
+        diff = now - last_message_time
+
+        if diff < 0 or diff > 1000000:
+            return "⌛ Инициализация..."
         
         if diff < 1:
             return f"{diff:.2f} сек."

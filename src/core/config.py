@@ -1,6 +1,8 @@
+import os
 import orjson
 import logging
 import sys
+from pathlib import Path
 from datetime import datetime
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import field_validator
@@ -24,6 +26,8 @@ class Settings(BaseSettings):
     BOT_TOKEN: str
     DB_URL: str
     PRIVATE_CHANNEL_ID: str
+    NEWS_CHANNEL_ID: str
+    NEWS_CHANNEL_URL: str | None = None
     
     # === 2. ПЛАТЕЖНАЯ СИСТЕМА (Billing & CryptoPay) ===
     # Интеграция
@@ -38,6 +42,8 @@ class Settings(BaseSettings):
         60: 40.0,
         150: 100.0
     }
+    SUB_MONTHLY_PRICE: float = 20.0
+    TRIAL_DURATION_DAYS: int = 3
     REFERRAL_BONUS_PERCENT: float = 15.0
 
     # === 3. ИНТЕРФЕЙС И UX (UI Logic) ===
@@ -68,6 +74,9 @@ class Settings(BaseSettings):
     RSI_PERIOD: int = 14                         
     RSI_KLINE_INTERVAL: str = "60"               
     OI_WINDOW_MINUTES: int = 5                   
+    TICKER_THROTTLE_SEC: float = 2.0
+    CHART_CACHE_TTL_SEC: int = 180
+    CHART_PRICE_DELTA_THRESHOLD: float = 0.005
 
     # === 5. МОНИТОРИНГ И ПОДКЛЮЧЕНИЯ (Networking) ===
     # Фильтрация монет
@@ -92,9 +101,23 @@ class Settings(BaseSettings):
 
     # Режим разработки
     DEV_MODE: bool = False
-    DEV_SYMBOL_LIMIT: int = 200
+    DEV_SYMBOL_LIMIT: int = 20
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+
+config = Settings()
+
+
+BASE_DIR = Path(__file__).resolve().parent.parent.parent
+ASSETS_DIR = BASE_DIR / "assets" / "images"
+
+
+class ImagePaths:
+    WELCOME = str(ASSETS_DIR / "1_welcome.png")
+    PAYMENT = str(ASSETS_DIR / "2_payment.png")
+    SETTINGS = str(ASSETS_DIR / "3_settings.png")
+    WALLET = str(ASSETS_DIR / "4_wallet.png")
+    AFFILIATE = str(ASSETS_DIR / "5_affiliate.png")
 
 
 def setup_logging() -> None:
@@ -128,5 +151,3 @@ def setup_logging() -> None:
         logging.getLogger("aiogram.event").setLevel(logging.INFO)
     else:
         logging.getLogger("aiogram.event").setLevel(logging.WARNING)
-
-config = Settings()

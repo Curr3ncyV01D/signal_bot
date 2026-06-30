@@ -15,6 +15,7 @@ class SymbolImpactMetrics(TypedDict):
     cap_ratio: float | None    # Ликвидация / Market Cap * 100
     vol_ratio: float | None    # Ликвидация / Vol 24h * 100
     live_mcap: float           # Price * (Supply / Multiplier)
+    price: float               # Текущая цена для валидации кэша графиков
     is_fallback: bool          # True, если данных о Supply нет
 
 
@@ -22,10 +23,14 @@ class MarketAggregator:
     def __init__(self) -> None:
         # Структура: { "BTCUSDT": deque([(ts, price, oi), ...], maxlen=61) }
         self.history: dict[str, deque[tuple[float, float, float]]] = {}
+        # История минутных OHLCV свечей для графиков
+        self.ohlc_history: dict[str, deque[dict[str, int | float]]] = {}
         # Текущие снапшоты для быстрого доступа
         self.snapshots: dict[str, dict[str, Any]] = {}
         # L1-кэш RSI: { "BTCUSDT": ((current_price, bars_count), rsi_value) }
         self._rsi_cache: dict[str, tuple[tuple[float, int], float | None]] = {}
+        # Последнее значение суточного turnover для расчета объема текущей свечи
+        self._last_turnover: dict[str, float] = {}
         
         # Внутрипамятное хранилище цен для RSI (раз в 5 минут)
         self.rsi_prices: dict[str, deque[float]] = {}
@@ -33,6 +38,28 @@ class MarketAggregator:
 
         # Хранилище эмиссии монет (Fundamental Data)
         self.circulating_supply: dict[str, float] = {}
+
+    def seed_ohlc_history(self, symbol: str, candles: list[dict[str, int | float]]) -> None:
+        """Предварительное наполнение минутной истории свечей."""
+        if not candles:
+            return
+
+        history = self.ohlc_history.get(symbol)
+        if history is None:
+            history = deque(maxlen=100)
+            self.ohlc_history[symbol] = history
+        else:
+            history.clear()
+
+        for candle in candles[-100:]:
+            history.append({
+                "t": int(candle["t"]),
+                "o": float(candle["o"]),
+                "h": float(candle["h"]),
+                "l": float(candle["l"]),
+                "c": float(candle["c"]),
+                "v": float(candle["v"]),
+            })
 
     @staticmethod
     def _get_window_record(
@@ -130,7 +157,8 @@ class MarketAggregator:
             self.history[symbol].append((float(ts_sec), float(price), float(current_oi)))
 
     def update(self, symbol: str, price: float | None, oi: float | None, funding: float | None, vol24h: float | None = None) -> None:
-        now = datetime.now(timezone.utc).timestamp()
+        now = time.time()
+        current_min = int(now // 60) * 60
         
         if symbol not in self.snapshots:
             self.snapshots[symbol] = {"price": 0.0, "oi": 0.0, "funding": 0.0, "vol24h": 0.0, "ts": now}
@@ -152,7 +180,34 @@ class MarketAggregator:
             snap = self.snapshots[symbol]
             self.history[symbol].append((now, snap["price"], snap["oi"]))
 
-        # 2. НОВОЕ: Логика формирования часовых свечей для RSI в ОЗУ
+        # 2. Минутные свечи OHLCV для графиков
+        if price is not None and vol24h is not None:
+            turnover_delta = max(0.0, vol24h - self._last_turnover.get(symbol, vol24h))
+            self._last_turnover[symbol] = vol24h
+
+            if price > 0:
+                candles = self.ohlc_history.get(symbol)
+                if candles is None:
+                    candles = deque(maxlen=100)
+                    self.ohlc_history[symbol] = candles
+
+                last_candle = candles[-1] if candles else None
+                if last_candle is None or current_min > int(last_candle["t"]):
+                    candles.append({
+                        "t": current_min,
+                        "o": price,
+                        "h": price,
+                        "l": price,
+                        "c": price,
+                        "v": turnover_delta,
+                    })
+                else:
+                    last_candle["h"] = max(float(last_candle["h"]), price)
+                    last_candle["l"] = min(float(last_candle["l"]), price)
+                    last_candle["c"] = price
+                    last_candle["v"] = float(last_candle["v"]) + turnover_delta
+
+        # 3. Логика формирования часовых свечей для RSI в ОЗУ
         if price is not None and price > 0:
             now_bar = int(now // 3600) # ID текущего часового интервала
             
@@ -337,6 +392,7 @@ class MarketAggregator:
                 "cap_ratio": None,
                 "vol_ratio": None,
                 "live_mcap": 0.0,
+                "price": float(price),
                 "is_fallback": True
             }
 
@@ -354,6 +410,7 @@ class MarketAggregator:
             "cap_ratio": cap_ratio,
             "vol_ratio": vol_ratio,
             "live_mcap": live_mcap,
+            "price": float(price),
             "is_fallback": is_fallback
         }
 
@@ -378,9 +435,11 @@ class MarketAggregator:
                     logger.info(f"Memory GC: Removing expired symbol {symbol}")
                     self.snapshots.pop(symbol, None)
                     self.history.pop(symbol, None)
+                    self.ohlc_history.pop(symbol, None)
                     self.rsi_prices.pop(symbol, None)
                     self.rsi_bars.pop(symbol, None)
                     self._rsi_cache.pop(symbol, None)
+                    self._last_turnover.pop(symbol, None)
                     clean_key = normalize_bybit_symbol(symbol).upper()
                     self.circulating_supply.pop(clean_key, None)
                     

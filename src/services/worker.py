@@ -11,6 +11,15 @@ logger = logging.getLogger(__name__)
 # Семафор для ограничения одновременных задач анализа (защита от OOM)
 worker_semaphore = asyncio.Semaphore(100)
 
+
+def _safe_float(value):
+    if value is None or value == "":
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
 class DataWorker:
     def __init__(self, bot: Bot, liq_aggregator, market_aggregator, trade_aggregator):
         self.bot = bot
@@ -48,10 +57,10 @@ class DataWorker:
                     # Извлекаем значения через прямой доступ (структура Bybit V5 гарантирована)
                     # Если какого-то поля нет в дельта-апдейте, используем .get
                     try:
-                        price = float(item["lastPrice"]) if "lastPrice" in item else None
-                        oi = float(item["openInterestValue"]) if "openInterestValue" in item else None
-                        funding = float(item["fundingRate"]) if "fundingRate" in item else None
-                        vol24h = float(item["turnover24h"]) if "turnover24h" in item and item["turnover24h"] else None
+                        price = _safe_float(item["lastPrice"]) if "lastPrice" in item else None
+                        oi = _safe_float(item["openInterestValue"]) if "openInterestValue" in item else None
+                        funding = _safe_float(item["fundingRate"]) if "fundingRate" in item else None
+                        vol24h = _safe_float(item["turnover24h"]) if "turnover24h" in item else None
                     except (ValueError, TypeError, KeyError):
                         price = oi = funding = vol24h = None
 

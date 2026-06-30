@@ -85,21 +85,16 @@ async def get_active_users(session: AsyncSession) -> list[User]:
         return _active_users_cache # Возвращаем старый кеш при ошибке БД
 
 async def activate_trial(session: AsyncSession, user_id: int) -> tuple[bool, str]:
-    """Активирует пробный период на 24 часа. Возвращает (успех, сообщение)."""
+    """Помечает пробный период как использованный. Начисление срока делает billing_service."""
     try:
         user = await session.get(User, user_id, with_for_update=True)
         if not user:
             return False, "Пользователь не найден. Нажмите /start."
             
         if user.is_trial_used:
-            return False, "❌ Вы уже использовали пробный период."
-            
-        now = get_utc_now()
-        trial_start = max(now, user.subscription_end or now)
-        user.subscription_end = trial_start + timedelta(hours=24)
-            
+            return False, "Пробный период уже был использован."
+
         user.is_trial_used = True
-        await session.commit()
         return True, "✅ Пробный период на 24 часа успешно активирован!"
     except SQLAlchemyError as e:
         await session.rollback()
