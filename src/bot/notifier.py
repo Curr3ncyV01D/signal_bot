@@ -1,8 +1,9 @@
 import asyncio
 import logging
+import re
 from aiogram import Bot
 from aiogram.utils.markdown import hbold, hlink
-from aiogram.types import LinkPreviewOptions
+from aiogram.types import LinkPreviewOptions, BufferedInputFile, InputFile
 from aiogram.exceptions import TelegramRetryAfter, TelegramForbiddenError
 from src.core.config import config
 from src.utils import format_smart_num
@@ -11,6 +12,7 @@ logger = logging.getLogger(__name__)
 
 # Глобальный семафор для контроля FloodWait (~25 сообщений в секунду)
 broadcaster_semaphore = asyncio.Semaphore(25)
+MAX_PHOTO_CAPTION_LEN = 1024
 
 class AlertFormatter:
     """Профессиональный конструктор уведомлений (SOLID)"""
@@ -205,9 +207,9 @@ class AlertFormatter:
         
         return f"\n{links}{guide}"
 
-    def compile_text(self) -> str:
+    def compile_text(self, include_footer: bool = True) -> str:
         """Итоговая сборка сообщения"""
-        return (
+        text = (
             self._header() +
             self._market_block() +
             self._cvd_block() +
@@ -216,11 +218,42 @@ class AlertFormatter:
             self._impact_block() +
             '\n' +
             self._fundamental_block() +
-            self._indicators_block() +
-            self._footer()
+            self._indicators_block()
         )
+        if include_footer:
+            text += self._footer()
+        return text
 
-async def send_liquidation_alert(bot: Bot, user_id: int, retry_count: int = 0, **kwargs):
+
+def _trim_photo_caption(formatter: AlertFormatter, full_text: str) -> str:
+    if len(full_text) <= MAX_PHOTO_CAPTION_LEN:
+        return full_text
+
+    variants = [
+        formatter.compile_text(include_footer=False),
+        formatter._header() + formatter._market_block() + formatter._liq_block() + formatter._impact_block(),
+        formatter._header() + formatter._liq_block(),
+    ]
+
+    for variant in variants:
+        trimmed = variant.strip()
+        if len(trimmed) <= MAX_PHOTO_CAPTION_LEN:
+            return trimmed
+
+    plain_text = re.sub(r"<[^>]+>", "", full_text)
+    plain_text = re.sub(r"\n{3,}", "\n\n", plain_text).strip()
+    if len(plain_text) <= MAX_PHOTO_CAPTION_LEN:
+        return plain_text
+    return f"{plain_text[: MAX_PHOTO_CAPTION_LEN - 1].rstrip()}…"
+
+async def send_liquidation_alert(
+    bot: Bot,
+    user_id: int,
+    retry_count: int = 0,
+    photo_bytes: bytes | None = None,
+    photo_file_id: str | None = None,
+    **kwargs,
+) -> str | None:
     """Единая точка входа для отправки алертов с защитой от FloodWait"""
     if retry_count > 3:
         logger.error(f"❌ Превышено число попыток отправки для {user_id}")
@@ -231,18 +264,43 @@ async def send_liquidation_alert(bot: Bot, user_id: int, retry_count: int = 0, *
             formatter = AlertFormatter(kwargs)
             text = formatter.compile_text()
 
-            return await bot.send_message(
+            if photo_bytes or photo_file_id:
+                caption = _trim_photo_caption(formatter, text)
+                photo: InputFile | str
+                if photo_bytes is not None:
+                    photo = BufferedInputFile(photo_bytes, filename=f"{formatter.symbol.lower()}_chart.png")
+                else:
+                    photo = photo_file_id or ""
+
+                sent_msg = await bot.send_photo(
+                    chat_id=user_id,
+                    photo=photo,
+                    caption=caption,
+                    parse_mode="HTML",
+                    protect_content=True,
+                )
+                return sent_msg.photo[-1].file_id if sent_msg.photo else None
+
+            await bot.send_message(
                 chat_id=user_id,
                 text=text,
                 parse_mode="HTML",
                 protect_content=True,
                 link_preview_options=LinkPreviewOptions(is_disabled=True)
             )
+            return None
             
         except TelegramRetryAfter as e:
             logger.warning(f"⏳ Flood limit ({e.retry_after}s) для {user_id}. Попытка #{retry_count + 1}")
             await asyncio.sleep(e.retry_after)
-            return await send_liquidation_alert(bot, user_id, retry_count + 1, **kwargs)
+            return await send_liquidation_alert(
+                bot,
+                user_id,
+                retry_count + 1,
+                photo_bytes=photo_bytes,
+                photo_file_id=photo_file_id,
+                **kwargs,
+            )
             
         except TelegramForbiddenError:
             logger.debug(f"🚫 Юзер {user_id} заблокировал бота.")

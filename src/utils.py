@@ -97,6 +97,19 @@ def parse_numeric_input(text: str) -> float:
 
     return float(f"{sign}{cleaned}")
 
+
+EMOJI_RE = re.compile(r'[\U00010000-\U0010ffff]', flags=re.UNICODE)
+
+def strip_emojis(text: str) -> str:
+    """Удаляет эмодзи из строки для корректной отрисовки в Matplotlib."""
+    if not text:
+        return ""
+    # Удаляем эмодзи и лишние пробелы по краям
+    clean_text = EMOJI_RE.sub('', text)
+    # Дополнительно убираем специфические символы, которые могут быть в BMP, но не поддерживаются
+    clean_text = clean_text.replace('⚡️', '').replace('⚠️', '')
+    return clean_text.strip()
+
 def mask_proxy_url(url: str | None) -> str | None:
     """Маскирует пароль в URL прокси для безопасного логирования."""
     if not url:

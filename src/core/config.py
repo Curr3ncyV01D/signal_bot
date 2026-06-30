@@ -75,6 +75,8 @@ class Settings(BaseSettings):
     RSI_KLINE_INTERVAL: str = "60"               
     OI_WINDOW_MINUTES: int = 5                   
     TICKER_THROTTLE_SEC: float = 2.0
+    CHART_CACHE_TTL_SEC: int = 180
+    CHART_PRICE_DELTA_THRESHOLD: float = 0.005
 
     # === 5. МОНИТОРИНГ И ПОДКЛЮЧЕНИЯ (Networking) ===
     # Фильтрация монет
