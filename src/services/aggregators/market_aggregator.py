@@ -158,7 +158,7 @@ class MarketAggregator:
 
     def update(self, symbol: str, price: float | None, oi: float | None, funding: float | None, vol24h: float | None = None) -> None:
         now = time.time()
-        current_min = int(now // 60) * 60
+        current_15m = int(now // 900) * 900
         
         if symbol not in self.snapshots:
             self.snapshots[symbol] = {"price": 0.0, "oi": 0.0, "funding": 0.0, "vol24h": 0.0, "ts": now}
@@ -180,7 +180,7 @@ class MarketAggregator:
             snap = self.snapshots[symbol]
             self.history[symbol].append((now, snap["price"], snap["oi"]))
 
-        # 2. Минутные свечи OHLCV для графиков
+        # 2. 15-минутные свечи OHLCV для графиков
         if price is not None and vol24h is not None:
             turnover_delta = max(0.0, vol24h - self._last_turnover.get(symbol, vol24h))
             self._last_turnover[symbol] = vol24h
@@ -192,9 +192,9 @@ class MarketAggregator:
                     self.ohlc_history[symbol] = candles
 
                 last_candle = candles[-1] if candles else None
-                if last_candle is None or current_min > int(last_candle["t"]):
+                if last_candle is None or current_15m > int(last_candle["t"]):
                     candles.append({
-                        "t": current_min,
+                        "t": current_15m,
                         "o": price,
                         "h": price,
                         "l": price,

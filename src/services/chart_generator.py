@@ -163,7 +163,7 @@ def _render_sync(data_list: list[OhlcRecord], symbol: str, alert_title: str) -> 
         fig.text(
             0.98,
             0.95,
-            alert_title,
+            f"{alert_title} | 15m",
             ha="right",
             va="top",
             fontsize=12,

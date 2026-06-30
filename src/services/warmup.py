@@ -81,7 +81,7 @@ async def warmup_ohlc(
     target_symbols: list[str],
     session: aiohttp.ClientSession | None = None,
 ) -> None:
-    """Прогрев минутных OHLCV свечей для графиков."""
+    """Прогрев 15-минутных OHLCV свечей для графиков."""
     if not target_symbols:
         return
 
@@ -91,10 +91,10 @@ async def warmup_ohlc(
     active_session = session or aiohttp.ClientSession()
 
     try:
-        logger.info(f"📈 Прогрев минутных OHLCV по {len(target_symbols)} монетам...")
+        logger.info(f"📈 Прогрев 15m OHLCV по {len(target_symbols)} монетам...")
 
         async def fetch_symbol_ohlc(symbol: str) -> None:
-            rows = await fetch_kline(symbol, "1", 100, active_session, semaphore, proxy)
+            rows = await fetch_kline(symbol, "15", 100, active_session, semaphore, proxy)
             if not rows:
                 return
 
