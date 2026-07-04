@@ -129,12 +129,15 @@ async def _handle_auto_renewal(
     return False
 
 async def _kick_expired_user(session: AsyncSession, bot: Bot, user: User) -> None:
-    try:
-        await bot.ban_chat_member(chat_id=config.PRIVATE_CHANNEL_ID, user_id=user.id)
-        await bot.unban_chat_member(chat_id=config.PRIVATE_CHANNEL_ID, user_id=user.id)
-        logger.info(f"Пользователь {user.id} исключен из канала.")
-    except TelegramBadRequest as e:
-        logger.warning(f"Ошибка при исключении {user.id} (возможно, уже покинул канал сам): {e}")
+    if config.PRIVATE_CHANNEL_ID is not None:
+        try:
+            await bot.ban_chat_member(chat_id=config.PRIVATE_CHANNEL_ID, user_id=user.id)
+            await bot.unban_chat_member(chat_id=config.PRIVATE_CHANNEL_ID, user_id=user.id)
+            logger.info(f"Пользователь {user.id} исключен из канала.")
+        except TelegramBadRequest as e:
+            logger.warning(f"Ошибка при исключении {user.id} (возможно, уже покинул канал сам): {e}")
+    else:
+        logger.info("PRIVATE_CHANNEL_ID не задан. Исключение из канала пропущено.")
 
     await _safe_send_message(
         bot,

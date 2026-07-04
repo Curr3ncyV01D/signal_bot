@@ -102,7 +102,6 @@ class BybitListener:
                 throttle_sec = float(getattr(config, "TICKER_THROTTLE_SEC", 2.0))
                 last_seen = self._ticker_throttle.get(symbol)
                 if last_seen is not None and (now_monotonic - last_seen) < throttle_sec:
-                    logger.debug(f"Тикер {symbol} отсечен throttling-шлюзом")
                     return
                 self._ticker_throttle[symbol] = now_monotonic
             self.handle_ticker(message)

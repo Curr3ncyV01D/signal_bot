@@ -49,8 +49,8 @@ class RedisBus:
                 cls._connection = Redis.from_url(
                     config.REDIS_URL,
                     decode_responses=False,
-                    socket_connect_timeout=1.0,
-                    socket_timeout=1.0,
+                    socket_connect_timeout=5.0,
+                    socket_timeout=5.0,
                 )
         return cls._connection
 
@@ -170,7 +170,7 @@ class RedisBus:
                 consumername=consumer_name,
                 streams={stream_name: ">"},
                 count=count,
-                block=1000,
+                block=500,
             )
             if not new_messages:
                 return []

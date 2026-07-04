@@ -84,12 +84,15 @@ async def _update_cache_logic() -> None:
             min_threshold = min(min_threshold, target["threshold"])
             min_cascade = min(min_cascade, target["threshold_cascade"])
 
-        channel_settings = await ChannelService.get_settings(session)
-        if channel_settings and channel_settings.is_active:
-            channel_target = _build_cached_target(channel_settings, "CHANNEL")
-            cached_targets.append(channel_target)
-            min_threshold = min(min_threshold, channel_target["threshold"])
-            min_cascade = min(min_cascade, channel_target["threshold_cascade"])
+        if config.PRIVATE_CHANNEL_ID is not None:
+            channel_settings = await ChannelService.get_settings(session)
+            if channel_settings and channel_settings.is_active:
+                channel_target = _build_cached_target(channel_settings, "CHANNEL")
+                cached_targets.append(channel_target)
+                min_threshold = min(min_threshold, channel_target["threshold"])
+                min_cascade = min(min_cascade, channel_target["threshold_cascade"])
+        else:
+            pass
 
         _cached_users = cached_targets
         _min_system_threshold = (

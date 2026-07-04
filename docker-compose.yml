@@ -28,11 +28,11 @@ services:
       - redis_data:/data
     mem_limit: 512mb
 
-  bot:
+  brain:
     build: .
     volumes:
       - .:/app
-    container_name: ${PROJECT_NAME}_app
+    container_name: ${PROJECT_NAME}_brain
     restart: always
     depends_on:
       db:
@@ -52,7 +52,9 @@ services:
     deploy:
       resources:
         limits:
-          memory: 256M
+          cpus: '1.0'
+          memory: 1024M
+    cpu_shares: 2048
     ulimits:
       nproc: 65535
       nofile:
@@ -67,17 +69,21 @@ services:
     container_name: ${PROJECT_NAME}_artist
     restart: always
     depends_on:
+      db:
+        condition: service_healthy
       redis:
         condition: service_started
     env_file:
       - .env
     environment:
+      - DB_URL=postgresql+asyncpg://${DB_USER}:${DB_PASSWORD}@db:5432/${DB_NAME}
       - REDIS_URL=redis://:${REDIS_PASSWORD}@redis:6379/0
     deploy:
       resources:
         limits:
           cpus: '1.0'
           memory: 512M
+    cpu_shares: 512
 
   messenger:
     build: .
@@ -101,7 +107,8 @@ services:
         limits:
           cpus: '0.5'
           memory: 256M
-
+    cpu_shares: 1024
+    
 volumes:
   postgres_data:
   redis_data:

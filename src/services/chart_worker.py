@@ -53,6 +53,10 @@ class ChartWorker:
         return records
 
     async def _harvest_chart_file_id(self, dto: SignalDTO, chart_bytes: bytes) -> str | None:
+        if config.LOG_CHANNEL_ID is None:
+            logger.info("LOG_CHANNEL_ID не задан. Harvest file_id пропущен.")
+            return None
+
         if self.bot is None:
             raise RuntimeError("Artist bot is not initialized.")
 

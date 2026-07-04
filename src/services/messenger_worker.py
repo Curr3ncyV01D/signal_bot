@@ -221,9 +221,10 @@ class MessengerWorker:
             for user in active_users:
                 cached_targets.append(_build_cached_target(user, user.id))
 
-            channel_settings = await ChannelService.get_settings(session)
-            if channel_settings and channel_settings.is_active:
-                cached_targets.append(_build_cached_target(channel_settings, "CHANNEL"))
+            if config.PRIVATE_CHANNEL_ID is not None:
+                channel_settings = await ChannelService.get_settings(session)
+                if channel_settings and channel_settings.is_active:
+                    cached_targets.append(_build_cached_target(channel_settings, "CHANNEL"))
 
         async with self._cache_lock:
             self._cached_users = cached_targets
@@ -338,11 +339,13 @@ class MessengerWorker:
             if trigger_result is None:
                 continue
 
-            recipient_id = (
-                int(config.PRIVATE_CHANNEL_ID)
-                if target["id"] == "CHANNEL"
-                else int(target["id"])
-            )
+            if target["id"] == "CHANNEL":
+                if config.PRIVATE_CHANNEL_ID is None:
+                    logger.info("PRIVATE_CHANNEL_ID не задан. Отправка сигнала в канал пропущена.")
+                    continue
+                recipient_id = int(config.PRIVATE_CHANNEL_ID)
+            else:
+                recipient_id = int(target["id"])
             payload = build_alert_payload(
                 dto,
                 threshold_cascade=trigger_result["threshold_cascade"],
