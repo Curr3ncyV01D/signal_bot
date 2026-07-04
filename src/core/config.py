@@ -25,7 +25,17 @@ class Settings(BaseSettings):
     # === 1. ОСНОВНЫЕ НАСТРОЙКИ (Infrastructure) ===
     BOT_TOKEN: str
     DB_URL: str
+    REDIS_URL: str = "redis://:pass@redis:6379/0"
+    REDIS_RAW_STREAM_NAME: str = "csl:signals:raw"
+    REDIS_READY_STREAM_NAME: str = "csl:signals:ready"
+    REDIS_STREAM_MAXLEN: int = 1000
+    REDIS_ARTIST_CONSUMER_GROUP: str = "csl:artist_group"
+    REDIS_MESSENGER_CONSUMER_GROUP: str = "csl:messenger_group"
+    REDIS_CACHE_INVALIDATION_CHANNEL: str = "csl:cache_invalidation"
+    REDIS_CHART_CACHE_PREFIX: str = "csl:chart_cache"
+    REDIS_PENDING_IDLE_MS: int = 30000
     PRIVATE_CHANNEL_ID: str
+    LOG_CHANNEL_ID: str
     NEWS_CHANNEL_ID: str
     NEWS_CHANNEL_URL: str | None = None
     
@@ -60,6 +70,7 @@ class Settings(BaseSettings):
 
     # Пороги фильтрации
     MIN_LIQ_VALUE_FILTER: float = 100.0          # Отсечение шума ликвидаций ($)
+    MIN_OI_CHANGE_PCT: float = 1.0
     MIN_TRADE_VALUE_FOR_CVD: float = 300.0       # Мин. сделка для подсчета дельты ($)
     CASCADE_TRIGGER_COUNT: int = 15              # Кол-во событий для алерта "КАСКАД"
 

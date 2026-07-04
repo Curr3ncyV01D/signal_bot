@@ -162,7 +162,6 @@ async def main():
 
     # 5. Запускаем Диспетчер-Воркер с внедрением всех трех агрегаторов 
     worker = DataWorker(
-        bot=bot, 
         liq_aggregator=liq_aggregator, 
         market_aggregator=market_aggregator, 
         trade_aggregator=trade_aggregator 

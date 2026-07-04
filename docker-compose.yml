@@ -17,6 +17,17 @@ services:
     ports:
       - "127.0.0.1:${EXTERNAL_DB_PORT:-5433}:5432"
 
+  redis:
+    image: redis:7.2-alpine
+    container_name: ${PROJECT_NAME}_redis
+    restart: always
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD}
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    mem_limit: 512mb
+
   bot:
     build: .
     volumes:
@@ -26,20 +37,71 @@ services:
     depends_on:
       db:
         condition: service_healthy
+      redis:
+        condition: service_started
     env_file:
       - .env
     environment:
       - DB_URL=postgresql+asyncpg://${DB_USER}:${DB_PASSWORD}@db:5432/${DB_NAME}
+      - REDIS_URL=redis://:${REDIS_PASSWORD}@redis:6379/0
     logging:
       driver: "json-file"
       options:
         max-size: "10m"
         max-file: "3"
+    deploy:
+      resources:
+        limits:
+          memory: 256M
     ulimits:
       nproc: 65535
       nofile:
         soft: 65535
         hard: 65535
 
+  artist:
+    build: .
+    command: python -m src.services.chart_worker
+    volumes:
+      - .:/app
+    container_name: ${PROJECT_NAME}_artist
+    restart: always
+    depends_on:
+      redis:
+        condition: service_started
+    env_file:
+      - .env
+    environment:
+      - REDIS_URL=redis://:${REDIS_PASSWORD}@redis:6379/0
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512M
+
+  messenger:
+    build: .
+    command: python -m src.services.messenger_worker
+    volumes:
+      - .:/app
+    container_name: ${PROJECT_NAME}_messenger
+    restart: always
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    env_file:
+      - .env
+    environment:
+      - DB_URL=postgresql+asyncpg://${DB_USER}:${DB_PASSWORD}@db:5432/${DB_NAME}
+      - REDIS_URL=redis://:${REDIS_PASSWORD}@redis:6379/0
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+
 volumes:
   postgres_data:
+  redis_data:
