@@ -21,7 +21,6 @@ from src.services.aggregators.liq_aggregator import LiquidationAggregator
 from src.services.aggregators.market_aggregator import MarketAggregator
 from src.services.aggregators.trade_aggregator import TradeAggregator
 from src.services.analyzer import (
-    cleanup_alert_history_task, 
     user_cache_refresher_task, 
     user_cache_refresher_task_once
 )
@@ -32,6 +31,7 @@ from src.services.bouncer import bouncer_worker
 from src.services.dashboard import dashboard_worker
 from src.services.payment_worker import payment_checker_worker
 from src.services.cryptopay import cryptopay
+from src.services.asset_manager import AssetManager
 from src.services.symbol_sync import build_target_symbols, symbol_sync_worker
 from src.services.supply_worker import supply_sync_worker
 from src.utils import lag_detector
@@ -133,6 +133,7 @@ async def main():
     # 2. Прогрев данных из БД 
     logging.info("Прогрев ликвидаций из базы данных...")
     async with async_session() as session_db:
+        await AssetManager.ensure_placeholder(bot, session_db)
         historical_data = await get_recent_liquidations(session_db, minutes=60)
         liq_aggregator.load_historical_data(historical_data)
 
@@ -162,7 +163,6 @@ async def main():
 
     # 5. Запускаем Диспетчер-Воркер с внедрением всех трех агрегаторов 
     worker = DataWorker(
-        bot=bot, 
         liq_aggregator=liq_aggregator, 
         market_aggregator=market_aggregator, 
         trade_aggregator=trade_aggregator 
@@ -176,7 +176,6 @@ async def main():
     retention_task = asyncio.create_task(retention_policy_worker(hours=4))
     aggregator_task = asyncio.create_task(liq_aggregator.cleanup_task())
     market_gc_task = asyncio.create_task(market_aggregator.cleanup_task())
-    alert_cleanup_task = asyncio.create_task(cleanup_alert_history_task())
     user_cache_task = asyncio.create_task(user_cache_refresher_task())
     bouncer_task = asyncio.create_task(bouncer_worker(bot, interval_minutes=15))
     dashboard_task = asyncio.create_task(dashboard_worker(bot, liq_aggregator, market_aggregator))
@@ -214,6 +213,7 @@ async def main():
             
     except Exception as e:
         logging.error(f"Ошибка в основном цикле: {e}")
+        await asyncio.sleep(1)
     finally:
         await on_shutdown(
             bot,
@@ -225,7 +225,6 @@ async def main():
                 retention_task,
                 aggregator_task,
                 market_gc_task,
-                alert_cleanup_task,
                 user_cache_task,
                 bouncer_task,
                 dashboard_task,

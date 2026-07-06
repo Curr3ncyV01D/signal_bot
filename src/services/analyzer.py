@@ -1,14 +1,22 @@
-import logging
 import asyncio
-from datetime import datetime, timezone, timedelta
-from typing import Any, TypedDict
+import logging
+from time import time
+from typing import Any, TypedDict, cast
+from uuid import uuid4
+
+import orjson
+
 from src.core.config import config
-from src.database.session import async_session
-from src.database.crud.user_service import get_active_users
+from src.core.dto import SignalAlertType, SignalDTO, SignalOhlcRow, SignalSideLabel
+from src.core.redis_bus import redis_bus
 from src.database.crud.channel_service import ChannelService
-from src.bot.notifier import send_liquidation_alert
-from src.services import chart_generator
-from src.utils import strip_emojis
+from src.database.crud.user_service import get_active_users
+from src.database.session import async_session
+from src.services.logic.trigger_engine import (
+    build_alert_title,
+    evaluate_trigger_logic,
+    is_signal_spammy,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -33,16 +41,27 @@ class CachedAlertTarget(TypedDict):
     alert_rsi: bool
     alert_cvd: bool
 
-class AlertHistoryEntry(TypedDict):
-    time: datetime
+
+class GlobalSignalHistoryEntry(TypedDict):
+    time: float
     sum_5m: float
 
 
-# Память алертов для анти-спама и кэш адресатов
-user_alert_history: dict[tuple[int | str, str, str], AlertHistoryEntry] = {}
 _cached_users: list[CachedAlertTarget] = []
 _min_system_threshold: float = float("inf")
 _min_system_cascade: float = float("inf")
+
+
+def _brain_history_redis_key(symbol: str, side_label: str) -> str:
+    return f"csl:brain:history:{symbol}:{side_label}"
+
+
+def _decode_redis_payload(payload: bytes | str | None) -> bytes | None:
+    if payload is None:
+        return None
+    if isinstance(payload, bytes):
+        return payload
+    return payload.encode("utf-8")
 
 
 def _build_cached_target(source: Any, target_id: int | str) -> CachedAlertTarget:
@@ -64,361 +83,285 @@ def _build_cached_target(source: Any, target_id: int | str) -> CachedAlertTarget
         "alert_longs": bool(source.alert_longs),
         "alert_shorts": bool(source.alert_shorts),
         "alert_rsi": bool(source.alert_rsi),
-        "alert_cvd": bool(source.alert_cvd)
+        "alert_cvd": bool(source.alert_cvd),
     }
 
 
-async def _update_cache_logic():
-    """Внутренняя логика обновления кэша."""
+async def _update_cache_logic() -> None:
     global _cached_users, _min_system_threshold, _min_system_cascade
+
     async with async_session() as session:
         cached_targets: list[CachedAlertTarget] = []
         min_threshold = float("inf")
         min_cascade = float("inf")
 
-        # 1. Получаем активных пользователей
-        active_users = await get_active_users(session)
+        active_users = await get_active_users(session, force_refresh=True)
         for user in active_users:
             target = _build_cached_target(user, user.id)
             cached_targets.append(target)
             min_threshold = min(min_threshold, target["threshold"])
             min_cascade = min(min_cascade, target["threshold_cascade"])
 
-        # 2. Получаем настройки канала
-        channel_settings = await ChannelService.get_settings(session)
-        if channel_settings and channel_settings.is_active:
-            channel_target = _build_cached_target(channel_settings, "CHANNEL")
-            cached_targets.append(channel_target)
-            min_threshold = min(min_threshold, channel_target["threshold"])
-            min_cascade = min(min_cascade, channel_target["threshold_cascade"])
+        if config.PRIVATE_CHANNEL_ID is not None:
+            channel_settings = await ChannelService.get_settings(session)
+            if channel_settings and channel_settings.is_active:
+                channel_target = _build_cached_target(channel_settings, "CHANNEL")
+                cached_targets.append(channel_target)
+                min_threshold = min(min_threshold, channel_target["threshold"])
+                min_cascade = min(min_cascade, channel_target["threshold_cascade"])
+        else:
+            pass
 
-        # 3. Атомарно обновляем глобальные переменные
         _cached_users = cached_targets
-        _min_system_threshold = (max(min_threshold, config.MIN_LIQ_VALUE_FILTER) 
-                                if cached_targets else config.MIN_LIQ_VALUE_FILTER)
-        _min_system_cascade = min_cascade if cached_targets else config.CASCADE_TRIGGER_COUNT * 1000
+        _min_system_threshold = (
+            max(min_threshold, config.MIN_LIQ_VALUE_FILTER)
+            if cached_targets
+            else config.MIN_LIQ_VALUE_FILTER
+        )
+        _min_system_cascade = (
+            min_cascade
+            if cached_targets
+            else config.CASCADE_TRIGGER_COUNT * 1000
+        )
 
-async def user_cache_refresher_task():
-    """Фоновая задача для обновления кэша пользователей и настроек канала."""
+
+async def user_cache_refresher_task() -> None:
     while True:
         try:
             await _update_cache_logic()
-        except Exception as e:
-            logger.error(f"Ошибка в задаче обновления кэша пользователей: {e}")
+        except Exception as exc:
+            logger.error(f"Ошибка в задаче обновления кэша пользователей: {exc}")
         await asyncio.sleep(60)
 
-async def invalidate_user_cache():
-    """Принудительное обновление кэша пользователей (например, после покупки подписки)."""
+
+async def invalidate_user_cache(user_id: int | None = None) -> None:
     try:
         await _update_cache_logic()
+        invalidation_payload = str(user_id) if user_id is not None else "ALL"
+        await redis_bus.publish_cache_invalidation(invalidation_payload)
         logger.info("♻️ Кэш пользователей принудительно обновлен.")
-    except Exception as e:
-        logger.error(f"Ошибка при инвалидации кэша пользователей: {e}")
+    except Exception as exc:
+        logger.error(f"Ошибка при инвалидации кэша пользователей: {exc}")
 
-async def user_cache_refresher_task_once():
-    """Однократное обновление кэша для Graceful Startup."""
+
+async def user_cache_refresher_task_once() -> None:
     try:
         await _update_cache_logic()
         logger.info("✅ Первоначальный кэш пользователей успешно загружен.")
-    except Exception as e:
-        logger.error(f"❌ Критическая ошибка при начальной загрузке кэша: {e}")
-        # Не прокидываем ошибку дальше, чтобы не убить старт, 
-        # но система будет ждать следующего цикла обновления.
+    except Exception as exc:
+        logger.error(f"❌ Критическая ошибка при начальной загрузке кэша: {exc}")
+
+
+def _serialize_ohlc_history(ohlc_data: list[dict[str, int | float]]) -> list[SignalOhlcRow]:
+    compact_rows: list[SignalOhlcRow] = []
+    for candle in ohlc_data[-100:]:
+        compact_rows.append(
+            [
+                int(candle["t"]),
+                float(candle["o"]),
+                float(candle["h"]),
+                float(candle["l"]),
+                float(candle["c"]),
+                float(candle["v"]),
+            ]
+        )
+    return compact_rows
+
+
+def _should_render_chart(
+    *,
+    alert_type: SignalAlertType,
+    sum_5m: float,
+    sum_1h: float,
+    impact: dict[str, Any],
+    rsi_val: float | None,
+) -> bool:
+    if alert_type in config.CHART_ALWAYS_RENDER_TYPES:
+        return True
+    if sum_5m >= config.CHART_MIN_VOLUME_USD:
+        return True
+    if sum_1h >= config.CHART_MIN_VOLUME_USD * config.VOLUME_MULTIPLIER:
+        return True
+
+    vol_ratio = impact.get("vol_ratio")
+    if vol_ratio is not None and vol_ratio >= config.CHART_MIN_VOL_RATIO:
+        return True
+
+    if (
+        rsi_val is not None
+        and sum_5m > 2000.0
+        and (
+            rsi_val >= config.CHART_RSI_EXTREME_UPPER
+            or rsi_val <= config.CHART_RSI_EXTREME_LOWER
+        )
+    ):
+        return True
+
+    cap_ratio = impact.get("cap_ratio")
+    return cap_ratio is not None and cap_ratio >= config.CHART_MIN_CAP_RATIO
+
+
+def _build_raw_signal_dto(
+    *,
+    signal_id: str,
+    symbol: str,
+    side_label: str,
+    alert_type: SignalAlertType,
+    alert_title: str,
+    render_requested: bool,
+    sum_5m: float,
+    sum_1h: float,
+    sum_cascade: float,
+    cascade_count: int,
+    m_data: dict[str, Any] | None,
+    impact: dict[str, Any],
+    delta_5m: float | None,
+    delta_30m: float | None,
+    rsi_val: float | None,
+    ohlc_history: list[SignalOhlcRow],
+    timestamp: float,
+) -> SignalDTO:
+    return {
+        "signal_id": signal_id,
+        "symbol": symbol,
+        "side_label": cast(SignalSideLabel, side_label),
+        "alert_type": alert_type,
+        "alert_title": alert_title,
+        "render_requested": render_requested,
+        "market_data": {
+            "sum_5m": sum_5m,
+            "sum_1h": sum_1h,
+            "sum_cascade": sum_cascade,
+            "cascade_count": cascade_count,
+            "oi_pct": m_data["oi_change_pct"] if m_data else None,
+            "oi_val": m_data["oi_change_value"] if m_data else 0.0,
+            "price_pct": m_data["price_change_pct"] if m_data else None,
+            "total_oi": m_data["oi"] if m_data else 0.0,
+            "funding": m_data["funding"] if m_data else 0.0,
+            "rsi": rsi_val,
+        },
+        "impact_metrics": {
+            "cap_ratio": impact["cap_ratio"],
+            "vol_ratio": impact["vol_ratio"],
+            "live_mcap": impact["live_mcap"],
+            "is_fallback": impact["is_fallback"],
+        },
+        "trade_metrics": {
+            "delta_5m": delta_5m,
+            "delta_30m": delta_30m,
+        },
+        "settings": {
+            "show_oi": True,
+            "show_cvd": True,
+            "show_rsi": True,
+            "used_mcap": False,
+        },
+        "ohlc_history": ohlc_history,
+        "chart_message_id": None,
+        "timestamp": timestamp,
+    }
+
 
 async def process_liquidation_item(
-    symbol: str, 
-    side_label: str, 
-    bot, 
-    liq_aggregator, 
-    market_aggregator, 
-    trade_aggregator
-):
-    """Принимает решение об отправке уведомления и выполняет рассылку через gather.
-    Полностью In-Memory обработка.
-    """
+    symbol: str,
+    side_label: str,
+    liq_aggregator,
+    market_aggregator,
+    trade_aggregator,
+) -> None:
+    sum_5m, sum_1h, sum_cascade, cascade_count = liq_aggregator.get_metrics(symbol, side_label)
 
-    # 0. Получаем быструю статистику для раннего отсечения мелких событий.
-    sum_5m, sum_1h, sum_cas, count_cas = liq_aggregator.get_metrics(symbol, side_label)
-
-    # 1. Используем закэшированных адресатов.
-    targets = _cached_users
-    if not targets:
+    if not _cached_users:
         return
 
-    # 2. Early exit: пропускаем шум рынка до любых дорогих вычислений.
-    if (sum_5m < _min_system_threshold and
-        (count_cas < config.CASCADE_TRIGGER_COUNT or sum_cas < _min_system_cascade)):
+    if (
+        sum_5m < _min_system_threshold
+        and (cascade_count < config.CASCADE_TRIGGER_COUNT or sum_cascade < _min_system_cascade)
+    ):
         return
 
-    # 3. Получение дополнительных данных из агрегаторов
     m_data = market_aggregator.get_market_data(symbol, window_minutes=5)
+    alert_type = evaluate_trigger_logic(
+        sum_5m=sum_5m,
+        sum_1h=sum_1h,
+        sum_cascade=sum_cascade,
+        cascade_count=cascade_count,
+        oi_pct=m_data.get("oi_change_pct") if m_data else None,
+        oi_val=m_data.get("oi_change_value") if m_data else None,
+        volume_threshold=_min_system_threshold,
+        cascade_threshold=_min_system_cascade,
+        oi_threshold_pct=config.MIN_OI_CHANGE_PCT,
+        oi_threshold_value=config.MIN_LIQ_VALUE_FILTER,
+        cascade_trigger_count=config.CASCADE_TRIGGER_COUNT,
+        volume_multiplier=config.VOLUME_MULTIPLIER,
+        squeeze_ratio=config.SQUEEZE_RATIO,
+        require_nonnegative_oi_pct=True,
+    )
+    if alert_type is None:
+        return
+    alert_title = build_alert_title(alert_type, cascade_count)
+    current_time = time()
+    history_key = _brain_history_redis_key(symbol, side_label)
+    raw_last_entry = _decode_redis_payload(await redis_bus.get_key(history_key))
+    if raw_last_entry is not None:
+        try:
+            last_entry = cast(GlobalSignalHistoryEntry, orjson.loads(raw_last_entry))
+        except Exception:
+            last_entry = None
+        if last_entry is not None and is_signal_spammy(
+            last_time=float(last_entry.get("time", 0.0)),
+            current_time=current_time,
+            last_sum=float(last_entry.get("sum_5m", 0.0)),
+            current_sum=sum_5m,
+            cooldown_limit=float(config.GLOBAL_COOLDOWN_SEC),
+            growth_multiplier=float(config.ALERT_GROWTH_PERCENTAGE),
+        ):
+            return
+
     _, _, delta_5m = trade_aggregator.get_cvd_metrics(symbol, minutes=5)
     _, _, delta_30m = trade_aggregator.get_cvd_metrics(symbol, minutes=30)
     rsi_val = market_aggregator.get_cached_rsi(symbol, config.RSI_PERIOD)
-
-    # 3.1 Расчет метрик влияния на рынок (Cap Ratio, Vol Ratio)
     impact = market_aggregator.get_impact_metrics(symbol, sum_5m)
-    impact_1h = market_aggregator.get_impact_metrics(symbol, sum_1h)
-    impact_cas = market_aggregator.get_impact_metrics(symbol, sum_cas)
+    render_requested = _should_render_chart(
+        alert_type=alert_type,
+        sum_5m=sum_5m,
+        sum_1h=sum_1h,
+        impact=impact,
+        rsi_val=rsi_val,
+    )
+    ohlc_history = (
+        _serialize_ohlc_history(list(market_aggregator.ohlc_history.get(symbol, [])))
+        if render_requested
+        else []
+    )
 
-    if impact["is_fallback"]:
-        pass
+    dto = _build_raw_signal_dto(
+        signal_id=str(uuid4()),
+        symbol=symbol,
+        side_label=side_label,
+        alert_type=alert_type,
+        alert_title=alert_title,
+        render_requested=render_requested,
+        sum_5m=sum_5m,
+        sum_1h=sum_1h,
+        sum_cascade=sum_cascade,
+        cascade_count=cascade_count,
+        m_data=m_data,
+        impact=impact,
+        delta_5m=delta_5m,
+        delta_30m=delta_30m,
+        rsi_val=rsi_val,
+        ohlc_history=ohlc_history,
+        timestamp=current_time,
+    )
 
-    # 4. Подготовка базового payload (Atomic Payload)
-    # Эти данные одинаковы для всех получателей
-    base_payload = {
-        "symbol": symbol,
-        "side_label": side_label,
-        "sum_5m": sum_5m,
-        "sum_1h": sum_1h,
-        "sum_cascade": sum_cas,
-        "cascade_count": count_cas,
-        "oi_pct": m_data['oi_change_pct'] if m_data else None,
-        "oi_val": m_data['oi_change_value'] if m_data else 0.0,
-        "price_pct": m_data['price_change_pct'] if m_data else None,
-        "total_oi": m_data['oi'] if m_data else 0.0,
-        "funding": m_data['funding'] if m_data else 0.0,
-        "delta_5m": delta_5m,
-        "delta_30m": delta_30m,
-        "rsi": rsi_val,
-        "vol_ratio": impact["vol_ratio"],
-        "live_mcap": impact["live_mcap"],
-        "cap_ratio": impact["cap_ratio"],
-        "is_fallback": impact["is_fallback"],
-    }
-
-    ohlc_data = list(market_aggregator.ohlc_history.get(symbol, []))
-    prepared_alerts: list[tuple[int | str, dict[str, Any]]] = []
-
-    # 5. Single-pass рассылка по закэшированным адресатам.
-    for target in targets:
-        try:
-            trigger_result = _check_triggers(
-                target=target,
-                symbol=symbol,
-                side_label=side_label,
-                sum_5m=sum_5m,
-                sum_1h=sum_1h,
-                sum_cas=sum_cas,
-                count_cas=count_cas,
-                m_data=m_data,
-                impact=impact,
-                impact_1h=impact_1h,
-                impact_cas=impact_cas
-            )
-        except Exception as e:
-            logger.error(f"Ошибка проверки триггеров для {target['id']}: {e}")
-            continue
-
-        if trigger_result:
-            recipient_id = config.PRIVATE_CHANNEL_ID if target["id"] == "CHANNEL" else int(target["id"])
-            # Объединяем общие данные с персональными (заголовок, тип, фильтры отображения)
-            full_payload = {**base_payload, **trigger_result}
-            prepared_alerts.append((recipient_id, full_payload))
-
-    if not prepared_alerts:
+    message_id = await redis_bus.publish_signal_to_stream(dto, config.REDIS_RAW_STREAM_NAME)
+    if message_id is None:
+        logger.error("Ошибка публикации в Redis: signal не был записан в stream.")
         return
 
-    async def _dispatch_batches(alert_tasks: list[Any]) -> None:
-        batch_size = 50
-        for i in range(0, len(alert_tasks), batch_size):
-            batch = alert_tasks[i:i + batch_size]
-            await asyncio.gather(*batch, return_exceptions=True)
-            await asyncio.sleep(0.01)
-
-    current_price = float(impact["price"])
-
-    # 6. Fallback на текст, если график еще не готов или цена некорректна.
-    if len(ohlc_data) < 30 or current_price <= 0:
-        await _dispatch_batches([
-            send_liquidation_alert(bot, recipient_id, **payload)
-            for recipient_id, payload in prepared_alerts
-        ])
-        return
-
-    # 7. Сценарий cache-hit: мгновенная массовая рассылка по file_id.
-    cached_id = chart_generator.get_cached_id(symbol, current_price)
-    if cached_id:
-        await _dispatch_batches([
-            send_liquidation_alert(bot, recipient_id, photo_file_id=cached_id, **payload)
-            for recipient_id, payload in prepared_alerts
-        ])
-        return
-
-    # 8. Cache-miss: один рендер на символ под локом + harvesting первого успешного file_id.
-    async with chart_generator.locks[symbol]:
-        cached_id = chart_generator.get_cached_id(symbol, current_price)
-        if cached_id:
-            await _dispatch_batches([
-                send_liquidation_alert(bot, recipient_id, photo_file_id=cached_id, **payload)
-                for recipient_id, payload in prepared_alerts
-            ])
-            return
-
-        alert_title = str(prepared_alerts[0][1].get("alert_title", "LIQUIDATION ALERT"))
-        chart_title = strip_emojis(alert_title)
-
-        chart_bytes = await chart_generator.get_chart(symbol, ohlc_data, chart_title)
-        if chart_bytes is None:
-            await _dispatch_batches([
-                send_liquidation_alert(bot, recipient_id, **payload)
-                for recipient_id, payload in prepared_alerts
-            ])
-            return
-
-        remaining_alerts = prepared_alerts.copy()
-        harvested_file_id: str | None = None
-
-        while remaining_alerts and harvested_file_id is None:
-            first_recipient, first_payload = remaining_alerts.pop(0)
-            harvested_file_id = await send_liquidation_alert(
-                bot,
-                first_recipient,
-                photo_bytes=chart_bytes,
-                **first_payload,
-            )
-
-        if harvested_file_id:
-            chart_generator.update_cache(symbol, harvested_file_id, current_price)
-            if remaining_alerts:
-                await _dispatch_batches([
-                    send_liquidation_alert(bot, recipient_id, photo_file_id=harvested_file_id, **payload)
-                    for recipient_id, payload in remaining_alerts
-                ])
-            return
-
-        # Если harvesting не удался ни у одного получателя, дополнительных повторов не делаем.
-        return
-
-def _check_triggers(
-    target: CachedAlertTarget,
-    symbol: str,
-    side_label: str,
-    sum_5m: float,
-    sum_1h: float,
-    sum_cas: float,
-    count_cas: int,
-    m_data: dict[str, Any] | None,
-    impact: dict[str, Any],
-    impact_1h: dict[str, Any],
-    impact_cas: dict[str, Any]
-) -> dict[str, Any] | None:
-    """Универсальная логика проверки условий для пользователя или канала.
-    Возвращает персональные настройки payload, если триггер сработал.
-    """
-    # --- 0. ФИЛЬТРАЦИЯ НАПРАВЛЕНИЯ (Early Return) ---
-    if side_label == "LONG" and not target.get("alert_longs", True):
-        return None
-    if side_label == "SHORT" and not target.get("alert_shorts", True):
-        return None
-
-    now = datetime.now(timezone.utc).replace(tzinfo=None)
-    
-    # --- 1. ОПРЕДЕЛЕНИЕ РЕЖИМА (Smart Fallback) ---
-    effective_mode = "USD" if impact["is_fallback"] else target["threshold_mode"]
-    used_mcap = (effective_mode == "PERCENT")
-
-    # --- 2. ТРИГГЕРЫ (Определяем все возможные события) ---
-    if effective_mode == "PERCENT":
-        # Логика по капитализации (Cap Ratio)
-        cap_ratio_5m = impact["cap_ratio"] or 0.0
-        cap_ratio_1h = impact_1h["cap_ratio"] or 0.0
-        cap_ratio_cas = impact_cas["cap_ratio"] or 0.0
-
-        has_cascade = (count_cas >= config.CASCADE_TRIGGER_COUNT and 
-                     cap_ratio_cas >= target["threshold_cascade_mcap_pct"] and
-                     sum_cas >= target["threshold_cascade_mcap_usd_min"])
-        
-        has_volume = (cap_ratio_5m >= target["threshold_mcap_pct"] and 
-                    sum_5m >= target["threshold_mcap_usd_min"]) or \
-                   (cap_ratio_1h >= (target["threshold_mcap_pct"] * config.VOLUME_MULTIPLIER) and 
-                    sum_1h >= (target["threshold_mcap_usd_min"] * config.VOLUME_MULTIPLIER))
-    else:
-        # Логика по USD (Классическая)
-        has_cascade = (count_cas >= config.CASCADE_TRIGGER_COUNT and 
-                     sum_cas >= target["threshold_cascade"])
-        
-        has_volume = (sum_5m >= target["threshold"] or 
-                    sum_1h >= (target["threshold"] * config.VOLUME_MULTIPLIER))
-    
-    has_oi_pump = False
-    if m_data:
-        oi_pct = m_data.get('oi_change_pct')
-        oi_val = m_data.get('oi_change_value')
-        if oi_pct is not None and oi_val is not None:
-            if (oi_pct >= target["threshold_oi_percent"] and 
-                abs(oi_val) >= target["threshold_oi_value"]):
-                has_oi_pump = True
-
-    has_squeeze = has_volume and sum_5m > (sum_1h * config.SQUEEZE_RATIO)
-
-    # --- 3. ВЫБОР ТИПА ПО ПРИОРИТЕТУ И НАСТРОЙКАМ ПОЛЬЗОВАТЕЛЯ ---
-    alert_type = None
-    alert_title = ""
-
-    if has_cascade and target["alert_cascade"]:
-        alert_type = "CASCADE"
-        alert_title = f"⚡️ LIQ КАСКАД x{count_cas}"
-    elif has_oi_pump and target["alert_oi"]:
-        alert_type = "OI_PUMP"
-        alert_title = "📈 OI PUMP"
-    elif has_squeeze and target["alert_squeeze"]:
-        alert_type = "SQUEEZE"
-        alert_title = "🔥 QUICK SQUEEZE"
-    elif has_volume and target["alert_volume"]:
-        alert_type = "VOLUME"
-        alert_title = "📊 LIQ VOLUME"
-    
-    # Если ни один из сработавших триггеров не разрешен пользователем
-    if not alert_type:
-        return None
-
-    # --- 4. АНТИ-СПАМ (Smart Threshold) ---
-    target_id = target["id"]
-    history_key = (target_id, symbol, side_label)
-    last_alert = user_alert_history.get(history_key)
-
-    if last_alert:
-        # Проверка кулдауна (общая для всех типов)
-        if (now - last_alert['time']).total_seconds() < config.GLOBAL_COOLDOWN_SEC:
-            return None
-            
-        # Проверка прироста (только для VOLUME и SQUEEZE)
-        if alert_type in ["VOLUME", "SQUEEZE"]:
-            grew_enough = sum_5m >= last_alert['sum_5m'] * config.ALERT_GROWTH_PERCENTAGE
-            if not grew_enough:
-                return None
-
-    # --- 5. ФОРМИРОВАНИЕ ПЕРСОНАЛЬНОГО ПЕЙЛОАДА ---
-    user_alert_history[history_key] = {
-        'time': now,
-        'sum_5m': sum_5m
-    }
-    
-    return {
-        "alert_title": alert_title,
-        "alert_type": alert_type,
-        "threshold_cascade": target["threshold_cascade"],
-        "show_oi": target["alert_oi"],
-        "show_cvd": target["alert_cvd"],
-        "show_rsi": target["alert_rsi"],
-        "used_mcap": used_mcap
-    }
-
-async def cleanup_alert_history_task():
-    """Фоновая задача для очистки истории алертов (защита от утечки памяти)"""
-    while True:
-        await asyncio.sleep(3600)
-        now = datetime.now(timezone.utc).replace(tzinfo=None)
-        threshold = now - timedelta(hours=24)
-        
-        keys_to_delete = [
-            key for key, data in user_alert_history.items() 
-            if data['time'] < threshold
-        ]
-        
-        for key in keys_to_delete:
-            del user_alert_history[key]
-            
-        if keys_to_delete:
-            logger.info(f"Очистка памяти: удалено {len(keys_to_delete)} старых записей из истории алертов.")
+    await redis_bus.set_key(
+        history_key,
+        orjson.dumps({"time": current_time, "sum_5m": sum_5m}).decode("utf-8"),
+        expire_seconds=3600,
+    )

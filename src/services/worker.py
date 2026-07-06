@@ -1,6 +1,5 @@
 import asyncio
 import logging
-from aiogram import Bot
 from src.core.config import config
 from src.database.session import async_session
 from src.database.crud.liq_service import save_liquidation
@@ -21,8 +20,7 @@ def _safe_float(value):
         return None
 
 class DataWorker:
-    def __init__(self, bot: Bot, liq_aggregator, market_aggregator, trade_aggregator):
-        self.bot = bot
+    def __init__(self, liq_aggregator, market_aggregator, trade_aggregator):
         self.liq_aggregator = liq_aggregator
         self.market_aggregator = market_aggregator
         self.trade_aggregator = trade_aggregator
@@ -112,7 +110,6 @@ class DataWorker:
             await process_liquidation_item(
                 symbol=symbol,
                 side_label=side_label,
-                bot=self.bot,
                 liq_aggregator=self.liq_aggregator,
                 market_aggregator=self.market_aggregator,
                 trade_aggregator=self.trade_aggregator

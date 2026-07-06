@@ -1,11 +1,7 @@
 import asyncio
 import io
 import logging
-import time
-from collections import defaultdict
-from concurrent.futures import ProcessPoolExecutor
 from typing import TypedDict
-from src.core.config import config
 
 logger = logging.getLogger(__name__)
 
@@ -17,52 +13,6 @@ class OhlcRecord(TypedDict):
     l: float
     c: float
     v: float
-
-
-class ChartCacheEntry(TypedDict):
-    file_id: str
-    price: float
-    ts: float
-
-
-_chart_executor = ProcessPoolExecutor(max_workers=2)
-_chart_cache: dict[str, ChartCacheEntry] = {}
-_locks: defaultdict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
-locks = _locks
-
-
-def get_cached_id(symbol: str, current_price: float) -> str | None:
-    entry = _chart_cache.get(symbol)
-    if entry is None:
-        return None
-
-    now = time.time()
-    if now - entry["ts"] > config.CHART_CACHE_TTL_SEC:
-        _chart_cache.pop(symbol, None)
-        return None
-
-    last_price = entry["price"]
-    if last_price <= 0 or current_price <= 0:
-        _chart_cache.pop(symbol, None)
-        return None
-
-    price_delta = abs(current_price - last_price) / last_price
-    if price_delta >= config.CHART_PRICE_DELTA_THRESHOLD:
-        _chart_cache.pop(symbol, None)
-        return None
-
-    return entry["file_id"]
-
-
-def update_cache(symbol: str, file_id: str, price: float) -> None:
-    if not file_id or price <= 0:
-        return
-
-    _chart_cache[symbol] = {
-        "file_id": file_id,
-        "price": float(price),
-        "ts": time.time(),
-    }
 
 
 def _render_sync(data_list: list[OhlcRecord], symbol: str, alert_title: str) -> bytes:
@@ -191,15 +141,14 @@ def _render_sync(data_list: list[OhlcRecord], symbol: str, alert_title: str) -> 
         plt.close("all")
 
 
-async def get_chart(symbol: str, ohlc_data: list[OhlcRecord], alert_title: str) -> bytes | None:
+async def render_chart(symbol: str, ohlc_data: list[OhlcRecord], alert_title: str) -> bytes | None:
     if len(ohlc_data) < 2:
         return None
 
-    loop = asyncio.get_running_loop()
     try:
         return await asyncio.wait_for(
-            loop.run_in_executor(_chart_executor, _render_sync, ohlc_data, symbol, alert_title),
-            timeout=2.5,
+            asyncio.to_thread(_render_sync, ohlc_data, symbol, alert_title),
+            timeout=3.0,
         )
     except asyncio.TimeoutError:
         logger.warning(f"Таймаут рендера графика для {symbol}")

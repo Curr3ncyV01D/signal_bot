@@ -114,6 +114,9 @@ async def _send_referral_bonus_notification(
 
 
 async def _build_invite_link_text(callback: types.CallbackQuery, user_id: int) -> str:
+    if config.PRIVATE_CHANNEL_ID is None:
+        return ""
+
     try:
         invite_link = await callback.bot.create_chat_invite_link(
             chat_id=config.PRIVATE_CHANNEL_ID,

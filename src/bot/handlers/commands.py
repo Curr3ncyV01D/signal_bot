@@ -63,6 +63,8 @@ async def render_main_menu(
         )
 
 async def _get_news_channel_url(bot) -> str | None:
+    if config.NEWS_CHANNEL_ID is None:
+        return None
     if config.NEWS_CHANNEL_URL:
         return config.NEWS_CHANNEL_URL
     try:
@@ -74,6 +76,8 @@ async def _get_news_channel_url(bot) -> str | None:
     return None
 
 async def _is_user_subscribed_to_news_channel(bot, user_id: int) -> bool | None:
+    if config.NEWS_CHANNEL_ID is None:
+        return None
     try:
         member = await bot.get_chat_member(config.NEWS_CHANNEL_ID, user_id)
         return member.status not in {"left", "kicked"}
@@ -148,6 +152,12 @@ async def process_back_to_main(callback: types.CallbackQuery, session: AsyncSess
 @router.callback_query(F.data == "activate_trial")
 async def process_activate_trial(callback: types.CallbackQuery):
     """Показывает условия активации триала перед фактической проверкой подписки."""
+    if config.NEWS_CHANNEL_ID is None:
+        return await callback.answer(
+            "Триал через канал недоступен: NEWS_CHANNEL_ID не задан.",
+            show_alert=True,
+        )
+
     text = (
         "❗ Для активации пробного периода (24ч) необходимо быть участником нашего новостного канала. ❗\n"
         f"В качестве бонуса за подписку вам будет начислено дополнительно {hbold('48 часов')} доступа!"
@@ -178,6 +188,12 @@ async def process_activate_trial(callback: types.CallbackQuery):
 @router.callback_query(F.data == "check_sub_and_activate")
 async def process_check_sub_and_activate(callback: types.CallbackQuery, session: AsyncSession):
     """Проверяет подписку на новостной канал и активирует триал на 72 часа."""
+    if config.NEWS_CHANNEL_ID is None or config.PRIVATE_CHANNEL_ID is None:
+        return await callback.answer(
+            "Режим каналов отключен. Активация триала через канал недоступна.",
+            show_alert=True,
+        )
+
     user = await session.get(User, callback.from_user.id)
     if not user:
         return await callback.answer("Профиль не найден. Нажмите /start.", show_alert=True)
@@ -268,6 +284,12 @@ async def process_check_sub_and_activate(callback: types.CallbackQuery, session:
 @router.callback_query(F.data == "get_channel_link")
 async def process_get_channel_link(callback: types.CallbackQuery):
     """Кнопка для получения ссылки, если подписка уже активна"""
+    if config.PRIVATE_CHANNEL_ID is None:
+        return await callback.answer(
+            "Режим каналов отключен: ссылка в канал недоступна.",
+            show_alert=True,
+        )
+
     try:
         invite_link = await callback.bot.create_chat_invite_link(
             chat_id=config.PRIVATE_CHANNEL_ID,

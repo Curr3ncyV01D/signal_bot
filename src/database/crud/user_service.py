@@ -51,14 +51,14 @@ async def get_or_create_user(
         logger.error(f"Непредвиденная ошибка в get_or_create_user: {e}")
         return await session.get(User, user_id)
 
-async def get_active_users(session: AsyncSession) -> list[User]:
+async def get_active_users(session: AsyncSession, force_refresh: bool = False) -> list[User]:
     """Получает пользователей с АКТИВНОЙ подпиской для рассылки алертов (с кешированием)."""
     global _active_users_cache, _last_cache_update
     
     now = get_utc_now()
     
     # Если кеш свежий (меньше 60 секунд) — отдаем его
-    if _last_cache_update and (now - _last_cache_update).total_seconds() < 60:
+    if not force_refresh and _last_cache_update and (now - _last_cache_update).total_seconds() < 60:
         return _active_users_cache
 
     try:
