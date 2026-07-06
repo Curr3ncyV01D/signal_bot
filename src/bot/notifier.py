@@ -180,7 +180,7 @@ class AlertFormatter:
         
         res = ""
         if self.data.get("alert_type") == "CASCADE" or count_cas >= getattr(config, 'CASCADE_TRIGGER_COUNT', 10):
-            res += f"{cascade_emoji} {hbold('LIQ КАСКАД:')} {count_cas} шт ({self.format_money(sum_cas)})\n"
+            res += f"{cascade_emoji} {hbold('LIQ CASCADE:')} x{count_cas} ({self.format_money(sum_cas)})\n"
         else:
             res = f"{emoji_5m} {hbold(f'{side_5m} LIQ (5m):')} {self.format_money(sum_5m)}\n"
             

@@ -142,6 +142,8 @@ async def supply_sync_worker(market_aggregator):
 
         except Exception as e:
             logger.error(f"Ошибка в supply_sync_worker: {e}", exc_info=True)
-        
+            await asyncio.sleep(1)
+            continue
+
         # Интервал 12 часов
         await asyncio.sleep(12 * 3600)

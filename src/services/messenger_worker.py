@@ -2,18 +2,30 @@ import asyncio
 import logging
 import os
 from datetime import datetime, timezone
-from typing import Any, TypedDict
+from typing import Any, TypedDict, cast
+
+import orjson
 
 from aiogram import Bot
+from aiogram.exceptions import TelegramBadRequest, TelegramRetryAfter
 
 from src.bot.notifier import build_alert_payload, send_liquidation_alert
 from src.core.config import config, setup_logging
 from src.core.dto import SignalAlertType, SignalDTO
-from src.core.redis_bus import redis_bus
+from src.core.redis_bus import LockResult, redis_bus
 from src.database.crud.channel_service import ChannelService
 from src.database.crud.user_service import get_active_users, get_user_by_id
 from src.database.functions import get_utc_now
 from src.database.session import async_session
+from src.services.asset_manager import (
+    AssetManager,
+    PLACEHOLDER_MSG_ID_REDIS_KEY,
+)
+from src.services.logic.trigger_engine import (
+    build_alert_title,
+    evaluate_trigger_logic,
+    is_signal_spammy,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +52,7 @@ class CachedAlertTarget(TypedDict):
 
 
 class AlertHistoryEntry(TypedDict):
-    time: datetime
+    time: float
     sum_5m: float
 
 
@@ -54,7 +66,16 @@ class TriggerResult(TypedDict):
     used_mcap: bool
 
 
-user_alert_history: dict[tuple[int | str, str, str], AlertHistoryEntry] = {}
+def _msg_history_redis_key(target_id: int | str, symbol: str, side_label: str) -> str:
+    return f"csl:msg:history:{target_id}:{symbol}:{side_label}"
+
+
+def _decode_redis_payload(payload: bytes | str | None) -> bytes | None:
+    if payload is None:
+        return None
+    if isinstance(payload, bytes):
+        return payload
+    return payload.encode("utf-8")
 
 
 def _build_cached_target(source: Any, target_id: int | str) -> CachedAlertTarget:
@@ -90,7 +111,7 @@ def _is_user_active(user: Any) -> bool:
     )
 
 
-def _check_triggers_from_dto(
+async def _check_triggers_from_dto(
     target: CachedAlertTarget,
     dto: SignalDTO,
 ) -> TriggerResult | None:
@@ -104,6 +125,7 @@ def _check_triggers_from_dto(
     impact = dto["impact_metrics"]
 
     now = datetime.now(timezone.utc).replace(tzinfo=None)
+    now_ts = now.timestamp()
     effective_mode = "USD" if impact["is_fallback"] else target["threshold_mode"]
     used_mcap = effective_mode == "PERCENT"
 
@@ -121,72 +143,72 @@ def _check_triggers_from_dto(
         cap_ratio_1h = sum_1h / live_mcap
         cap_ratio_cascade = sum_cascade / live_mcap
 
-        has_cascade = (
-            cascade_count >= config.CASCADE_TRIGGER_COUNT
-            and cap_ratio_cascade >= target["threshold_cascade_mcap_pct"]
-            and sum_cascade >= target["threshold_cascade_mcap_usd_min"]
-        )
-        has_volume = (
+        cascade_threshold = target["threshold_cascade_mcap_pct"]
+        if (
+            cap_ratio_cascade < target["threshold_cascade_mcap_pct"]
+            or sum_cascade < target["threshold_cascade_mcap_usd_min"]
+        ):
+            cascade_threshold = float("inf")
+
+        volume_threshold = target["threshold_mcap_pct"]
+        has_volume_floor = (
             cap_ratio_5m >= target["threshold_mcap_pct"]
             and sum_5m >= target["threshold_mcap_usd_min"]
         ) or (
             cap_ratio_1h >= (target["threshold_mcap_pct"] * config.VOLUME_MULTIPLIER)
             and sum_1h >= (target["threshold_mcap_usd_min"] * config.VOLUME_MULTIPLIER)
         )
+        if not has_volume_floor:
+            volume_threshold = float("inf")
     else:
-        has_cascade = (
-            cascade_count >= config.CASCADE_TRIGGER_COUNT
-            and sum_cascade >= target["threshold_cascade"]
-        )
-        has_volume = (
-            sum_5m >= target["threshold"]
-            or sum_1h >= (target["threshold"] * config.VOLUME_MULTIPLIER)
-        )
+        cascade_threshold = target["threshold_cascade"]
+        volume_threshold = target["threshold"]
 
-    oi_pct = market_data["oi_pct"]
-    oi_val = market_data["oi_val"]
-    has_oi_pump = (
-        oi_pct is not None
-        and oi_val is not None
-        and oi_pct >= target["threshold_oi_percent"]
-        and abs(oi_val) >= target["threshold_oi_value"]
+    alert_type = evaluate_trigger_logic(
+        sum_5m=sum_5m,
+        sum_1h=sum_1h,
+        sum_cascade=sum_cascade,
+        cascade_count=cascade_count,
+        oi_pct=market_data["oi_pct"],
+        oi_val=market_data["oi_val"],
+        volume_threshold=volume_threshold,
+        cascade_threshold=cascade_threshold,
+        oi_threshold_pct=target["threshold_oi_percent"],
+        oi_threshold_value=target["threshold_oi_value"],
+        cascade_trigger_count=config.CASCADE_TRIGGER_COUNT,
+        volume_multiplier=config.VOLUME_MULTIPLIER,
+        squeeze_ratio=config.SQUEEZE_RATIO,
+        enable_cascade=target["alert_cascade"],
+        enable_oi=target["alert_oi"],
+        enable_squeeze=target["alert_squeeze"],
+        enable_volume=target["alert_volume"],
     )
-    has_squeeze = has_volume and sum_5m > (sum_1h * config.SQUEEZE_RATIO)
-
-    alert_type: SignalAlertType | None = None
-    alert_title = ""
-
-    if has_cascade and target["alert_cascade"]:
-        alert_type = "CASCADE"
-        alert_title = f"⚡️ LIQ КАСКАД x{cascade_count}"
-    elif has_oi_pump and target["alert_oi"]:
-        alert_type = "OI_PUMP"
-        alert_title = "📈 OI PUMP"
-    elif has_squeeze and target["alert_squeeze"]:
-        alert_type = "SQUEEZE"
-        alert_title = "🔥 QUICK SQUEEZE"
-    elif has_volume and target["alert_volume"]:
-        alert_type = "VOLUME"
-        alert_title = "📊 LIQ VOLUME"
-
     if alert_type is None:
         return None
+    alert_title = build_alert_title(alert_type, cascade_count)
 
-    history_key = (target["id"], dto["symbol"], side_label)
-    last_alert = user_alert_history.get(history_key)
-    if last_alert:
-        if (now - last_alert["time"]).total_seconds() < config.GLOBAL_COOLDOWN_SEC:
+    history_key = _msg_history_redis_key(target["id"], dto["symbol"], side_label)
+    raw_last_alert = _decode_redis_payload(await redis_bus.get_key(history_key))
+    if raw_last_alert is not None:
+        try:
+            last_alert = cast(AlertHistoryEntry, orjson.loads(raw_last_alert))
+        except Exception:
+            last_alert = None
+        if last_alert is not None and is_signal_spammy(
+            last_time=float(last_alert.get("time", 0.0)),
+            current_time=now_ts,
+            last_sum=float(last_alert.get("sum_5m", 0.0)),
+            current_sum=sum_5m,
+            cooldown_limit=config.GLOBAL_COOLDOWN_SEC,
+            growth_multiplier=config.ALERT_GROWTH_PERCENTAGE,
+        ):
             return None
 
-        if alert_type in ["VOLUME", "SQUEEZE"]:
-            grew_enough = sum_5m >= last_alert["sum_5m"] * config.ALERT_GROWTH_PERCENTAGE
-            if not grew_enough:
-                return None
-
-    user_alert_history[history_key] = {
-        "time": now,
-        "sum_5m": sum_5m,
-    }
+    await redis_bus.set_key(
+        history_key,
+        orjson.dumps({"time": now_ts, "sum_5m": sum_5m}).decode("utf-8"),
+        expire_seconds=3600,
+    )
 
     return {
         "alert_title": alert_title,
@@ -205,6 +227,9 @@ class MessengerWorker:
         self.bot: Bot | None = None
         self._cached_users: list[CachedAlertTarget] = []
         self._cache_lock = asyncio.Lock()
+        self._resolve_semaphore = asyncio.Semaphore(3)
+        self.placeholder_msg_id: int | None = None
+        self._resolved_file_ids: dict[int, str] = {}
 
     async def _create_bot(self) -> Bot:
         session = None
@@ -309,29 +334,159 @@ class MessengerWorker:
             await asyncio.gather(*batch, return_exceptions=True)
             await asyncio.sleep(0.01)
 
-    async def _cleanup_alert_history_task(self) -> None:
+    @staticmethod
+    def _decode_redis_value(value: bytes | str | None) -> str | None:
+        if value is None:
+            return None
+        return value.decode("utf-8") if isinstance(value, bytes) else str(value)
+
+    async def _load_placeholder_message_id_from_redis(self) -> str | None:
+        return self._decode_redis_value(await redis_bus.get_key(PLACEHOLDER_MSG_ID_REDIS_KEY))
+
+    async def _load_placeholder_message_id(self) -> int | None:
+        if self.placeholder_msg_id is None:
+            message_id = await self._load_placeholder_message_id_from_redis()
+            if message_id is None:
+                async with async_session() as session:
+                    message_id = await AssetManager.get_placeholder_metadata(session)
+
+            if message_id is not None:
+                self.placeholder_msg_id = int(message_id)
+                await redis_bus.set_key(PLACEHOLDER_MSG_ID_REDIS_KEY, message_id)
+
+        return self.placeholder_msg_id
+
+    def _remember_resolved_file_id(self, message_id: int, file_id: str) -> None:
+        self._resolved_file_ids[message_id] = file_id
+        if len(self._resolved_file_ids) > 5000:
+            logger.warning("L1 media cache переполнен. Выполняю очистку RAM-кэша resolve.")
+            self._resolved_file_ids.clear()
+            self._resolved_file_ids[message_id] = file_id
+
+    async def _recover_placeholder_message_id(self) -> int | None:
+        if self.bot is None:
+            raise RuntimeError("Messenger worker bot is not initialized.")
+
+        logger.warning("Placeholder в LOG_CHANNEL_ID отсутствует. Запускаю восстановление ассета.")
+        self.placeholder_msg_id = None
+        async with async_session() as session:
+            restored_message_id = await AssetManager.ensure_placeholder(self.bot, session)
+
+        if restored_message_id is not None:
+            self.placeholder_msg_id = restored_message_id
+        return restored_message_id
+
+    async def _resolve_media_to_file_id(self, message_id: int) -> str | None:
+        if self.bot is None:
+            raise RuntimeError("Messenger worker bot is not initialized.")
+
+        cached_file_id = self._resolved_file_ids.get(message_id)
+        if cached_file_id is not None:
+            return cached_file_id
+
+        redis_key = f"csl:file_id:{self.bot.id}:{message_id}"
+        cached_redis = self._decode_redis_value(await redis_bus.get_key(redis_key))
+        if cached_redis is not None:
+            self._remember_resolved_file_id(message_id, cached_redis)
+            return cached_redis
+
+        if config.LOG_CHANNEL_ID is None:
+            return None
+
+        lock_key = f"csl:lock:resolve:{self.bot.id}:{message_id}"
+        lock_token: str | None = None
+
         while True:
-            await asyncio.sleep(3600)
-            now = datetime.now(timezone.utc).replace(tzinfo=None)
-            threshold = now.timestamp() - 86400
-            keys_to_delete = [
-                key
-                for key, data in user_alert_history.items()
-                if data["time"].timestamp() < threshold
-            ]
-            for key in keys_to_delete:
-                del user_alert_history[key]
+            lock_result, lock_token = await redis_bus.acquire_lock(lock_key, ttl=10)
+            if lock_result is LockResult.ACQUIRED:
+                break
+            if lock_result is LockResult.ERROR:
+                await asyncio.sleep(1)
+            else:
+                await asyncio.sleep(0.5)
+
+            cached_redis = self._decode_redis_value(await redis_bus.get_key(redis_key))
+            if cached_redis is not None:
+                self._remember_resolved_file_id(message_id, cached_redis)
+                return cached_redis
+
+        tmp_msg = None
+        try:
+            cached_file_id = self._resolved_file_ids.get(message_id)
+            if cached_file_id is not None:
+                return cached_file_id
+
+            cached_redis = self._decode_redis_value(await redis_bus.get_key(redis_key))
+            if cached_redis is not None:
+                self._remember_resolved_file_id(message_id, cached_redis)
+                return cached_redis
+
+            async with self._resolve_semaphore:
+                tmp_msg = await self.bot.forward_message(
+                    chat_id=int(config.LOG_CHANNEL_ID),
+                    from_chat_id=int(config.LOG_CHANNEL_ID),
+                    message_id=message_id,
+                    disable_notification=True,
+                )
+            file_id = tmp_msg.photo[-1].file_id if tmp_msg.photo else None
+            if file_id is None:
+                logger.error("Forward resolve не вернул photo для message_id=%s", message_id)
+                return None
+
+            self._remember_resolved_file_id(message_id, file_id)
+            await redis_bus.set_key(redis_key, file_id, 86400)
+            return file_id
+        except TelegramRetryAfter as exc:
+            logger.warning(
+                "Telegram RetryAfter при resolve message_id=%s. Ожидаю %s сек.",
+                message_id,
+                exc.retry_after,
+            )
+            await asyncio.sleep(exc.retry_after)
+            return await self._resolve_media_to_file_id(message_id)
+        except TelegramBadRequest as exc:
+            error_text = str(exc).lower()
+            if "message to forward not found" in error_text:
+                if message_id == self.placeholder_msg_id:
+                    restored_message_id = await self._recover_placeholder_message_id()
+                    if restored_message_id is not None and restored_message_id != message_id:
+                        return await self._resolve_media_to_file_id(restored_message_id)
+                logger.warning(
+                    "Сообщение для forward-resolve не найдено message_id=%s. Перехожу в fallback.",
+                    message_id,
+                )
+                return None
+            logger.error("Сообщение для forward-resolve недоступно message_id=%s: %s", message_id, exc)
+            return None
+        except Exception:
+            logger.exception("Не удалось зарезолвить media file_id для message_id=%s", message_id)
+            return None
+        finally:
+            if tmp_msg is not None:
+                try:
+                    await self.bot.delete_message(int(config.LOG_CHANNEL_ID), tmp_msg.message_id)
+                except Exception:
+                    logger.warning("Не удалось удалить временное forwarded message_id=%s", tmp_msg.message_id)
+            if lock_token is not None:
+                await redis_bus.release_lock(lock_key, lock_token)
 
     async def _process_signal(self, dto: SignalDTO) -> None:
         if self.bot is None:
             raise RuntimeError("Messenger worker bot is not initialized.")
 
+        target_msg_id = dto["chart_message_id"]
+        if target_msg_id is None:
+            target_msg_id = await self._load_placeholder_message_id()
+
+        photo_file_id = None
+        if target_msg_id is not None:
+            photo_file_id = await self._resolve_media_to_file_id(target_msg_id)
         targets = await self._get_targets_snapshot()
         prepared_alerts: list[tuple[int, dict[str, Any]]] = []
 
         for target in targets:
             try:
-                trigger_result = _check_triggers_from_dto(target, dto)
+                trigger_result = await _check_triggers_from_dto(target, dto)
             except Exception:
                 logger.exception("Ошибка фильтрации сигнала для target=%s", target["id"])
                 continue
@@ -367,7 +522,7 @@ class MessengerWorker:
             send_liquidation_alert(
                 self.bot,
                 recipient_id,
-                photo_file_id=dto["chart_file_id"],
+                photo_file_id=photo_file_id,
                 **payload,
             )
             for recipient_id, payload in prepared_alerts
@@ -376,6 +531,9 @@ class MessengerWorker:
     async def run(self) -> None:
         self.bot = await self._create_bot()
         await self._load_cache()
+        placeholder_msg_id = await self._load_placeholder_message_id()
+        if placeholder_msg_id is not None:
+            await self._resolve_media_to_file_id(placeholder_msg_id)
         await redis_bus.create_consumer_group_for_stream(
             stream_name=config.REDIS_READY_STREAM_NAME,
             group_name=config.REDIS_MESSENGER_CONSUMER_GROUP,
@@ -383,40 +541,41 @@ class MessengerWorker:
 
         cache_task = asyncio.create_task(self._cache_refresher_task())
         invalidation_task = asyncio.create_task(self._cache_invalidation_listener())
-        cleanup_task = asyncio.create_task(self._cleanup_alert_history_task())
 
         try:
             logger.info("Messenger worker запущен как consumer=%s", self.consumer_name)
             while True:
-                signals = await redis_bus.get_signals_from_stream(
-                    consumer_name=self.consumer_name,
-                    stream_name=config.REDIS_READY_STREAM_NAME,
-                    group_name=config.REDIS_MESSENGER_CONSUMER_GROUP,
-                )
-                if not signals:
-                    continue
+                try:
+                    signals = await redis_bus.get_signals_from_stream(
+                        consumer_name=self.consumer_name,
+                        stream_name=config.REDIS_READY_STREAM_NAME,
+                        group_name=config.REDIS_MESSENGER_CONSUMER_GROUP,
+                    )
+                    if not signals:
+                        continue
 
-                for message_id, dto in signals:
-                    try:
-                        await self._process_signal(dto)
-                        await redis_bus.ack_signal_for_stream(
-                            message_id=message_id,
-                            stream_name=config.REDIS_READY_STREAM_NAME,
-                            group_name=config.REDIS_MESSENGER_CONSUMER_GROUP,
-                        )
-                    except Exception:
-                        logger.exception(
-                            "Ошибка обработки сигнала %s в messenger worker.",
-                            message_id,
-                        )
+                    for message_id, dto in signals:
+                        try:
+                            await self._process_signal(dto)
+                            await redis_bus.ack_signal_for_stream(
+                                message_id=message_id,
+                                stream_name=config.REDIS_READY_STREAM_NAME,
+                                group_name=config.REDIS_MESSENGER_CONSUMER_GROUP,
+                            )
+                        except Exception:
+                            logger.exception(
+                                "Ошибка обработки сигнала %s в messenger worker.",
+                                message_id,
+                            )
+                except Exception:
+                    logger.exception("Критическая ошибка основного цикла messenger worker.")
+                    await asyncio.sleep(1)
         finally:
             cache_task.cancel()
             invalidation_task.cancel()
-            cleanup_task.cancel()
             await asyncio.gather(
                 cache_task,
                 invalidation_task,
-                cleanup_task,
                 return_exceptions=True,
             )
             await self.bot.session.close()

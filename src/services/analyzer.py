@@ -4,12 +4,19 @@ from time import time
 from typing import Any, TypedDict, cast
 from uuid import uuid4
 
+import orjson
+
 from src.core.config import config
 from src.core.dto import SignalAlertType, SignalDTO, SignalOhlcRow, SignalSideLabel
 from src.core.redis_bus import redis_bus
 from src.database.crud.channel_service import ChannelService
 from src.database.crud.user_service import get_active_users
 from src.database.session import async_session
+from src.services.logic.trigger_engine import (
+    build_alert_title,
+    evaluate_trigger_logic,
+    is_signal_spammy,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +50,18 @@ class GlobalSignalHistoryEntry(TypedDict):
 _cached_users: list[CachedAlertTarget] = []
 _min_system_threshold: float = float("inf")
 _min_system_cascade: float = float("inf")
-global_signal_history: dict[tuple[str, str], GlobalSignalHistoryEntry] = {}
+
+
+def _brain_history_redis_key(symbol: str, side_label: str) -> str:
+    return f"csl:brain:history:{symbol}:{side_label}"
+
+
+def _decode_redis_payload(payload: bytes | str | None) -> bytes | None:
+    if payload is None:
+        return None
+    if isinstance(payload, bytes):
+        return payload
+    return payload.encode("utf-8")
 
 
 def _build_cached_target(source: Any, target_id: int | str) -> CachedAlertTarget:
@@ -134,44 +152,6 @@ async def user_cache_refresher_task_once() -> None:
         logger.error(f"❌ Критическая ошибка при начальной загрузке кэша: {exc}")
 
 
-def _resolve_stream_signal_metadata(
-    *,
-    sum_5m: float,
-    sum_1h: float,
-    sum_cascade: float,
-    cascade_count: int,
-    m_data: dict[str, Any] | None,
-) -> tuple[SignalAlertType, str]:
-    has_cascade = (
-        cascade_count >= config.CASCADE_TRIGGER_COUNT
-        and sum_cascade >= _min_system_cascade
-    )
-
-    oi_pct = m_data.get("oi_change_pct") if m_data else None
-    oi_val = m_data.get("oi_change_value") if m_data else None
-    has_oi_pump = (
-        oi_pct is not None
-        and oi_val is not None
-        and oi_pct >= 0
-        and oi_pct >= config.MIN_OI_CHANGE_PCT
-        and abs(oi_val) >= config.MIN_LIQ_VALUE_FILTER
-    )
-
-    has_volume = (
-        sum_5m >= _min_system_threshold
-        or sum_1h >= (_min_system_threshold * config.VOLUME_MULTIPLIER)
-    )
-    has_squeeze = has_volume and sum_5m > (sum_1h * config.SQUEEZE_RATIO)
-
-    if has_cascade:
-        return "CASCADE", f"⚡️ LIQ КАСКАД x{cascade_count}"
-    if has_oi_pump:
-        return "OI_PUMP", "📈 OI PUMP"
-    if has_squeeze:
-        return "SQUEEZE", "🔥 QUICK SQUEEZE"
-    return "VOLUME", "📊 LIQ VOLUME"
-
-
 def _serialize_ohlc_history(ohlc_data: list[dict[str, int | float]]) -> list[SignalOhlcRow]:
     compact_rows: list[SignalOhlcRow] = []
     for candle in ohlc_data[-100:]:
@@ -188,11 +168,47 @@ def _serialize_ohlc_history(ohlc_data: list[dict[str, int | float]]) -> list[Sig
     return compact_rows
 
 
+def _should_render_chart(
+    *,
+    alert_type: SignalAlertType,
+    sum_5m: float,
+    sum_1h: float,
+    impact: dict[str, Any],
+    rsi_val: float | None,
+) -> bool:
+    if alert_type in config.CHART_ALWAYS_RENDER_TYPES:
+        return True
+    if sum_5m >= config.CHART_MIN_VOLUME_USD:
+        return True
+    if sum_1h >= config.CHART_MIN_VOLUME_USD * config.VOLUME_MULTIPLIER:
+        return True
+
+    vol_ratio = impact.get("vol_ratio")
+    if vol_ratio is not None and vol_ratio >= config.CHART_MIN_VOL_RATIO:
+        return True
+
+    if (
+        rsi_val is not None
+        and sum_5m > 2000.0
+        and (
+            rsi_val >= config.CHART_RSI_EXTREME_UPPER
+            or rsi_val <= config.CHART_RSI_EXTREME_LOWER
+        )
+    ):
+        return True
+
+    cap_ratio = impact.get("cap_ratio")
+    return cap_ratio is not None and cap_ratio >= config.CHART_MIN_CAP_RATIO
+
+
 def _build_raw_signal_dto(
     *,
     signal_id: str,
     symbol: str,
     side_label: str,
+    alert_type: SignalAlertType,
+    alert_title: str,
+    render_requested: bool,
     sum_5m: float,
     sum_1h: float,
     sum_cascade: float,
@@ -205,20 +221,13 @@ def _build_raw_signal_dto(
     ohlc_history: list[SignalOhlcRow],
     timestamp: float,
 ) -> SignalDTO:
-    alert_type, alert_title = _resolve_stream_signal_metadata(
-        sum_5m=sum_5m,
-        sum_1h=sum_1h,
-        sum_cascade=sum_cascade,
-        cascade_count=cascade_count,
-        m_data=m_data,
-    )
-
     return {
         "signal_id": signal_id,
         "symbol": symbol,
         "side_label": cast(SignalSideLabel, side_label),
         "alert_type": alert_type,
         "alert_title": alert_title,
+        "render_requested": render_requested,
         "market_data": {
             "sum_5m": sum_5m,
             "sum_1h": sum_1h,
@@ -248,7 +257,7 @@ def _build_raw_signal_dto(
             "used_mcap": False,
         },
         "ohlc_history": ohlc_history,
-        "chart_file_id": None,
+        "chart_message_id": None,
         "timestamp": timestamp,
     }
 
@@ -271,31 +280,68 @@ async def process_liquidation_item(
     ):
         return
 
-    history_key = (symbol, side_label)
-    last_entry = global_signal_history.get(history_key)
+    m_data = market_aggregator.get_market_data(symbol, window_minutes=5)
+    alert_type = evaluate_trigger_logic(
+        sum_5m=sum_5m,
+        sum_1h=sum_1h,
+        sum_cascade=sum_cascade,
+        cascade_count=cascade_count,
+        oi_pct=m_data.get("oi_change_pct") if m_data else None,
+        oi_val=m_data.get("oi_change_value") if m_data else None,
+        volume_threshold=_min_system_threshold,
+        cascade_threshold=_min_system_cascade,
+        oi_threshold_pct=config.MIN_OI_CHANGE_PCT,
+        oi_threshold_value=config.MIN_LIQ_VALUE_FILTER,
+        cascade_trigger_count=config.CASCADE_TRIGGER_COUNT,
+        volume_multiplier=config.VOLUME_MULTIPLIER,
+        squeeze_ratio=config.SQUEEZE_RATIO,
+        require_nonnegative_oi_pct=True,
+    )
+    if alert_type is None:
+        return
+    alert_title = build_alert_title(alert_type, cascade_count)
     current_time = time()
-    if last_entry is not None:
-        cooldown_elapsed = (current_time - last_entry["time"]) >= config.GLOBAL_COOLDOWN_SEC
-        grew_enough = sum_5m >= (last_entry["sum_5m"] * config.ALERT_GROWTH_PERCENTAGE)
-        if not cooldown_elapsed and not grew_enough:
+    history_key = _brain_history_redis_key(symbol, side_label)
+    raw_last_entry = _decode_redis_payload(await redis_bus.get_key(history_key))
+    if raw_last_entry is not None:
+        try:
+            last_entry = cast(GlobalSignalHistoryEntry, orjson.loads(raw_last_entry))
+        except Exception:
+            last_entry = None
+        if last_entry is not None and is_signal_spammy(
+            last_time=float(last_entry.get("time", 0.0)),
+            current_time=current_time,
+            last_sum=float(last_entry.get("sum_5m", 0.0)),
+            current_sum=sum_5m,
+            cooldown_limit=float(config.GLOBAL_COOLDOWN_SEC),
+            growth_multiplier=float(config.ALERT_GROWTH_PERCENTAGE),
+        ):
             return
 
-    global_signal_history[history_key] = {
-        "time": current_time,
-        "sum_5m": sum_5m,
-    }
-
-    m_data = market_aggregator.get_market_data(symbol, window_minutes=5)
     _, _, delta_5m = trade_aggregator.get_cvd_metrics(symbol, minutes=5)
     _, _, delta_30m = trade_aggregator.get_cvd_metrics(symbol, minutes=30)
     rsi_val = market_aggregator.get_cached_rsi(symbol, config.RSI_PERIOD)
     impact = market_aggregator.get_impact_metrics(symbol, sum_5m)
-    ohlc_history = _serialize_ohlc_history(list(market_aggregator.ohlc_history.get(symbol, [])))
+    render_requested = _should_render_chart(
+        alert_type=alert_type,
+        sum_5m=sum_5m,
+        sum_1h=sum_1h,
+        impact=impact,
+        rsi_val=rsi_val,
+    )
+    ohlc_history = (
+        _serialize_ohlc_history(list(market_aggregator.ohlc_history.get(symbol, [])))
+        if render_requested
+        else []
+    )
 
     dto = _build_raw_signal_dto(
         signal_id=str(uuid4()),
         symbol=symbol,
         side_label=side_label,
+        alert_type=alert_type,
+        alert_title=alert_title,
+        render_requested=render_requested,
         sum_5m=sum_5m,
         sum_1h=sum_1h,
         sum_cascade=sum_cascade,
@@ -309,26 +355,13 @@ async def process_liquidation_item(
         timestamp=current_time,
     )
 
-    try:
-        await redis_bus.publish_signal_to_stream(dto, config.REDIS_RAW_STREAM_NAME)
-    except Exception as exc:
-        logger.error(f"Ошибка публикации в Redis: {exc}")
+    message_id = await redis_bus.publish_signal_to_stream(dto, config.REDIS_RAW_STREAM_NAME)
+    if message_id is None:
+        logger.error("Ошибка публикации в Redis: signal не был записан в stream.")
+        return
 
-
-async def cleanup_alert_history_task() -> None:
-    while True:
-        await asyncio.sleep(3600)
-        now = time()
-        threshold = now - (24 * 3600)
-
-        expired_keys = [
-            key
-            for key in list(global_signal_history.keys())
-            if global_signal_history[key]["time"] < threshold
-        ]
-
-        for key in expired_keys:
-            global_signal_history.pop(key, None)
-
-        if expired_keys:
-            logger.debug(f"🧹 Очистка истории Brain: удалено {len(expired_keys)} устаревших записей.")
+    await redis_bus.set_key(
+        history_key,
+        orjson.dumps({"time": current_time, "sum_5m": sum_5m}).decode("utf-8"),
+        expire_seconds=3600,
+    )

@@ -80,12 +80,24 @@ class Settings(BaseSettings):
     WINDOW_CASCADE: int = 150                    
 
     # Технические индикаторы
-    RSI_PERIOD: int = 14                         
-    RSI_KLINE_INTERVAL: str = "60"               
-    OI_WINDOW_MINUTES: int = 5                   
-    TICKER_THROTTLE_SEC: float = 2.0
-    CHART_CACHE_TTL_SEC: int = 180
-    CHART_PRICE_DELTA_THRESHOLD: float = 0.005
+    RSI_PERIOD: int = 14                         # Период расчета RSI (кол-во баров)
+    RSI_KLINE_INTERVAL: str = "60"               # Таймфрейм свечей для RSI (в минутах)
+    OI_WINDOW_MINUTES: int = 5                   # Окно анализа изменения ОИ (минуты)
+    TICKER_THROTTLE_SEC: float = 2.0             # Лимит частоты обновления цен (сек) для разгрузки CPU
+    CHART_CACHE_TTL_SEC: int = 180               # Время жизни кэша готового графика (сек)
+    CHART_PRICE_DELTA_THRESHOLD: float = 0.005   # Порог изменения цены (0.5%) для перерисовки графика
+    CHART_MIN_VOLUME_USD: float = 5000.0         # Мин. USD объем ликвидации для рендера графика
+    CHART_MIN_CAP_RATIO: float = 0.01            # Мин. % от капитализации для рендера графика
+    CHART_MIN_VOL_RATIO: float = 1.0             # Мин. % от суточного объема для рендера графика
+    CHART_RSI_EXTREME_UPPER: float = 80.0
+    CHART_RSI_EXTREME_LOWER: float = 20.0
+    CHART_ALWAYS_RENDER_TYPES: list[str] = ["CASCADE", "SQUEEZE"] # Алерты с обязательной отрисовкой
+    CHART_BUCKET_CAPACITY: float = 40.0          # Макс. запас рендеров графиков
+    CHART_BUCKET_REFILL_RATE: float = 0.36       # Скорость пополнения токенов в секунду
+    CHART_SIGNAL_MAX_AGE_SEC: int = 20           # Макс. возраст сигнала для рендера
+    CHART_PRIORITY_THRESHOLD: float = 15.0       # Ниже этого уровня рендерим только приоритетные
+    CHART_CRITICAL_THRESHOLD: float = 5.0        # Ниже этого уровня рендерим только каскады
+    CHART_PRIORITY_VOLUME_USD: float = 10000.0   # Порог USD объема для приоритетного рендера
 
     # === 5. МОНИТОРИНГ И ПОДКЛЮЧЕНИЯ (Networking) ===
     # Фильтрация монет
@@ -110,6 +122,17 @@ class Settings(BaseSettings):
             except orjson.JSONDecodeError:
                 data = [s.strip() for s in value.split(",")]
             return [s.upper() for s in data if s.strip()]
+        return value
+
+    @field_validator("CHART_ALWAYS_RENDER_TYPES", mode="before")
+    @classmethod
+    def parse_chart_always_render_types(cls, value):
+        if isinstance(value, str):
+            try:
+                data = orjson.loads(value)
+            except orjson.JSONDecodeError:
+                data = [item.strip() for item in value.split(",")]
+            return [str(item).strip().upper() for item in data if str(item).strip()]
         return value
 
     @property
@@ -144,6 +167,7 @@ class ImagePaths:
     SETTINGS = str(ASSETS_DIR / "3_settings.png")
     WALLET = str(ASSETS_DIR / "4_wallet.png")
     AFFILIATE = str(ASSETS_DIR / "5_affiliate.png")
+    PLACEHOLDER = str(ASSETS_DIR / "placeholder.png")
 
 
 def setup_logging() -> None:

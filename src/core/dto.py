@@ -44,10 +44,11 @@ class SignalDTO(TypedDict):
     side_label: SignalSideLabel
     alert_type: SignalAlertType
     alert_title: str
+    render_requested: bool
     market_data: SignalMarketData
     impact_metrics: SignalImpactMetrics
     trade_metrics: SignalTradeMetrics
     settings: SignalSettings
     ohlc_history: list[SignalOhlcRow]
-    chart_file_id: str | None
+    chart_message_id: int | None
     timestamp: float

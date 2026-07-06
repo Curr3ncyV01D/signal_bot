@@ -92,6 +92,13 @@ class ChannelSettings(Base):
     last_summary_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
 
+class SystemMetadata(Base):
+    __tablename__ = "system_metadata"
+
+    key: Mapped[str] = mapped_column(String(100), primary_key=True)
+    value: Mapped[str] = mapped_column(String(1024), nullable=False)
+
+
 class Liquidation(Base):
     __tablename__ = "liquidations"
 

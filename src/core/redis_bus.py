@@ -1,5 +1,7 @@
 import asyncio
 import logging
+from enum import Enum
+from uuid import uuid4
 
 import orjson
 from redis.asyncio import Redis
@@ -11,9 +13,22 @@ from src.core.dto import SignalDTO
 logger = logging.getLogger(__name__)
 
 
+class LockResult(Enum):
+    ACQUIRED = "acquired"
+    BUSY = "busy"
+    ERROR = "error"
+
+
 class RedisBus:
     _connection: Redis | None = None
     _connection_lock = asyncio.Lock()
+    _RELEASE_LOCK_SCRIPT = """
+if redis.call('get', KEYS[1]) == ARGV[1] then
+    return redis.call('del', KEYS[1])
+else
+    return 0
+end
+"""
 
     @staticmethod
     def _decode_message_id(message_id: bytes | str) -> str:
@@ -38,6 +53,21 @@ class RedisBus:
             dto = orjson.loads(payload_bytes)
             parsed_entries.append((cls._decode_message_id(message_id), dto))
         return parsed_entries
+
+    @classmethod
+    async def _reset_connection(cls) -> None:
+        connection = cls._connection
+        cls._connection = None
+        if connection is not None:
+            try:
+                await connection.aclose()
+            except Exception:
+                logger.debug("Не удалось корректно закрыть Redis connection при reset.", exc_info=True)
+
+    @classmethod
+    async def _handle_redis_error(cls, message: str) -> None:
+        await cls._reset_connection()
+        logger.exception(message)
 
     @classmethod
     async def get_redis_connection(cls) -> Redis:
@@ -74,7 +104,7 @@ class RedisBus:
                 approximate=True,
             )
         except Exception:
-            logger.exception("Не удалось опубликовать сигнал в Redis Stream.")
+            await cls._handle_redis_error("Не удалось опубликовать сигнал в Redis Stream.")
             return None
 
     @classmethod
@@ -100,9 +130,9 @@ class RedisBus:
             )
         except ResponseError as exc:
             if "BUSYGROUP" not in str(exc):
-                logger.exception("Не удалось создать consumer group Redis.")
+                await cls._handle_redis_error("Не удалось создать consumer group Redis.")
         except Exception:
-            logger.exception("Не удалось создать consumer group Redis.")
+            await cls._handle_redis_error("Не удалось создать consumer group Redis.")
 
     @classmethod
     async def get_signals(
@@ -178,7 +208,7 @@ class RedisBus:
             _, entries = new_messages[0]
             return cls._parse_stream_entries(entries)
         except Exception:
-            logger.exception("Не удалось прочитать сигналы из Redis Stream.")
+            await cls._handle_redis_error("Не удалось прочитать сигналы из Redis Stream.")
             return []
 
     @classmethod
@@ -204,7 +234,7 @@ class RedisBus:
                 message_id,
             )
         except Exception:
-            logger.exception("Не удалось подтвердить обработку сообщения Redis Stream.")
+            await cls._handle_redis_error("Не удалось подтвердить обработку сообщения Redis Stream.")
             return 0
 
     @classmethod
@@ -213,17 +243,65 @@ class RedisBus:
             redis = await cls.get_redis_connection()
             return await redis.get(key)
         except Exception:
-            logger.exception("Не удалось получить значение из Redis.")
+            await cls._handle_redis_error("Не удалось получить значение из Redis.")
             return None
 
     @classmethod
-    async def set_key(cls, key: str, value: str, expire_seconds: int) -> bool:
+    async def set_key(
+        cls,
+        key: str,
+        value: str,
+        expire_seconds: int | None = None,
+        only_if_not_exists: bool = False,
+    ) -> bool:
         try:
             redis = await cls.get_redis_connection()
-            return bool(await redis.set(key, value, ex=expire_seconds))
+            kwargs = {"ex": expire_seconds} if expire_seconds is not None else {}
+            if only_if_not_exists:
+                kwargs["nx"] = True
+            return bool(await redis.set(key, value, **kwargs))
         except Exception:
-            logger.exception("Не удалось сохранить значение в Redis.")
+            await cls._handle_redis_error("Не удалось сохранить значение в Redis.")
             return False
+
+    @classmethod
+    async def delete_key(cls, key: str) -> int:
+        try:
+            redis = await cls.get_redis_connection()
+            return int(await redis.delete(key))
+        except Exception:
+            await cls._handle_redis_error("Не удалось удалить значение из Redis.")
+            return 0
+
+    @classmethod
+    async def acquire_lock(
+        cls,
+        key: str,
+        ttl: int = 10,
+    ) -> tuple[LockResult, str | None]:
+        token = uuid4().hex
+        try:
+            redis = await cls.get_redis_connection()
+            acquired = await redis.set(key, token, ex=ttl, nx=True)
+            if acquired:
+                return LockResult.ACQUIRED, token
+            return LockResult.BUSY, None
+        except Exception:
+            await cls._handle_redis_error("Не удалось захватить Redis lock.")
+            return LockResult.ERROR, None
+
+    @classmethod
+    async def release_lock(
+        cls,
+        key: str,
+        token: str,
+    ) -> int:
+        try:
+            redis = await cls.get_redis_connection()
+            return int(await redis.eval(cls._RELEASE_LOCK_SCRIPT, 1, key, token))
+        except Exception:
+            await cls._handle_redis_error("Не удалось освободить Redis lock.")
+            return 0
 
     @classmethod
     async def publish_cache_invalidation(cls, payload: str) -> int:
@@ -231,7 +309,7 @@ class RedisBus:
             redis = await cls.get_redis_connection()
             return await redis.publish(config.REDIS_CACHE_INVALIDATION_CHANNEL, payload)
         except Exception:
-            logger.exception("Не удалось отправить cache invalidation в Redis Pub/Sub.")
+            await cls._handle_redis_error("Не удалось отправить cache invalidation в Redis Pub/Sub.")
             return 0
 
 
