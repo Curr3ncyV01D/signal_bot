@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.core.config import config
 from src.database.crud import billing_service
 from src.database.functions import get_utc_now
-from src.database.models import User
+from src.database.models import Transaction, User
 from src.database.session import async_session
 from src.services.analyzer import invalidate_user_cache
 
@@ -19,8 +19,10 @@ logger = logging.getLogger(__name__)
 AUTO_RENEWAL_DAYS = 30
 AUTO_RENEWAL_WINDOW_MINUTES = 60
 AUTO_RENEWAL_COOLDOWN_HOURS = 24
-EXPIRY_WARNING_MIN_HOURS = 23
-EXPIRY_WARNING_MAX_HOURS = 25
+EXPIRY_WARNING_24H_MIN_HOURS = 23
+EXPIRY_WARNING_24H_MAX_HOURS = 25
+TRIAL_EXPIRY_WARNING_MIN_MINUTES = 45
+TRIAL_EXPIRY_WARNING_MAX_MINUTES = 75
 
 class BouncerManager:
     last_run: datetime | None = None
@@ -36,6 +38,29 @@ async def _safe_send_message(bot: Bot, user_id: int, text: str) -> bool:
         logger.error(f"Ошибка отправки сообщения пользователю {user_id}: {e}")
         return False
 
+
+async def _has_active_trial_access(session: AsyncSession, user: User) -> bool:
+    if not user.subscription_end or not user.is_trial_used:
+        return False
+
+    result = await session.execute(
+        select(Transaction)
+        .where(
+            Transaction.user_id == user.id,
+            Transaction.type == "WITHDRAW",
+            Transaction.amount == 0,
+            Transaction.description == f"Trial {config.TRIAL_DURATION_DAYS}d",
+        )
+        .order_by(Transaction.created_at.desc())
+        .limit(1)
+    )
+    trial_tx = result.scalar_one_or_none()
+    if trial_tx is None:
+        return False
+
+    expected_trial_end = trial_tx.created_at + timedelta(days=config.TRIAL_DURATION_DAYS)
+    return abs((user.subscription_end - expected_trial_end).total_seconds()) <= 300
+
 async def _handle_expiry_warning(
     session: AsyncSession,
     bot: Bot,
@@ -46,23 +71,31 @@ async def _handle_expiry_warning(
         return
 
     hours_left = (user.subscription_end - now).total_seconds() / 3600
-    in_warning_window = EXPIRY_WARNING_MIN_HOURS <= hours_left <= EXPIRY_WARNING_MAX_HOURS
-    if not in_warning_window:
-        return
-
-    warning_threshold = user.subscription_end - timedelta(hours=EXPIRY_WARNING_MAX_HOURS)
-    if user.last_expiry_warning_at and user.last_expiry_warning_at >= warning_threshold:
-        return
-
-    sent = await _safe_send_message(
-        bot,
-        user.id,
-        (
+    minutes_left = (user.subscription_end - now).total_seconds() / 60
+    is_active_trial = await _has_active_trial_access(session, user)
+    if is_active_trial:
+        in_warning_window = TRIAL_EXPIRY_WARNING_MIN_MINUTES <= minutes_left <= TRIAL_EXPIRY_WARNING_MAX_MINUTES
+        warning_threshold = user.subscription_end - timedelta(minutes=TRIAL_EXPIRY_WARNING_MAX_MINUTES)
+        warning_text = (
+            "⏳ <b>Ваш пробный доступ истекает через 1 час.</b>\n\n"
+            "Чтобы не потерять доступ к сигналам, продлите подписку заранее в меню /start."
+        )
+    else:
+        in_warning_window = EXPIRY_WARNING_24H_MIN_HOURS <= hours_left <= EXPIRY_WARNING_24H_MAX_HOURS
+        warning_threshold = user.subscription_end - timedelta(hours=EXPIRY_WARNING_24H_MAX_HOURS)
+        warning_text = (
             "⏳ <b>Ваша подписка истекает через 24 часа.</b>\n\n"
             "Убедитесь, что на балансе достаточно средств для автопродления, "
             "или продлите её вручную в меню /start."
         )
-    )
+
+    if not in_warning_window:
+        return
+
+    if user.last_expiry_warning_at and user.last_expiry_warning_at >= warning_threshold:
+        return
+
+    sent = await _safe_send_message(bot, user.id, warning_text)
     if sent:
         user.last_expiry_warning_at = now
         await session.commit()
@@ -169,7 +202,7 @@ async def bouncer_worker(bot: Bot, interval_minutes: int = 15):
                 now = get_utc_now()
                 query = select(User.id).where(
                     User.subscription_end.is_not(None),
-                    User.subscription_end <= now + timedelta(hours=EXPIRY_WARNING_MAX_HOURS)
+                    User.subscription_end <= now + timedelta(hours=EXPIRY_WARNING_24H_MAX_HOURS)
                 )
                 result = await session.execute(query)
                 candidate_ids = list(result.scalars().all())

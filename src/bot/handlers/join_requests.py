@@ -1,8 +1,10 @@
 import logging
 from aiogram import Router, types
 from aiogram.exceptions import TelegramForbiddenError
+from aiogram_i18n import I18nContext
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.core.localization import normalize_locale_code, resolve_initial_locale
 from src.database.models import User
 from src.database.functions import get_utc_now
 
@@ -10,7 +12,11 @@ logger = logging.getLogger(__name__)
 router = Router()
 
 @router.chat_join_request()
-async def process_join_request(request: types.ChatJoinRequest, session: AsyncSession):
+async def process_join_request(
+    request: types.ChatJoinRequest,
+    session: AsyncSession,
+    i18n: I18nContext,
+):
     """Обработчик заявок на вступление в закрытый канал"""
     
     user = await session.get(User, request.from_user.id)
@@ -33,11 +39,13 @@ async def process_join_request(request: types.ChatJoinRequest, session: AsyncSes
             logger.info(f"❌ Отклонена заявка в канал для пользователя {request.from_user.id} (нет подписки)")
             
             # Пытаемся написать в ЛС причину
-            text = (
-                "❌ <b>Ваша заявка на вступление отклонена.</b>\n\n"
-                "У вас нет активной подписки или пробного периода. "
-                "Пожалуйста, перейдите в бота и нажмите /start для приобретения подписки."
+            user_locale = (
+                normalize_locale_code(user.language_code)
+                if user is not None
+                else resolve_initial_locale(request.from_user.language_code)
             )
+            with i18n.use_locale(user_locale):
+                text = i18n.get("join-request-declined-notification")
             await request.bot.send_message(
                 chat_id=request.from_user.id,
                 text=text,

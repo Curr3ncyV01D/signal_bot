@@ -1,5 +1,6 @@
 from aiogram.utils.keyboard import InlineKeyboardBuilder
-from aiogram.types import InlineKeyboardButton
+from aiogram_i18n import LazyProxy
+from aiogram_i18n.types import InlineKeyboardButton
 
 
 class Kb_Helper:
@@ -17,12 +18,12 @@ class Kb_Helper:
         """
         # Если нужна кнопка Назад, добавляем её в новый ряд
         if back_data:
-            builder.row(InlineKeyboardButton(text="⬅️ Назад", callback_data=back_data))
+            builder.row(InlineKeyboardButton(text=LazyProxy("kb-common-back"), callback_data=back_data))
         
         # Если нужна кнопка Закрыть, добавляем её (в новый ряд или к кнопке Назад)
         if close:
             # .row() гарантирует, что кнопка будет на новой строке
-            builder.row(InlineKeyboardButton(text="❌ Закрыть", callback_data="common_close"))
+            builder.row(InlineKeyboardButton(text=LazyProxy("kb-common-close"), callback_data="common_close"))
         
         return builder
 

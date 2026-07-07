@@ -8,6 +8,7 @@ from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.utils.markdown import hbold
+from aiogram_i18n import I18nContext
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.bot.filters.admin import IsAdminFilter
@@ -20,6 +21,7 @@ from src.bot.keyboards import (
     get_users_list_kb,
 )
 from src.core.config import config
+from src.core.localization import normalize_locale_code
 from src.core.security import SecurityManager
 from src.database.crud.channel_service import ChannelService
 from src.database.crud.user_service import (
@@ -132,9 +134,15 @@ async def process_admin_user_card(callback: types.CallbackQuery, session: AsyncS
 
 
 @router.callback_query(F.data.startswith("admin_toggle_"))
-async def process_admin_toggle_block(callback: types.CallbackQuery, bot: Bot, session: AsyncSession):
+async def process_admin_toggle_block(
+    callback: types.CallbackQuery,
+    bot: Bot,
+    session: AsyncSession,
+    i18n: I18nContext,
+):
     """Блокировка / Разблокировка пользователя"""
     user_id = int(callback.data.split("_")[2])
+    user = await get_user_by_id(session, user_id)
     
     new_status = await toggle_user_block(session, user_id)
     if new_status is None:
@@ -149,11 +157,14 @@ async def process_admin_toggle_block(callback: types.CallbackQuery, bot: Bot, se
     # Уведомление пользователя о блокировке
     if new_status is True:
         try:
-            await bot.send_message(
-                user_id, 
-                "❌ <b>Ваш аккаунт был заблокирован администрацией.</b>\nДоступ к функциям бота ограничен.",
-                parse_mode="HTML"
-            )
+            user_locale = normalize_locale_code(user.language_code if user else None)
+            with i18n.use_locale(user_locale):
+                await bot.send_message(
+                    user_id,
+                    i18n.get("admin-user-blocked-notification"),
+                    parse_mode="HTML",
+                    reply_markup=get_close_button_kb(),
+                )
         except (TelegramForbiddenError, Exception):
             pass
             
@@ -192,7 +203,13 @@ async def process_admin_subs_start(callback: types.CallbackQuery, state: FSMCont
 
 
 @router.message(AdminChannelStates.waiting_for_sub_days)
-async def process_admin_subs_days(message: types.Message, state: FSMContext, bot: Bot, session: AsyncSession):
+async def process_admin_subs_days(
+    message: types.Message,
+    state: FSMContext,
+    bot: Bot,
+    session: AsyncSession,
+    i18n: I18nContext,
+):
     """Обработка ввода дней подписки"""
     data = await state.get_data()
     user_id = data.get("target_user_id")
@@ -216,12 +233,22 @@ async def process_admin_subs_days(message: types.Message, state: FSMContext, bot
         except Exception: pass
 
     try:
-        notify_text = (
-            f"📅 <b>Ваша подписка обновлена администратором!</b>\n\n"
-            f"Новый срок действия: {hbold(format_datetime(user.subscription_end))}"
-            if days > 0 else "❌ <b>Ваша подписка была аннулирована администратором.</b>"
-        )
-        await bot.send_message(user_id, notify_text, parse_mode="HTML", reply_markup=get_close_button_kb())
+        user_locale = normalize_locale_code(user.language_code)
+        with i18n.use_locale(user_locale):
+            notify_text = (
+                i18n.get(
+                    "admin-user-subscription-updated-notification",
+                    subscription_end=hbold(format_datetime(user.subscription_end)),
+                )
+                if days > 0
+                else i18n.get("admin-user-subscription-cancelled-notification")
+            )
+            await bot.send_message(
+                user_id,
+                notify_text,
+                parse_mode="HTML",
+                reply_markup=get_close_button_kb(),
+            )
     except Exception: pass
         
     status = f"установлена на {days} дн." if days > 0 else "аннулирована"

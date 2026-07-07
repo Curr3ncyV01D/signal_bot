@@ -11,6 +11,8 @@ class User(Base):
     
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)  # Telegram ID
     username: Mapped[str] = mapped_column(String, nullable=True)
+    language_code: Mapped[str] = mapped_column(String(2), default="ru")
+    is_setup_completed: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=get_utc_now)
     is_admin: Mapped[bool] = mapped_column(Boolean, default=False)
     is_blocked: Mapped[bool] = mapped_column(Boolean, default=False)

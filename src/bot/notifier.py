@@ -264,7 +264,7 @@ class AlertFormatter:
         )
         
         # Ссылка на инструкцию (Telegraph)
-        guide = f"\n\n📖 {hlink('Как читать этот сигнал?', config.GUIDE_URL)}"
+        guide = f"\n\n📖 {hlink('Как читать этот сигнал?/How to read this alert?', config.GUIDE_URL)}"
         
         return f"\n{links}{guide}"
 
