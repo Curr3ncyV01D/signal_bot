@@ -13,6 +13,7 @@ from src.database.models import User, CoinFundamental
 from src.database.crud.liq_service import get_recent_liquidations
 from src.database.crud.channel_service import ChannelService
 from src.bot.handlers import main_router as router
+from src.bot.i18n import build_i18n_middleware
 from src.bot.middlewares.block_middleware import BlockMiddleware
 from src.bot.middlewares.fsm_cleaner import FSMCleanerMiddleware
 from src.bot.middlewares.db_session import DbSessionMiddleware
@@ -101,9 +102,11 @@ async def main():
     # Инициализация бота
     bot = Bot(token=config.BOT_TOKEN, session=session)
     dp = Dispatcher()
+    i18n_middleware = build_i18n_middleware()
     
     # Регистрация Middleware
     dp.update.outer_middleware(DbSessionMiddleware(async_session))
+    i18n_middleware.setup(dp)
     dp.update.outer_middleware(BlockMiddleware())
     dp.message.outer_middleware(FSMCleanerMiddleware())
     

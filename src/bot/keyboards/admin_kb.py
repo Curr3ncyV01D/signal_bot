@@ -1,5 +1,6 @@
 from aiogram.utils.keyboard import InlineKeyboardBuilder
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram_i18n import LazyProxy
+from aiogram_i18n.types import InlineKeyboardMarkup, InlineKeyboardButton
 from src.bot.utils.kb_helper import Kb_Helper
 from src.database.models import User
 from src.bot.utils.kb_helper import Kb_Helper
@@ -9,10 +10,10 @@ toggle = Kb_Helper.toggle_icon
 def get_admin_main_kb() -> InlineKeyboardMarkup:
     """Стартовая клавиатура админки"""
     builder = InlineKeyboardBuilder()
-    builder.row(InlineKeyboardButton(text="📊 Аналитика и метрики", callback_data="admin_bi_main"))
-    builder.row(InlineKeyboardButton(text="📣 Создать рассылку", callback_data="admin_broadcast_start"))
-    builder.row(InlineKeyboardButton(text="📢 Настройки канала", callback_data="admin_channel_settings"))
-    builder.row(InlineKeyboardButton(text="👥 Список пользователей", callback_data="admin_page_1"))
+    builder.row(InlineKeyboardButton(text=LazyProxy("kb-admin-analytics"), callback_data="admin_bi_main"))
+    builder.row(InlineKeyboardButton(text=LazyProxy("kb-admin-broadcast"), callback_data="admin_broadcast_start"))
+    builder.row(InlineKeyboardButton(text=LazyProxy("kb-admin-channel-settings"), callback_data="admin_channel_settings"))
+    builder.row(InlineKeyboardButton(text=LazyProxy("kb-admin-users"), callback_data="admin_page_1"))
 
     Kb_Helper.add_common_buttons(builder)
     return builder.as_markup()
@@ -45,7 +46,7 @@ def get_users_list_kb(users: list[User], page: int, total_pages: int) -> InlineK
         nav_buttons.append(InlineKeyboardButton(text=" ", callback_data="ignore"))
         
     builder.row(*nav_buttons)
-    builder.row(InlineKeyboardButton(text="🔙 В главное меню", callback_data="admin_main"))
+    builder.row(InlineKeyboardButton(text=LazyProxy("kb-admin-main-menu"), callback_data="admin_main"))
     
     return builder.as_markup()
 
@@ -54,11 +55,11 @@ def get_user_manage_kb(user_id: int, is_blocked: bool) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     
     if is_blocked:
-        builder.row(InlineKeyboardButton(text="✅ Разблокировать", callback_data=f"admin_toggle_{user_id}"))
+        builder.row(InlineKeyboardButton(text=LazyProxy("kb-admin-unblock"), callback_data=f"admin_toggle_{user_id}"))
     else:
-        builder.row(InlineKeyboardButton(text="🛑 Заблокировать", callback_data=f"admin_toggle_{user_id}"))
+        builder.row(InlineKeyboardButton(text=LazyProxy("kb-admin-block"), callback_data=f"admin_toggle_{user_id}"))
 
-    builder.row(InlineKeyboardButton(text="📅 Изменить подписку", callback_data=f"admin_subs_{user_id}"))
+    builder.row(InlineKeyboardButton(text=LazyProxy("kb-admin-edit-subscription"), callback_data=f"admin_subs_{user_id}"))
 
     Kb_Helper.add_common_buttons(builder)
     return builder.as_markup()
@@ -67,53 +68,53 @@ def get_admin_channel_kb(settings) -> InlineKeyboardMarkup:
     """Клавиатура управления настройками канала"""
     builder = InlineKeyboardBuilder()
 
-    status_btn = "🟢 Постинг ВКЛЮЧЕН" if settings.is_active else "🔴 Постинг ВЫКЛЮЧЕН"
+    status_btn = LazyProxy("kb-admin-channel-posting-on") if settings.is_active else LazyProxy("kb-admin-channel-posting-off")
     builder.row(InlineKeyboardButton(text=status_btn, callback_data="admin_chan_toggle_active"))
 
-    mode_label = "% MCAP💎" if settings.threshold_mode == "PERCENT" else "USD 💵"
+    mode_label = LazyProxy("kb-settings-mode-percent") if settings.threshold_mode == "PERCENT" else LazyProxy("kb-settings-mode-usd")
     builder.row(
-        InlineKeyboardButton(text=f"⚙️ Режим: {mode_label}", callback_data="admin_chan_toggle_threshold_mode"))
+        InlineKeyboardButton(text=LazyProxy("kb-settings-mode", mode_label=mode_label), callback_data="admin_chan_toggle_threshold_mode"))
 
     # Кнопки порогов
     if settings.threshold_mode == "PERCENT":
         builder.row(
-            InlineKeyboardButton(text="💰 Порог объема (%)", callback_data="admin_chan_set_mcap_pct"),
-            InlineKeyboardButton(text="⚡ Порог каскада (%)", callback_data="admin_chan_set_mcap_cas_pct"))
+            InlineKeyboardButton(text=LazyProxy("kb-settings-threshold-volume-percent"), callback_data="admin_chan_set_mcap_pct"),
+            InlineKeyboardButton(text=LazyProxy("kb-settings-threshold-cascade-percent"), callback_data="admin_chan_set_mcap_cas_pct"))
         builder.row(
-            InlineKeyboardButton(text="Мин. порог ($)", callback_data="admin_chan_set_mcap_min_usd"),
-            InlineKeyboardButton(text="Мин. порог каскада ($)", callback_data="admin_chan_set_mcap_cas_min_usd"))
+            InlineKeyboardButton(text=LazyProxy("kb-settings-threshold-min-usd"), callback_data="admin_chan_set_mcap_min_usd"),
+            InlineKeyboardButton(text=LazyProxy("kb-settings-threshold-cascade-min-usd"), callback_data="admin_chan_set_mcap_cas_min_usd"))
     else:
         builder.row(
-            InlineKeyboardButton(text="💰 Порог объема ($)", callback_data="admin_chan_set_threshold"),
-            InlineKeyboardButton(text="⚡ Порог каскада ($)", callback_data="admin_chan_set_cascade_threshold"))
+            InlineKeyboardButton(text=LazyProxy("kb-settings-threshold-volume-usd"), callback_data="admin_chan_set_threshold"),
+            InlineKeyboardButton(text=LazyProxy("kb-settings-threshold-cascade-usd"), callback_data="admin_chan_set_cascade_threshold"))
 
     # Тумблеры сигналов
     builder.row(
-        InlineKeyboardButton(text=f"{toggle(settings.alert_cascade)} Каскад", callback_data="admin_chan_toggle_cascade"),
-        InlineKeyboardButton(text=f"{toggle(settings.alert_volume)} Объем", callback_data="admin_chan_toggle_volume"),
-        InlineKeyboardButton(text=f"{toggle(settings.alert_squeeze)} Сквиз", callback_data="admin_chan_toggle_squeeze"))
+        InlineKeyboardButton(text=LazyProxy("kb-settings-toggle-cascade", status=toggle(settings.alert_cascade)), callback_data="admin_chan_toggle_cascade"),
+        InlineKeyboardButton(text=LazyProxy("kb-settings-toggle-volume", status=toggle(settings.alert_volume)), callback_data="admin_chan_toggle_volume"),
+        InlineKeyboardButton(text=LazyProxy("kb-settings-toggle-squeeze", status=toggle(settings.alert_squeeze)), callback_data="admin_chan_toggle_squeeze"))
 
     # Тумблеры направлений
     builder.row(
-        InlineKeyboardButton(text=f"🟢 LONG: {toggle(settings.alert_longs)}", callback_data="admin_chan_toggle_longs"),
-        InlineKeyboardButton(text=f"🔴 SHORT: {toggle(settings.alert_shorts)}", callback_data="admin_chan_toggle_shorts"))
+        InlineKeyboardButton(text=LazyProxy("kb-settings-toggle-longs", status=toggle(settings.alert_longs)), callback_data="admin_chan_toggle_longs"),
+        InlineKeyboardButton(text=LazyProxy("kb-settings-toggle-shorts", status=toggle(settings.alert_shorts)), callback_data="admin_chan_toggle_shorts"))
 
     # Тумблеры аналитики
     builder.row(
-        InlineKeyboardButton(text=f"{toggle(settings.alert_oi)} OI", callback_data="admin_chan_toggle_oi"),
-        InlineKeyboardButton(text=f"{toggle(settings.alert_rsi)} RSI", callback_data="admin_chan_toggle_rsi"),
-        InlineKeyboardButton(text=f"{toggle(settings.alert_cvd)} CVD", callback_data="admin_chan_toggle_cvd"))
+        InlineKeyboardButton(text=LazyProxy("kb-settings-toggle-oi", status=toggle(settings.alert_oi)), callback_data="admin_chan_toggle_oi"),
+        InlineKeyboardButton(text=LazyProxy("kb-settings-toggle-rsi", status=toggle(settings.alert_rsi)), callback_data="admin_chan_toggle_rsi"),
+        InlineKeyboardButton(text=LazyProxy("kb-settings-toggle-cvd", status=toggle(settings.alert_cvd)), callback_data="admin_chan_toggle_cvd"))
 
     builder.row(
-        InlineKeyboardButton(text="⚙️ Пороги OI (% и $)", callback_data="admin_chan_set_oi"))
+        InlineKeyboardButton(text=LazyProxy("kb-admin-channel-oi-thresholds"), callback_data="admin_chan_set_oi"))
 
-    builder.row(InlineKeyboardButton(text="🔄 Перезапустить Дэшборд", callback_data="admin_chan_restart_dash"))
+    builder.row(InlineKeyboardButton(text=LazyProxy("kb-admin-channel-restart-dashboard"), callback_data="admin_chan_restart_dash"))
 
-    builder.row(InlineKeyboardButton(text="🔙 Назад", callback_data="admin_main"))
+    builder.row(InlineKeyboardButton(text=LazyProxy("kb-common-back"), callback_data="admin_main"))
     return builder.as_markup()
 
 def get_cancel_fsm_kb() -> InlineKeyboardMarkup:
     """Кнопка отмены для FSM состояний"""
     builder = InlineKeyboardBuilder()
-    builder.row(InlineKeyboardButton(text="❌ Отмена", callback_data="admin_fsm_stop"))
+    builder.row(InlineKeyboardButton(text=LazyProxy("kb-wallet-cancel"), callback_data="admin_fsm_stop"))
     return builder.as_markup()

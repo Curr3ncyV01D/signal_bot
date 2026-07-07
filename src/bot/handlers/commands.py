@@ -5,16 +5,17 @@ from aiogram import Router, types, F
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, FSInputFile, InputMediaPhoto
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiogram.filters import Command
-from aiogram.utils.markdown import hbold
 from aiogram.exceptions import TelegramBadRequest
+from aiogram_i18n import I18nContext
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.config import config
 from src.core.config import ImagePaths
-from src.database.crud import billing_service
-from src.database.crud.user_service import get_or_create_user, activate_trial
+from src.database.crud import billing_service, user_service
+from src.database.crud.user_service import get_or_create_user
 from src.database.models import User
 from src.database.functions import get_utc_now
+from src.bot.handlers.onboarding import render_onboarding_language_screen
 from src.bot.keyboards import get_start_kb, get_status_kb, get_close_button_kb
 from src.services.analyzer import invalidate_user_cache
 from src.services.metrics_service import MetricsService
@@ -27,10 +28,11 @@ router = Router()
 async def render_main_menu(
     event: types.Message | types.CallbackQuery,
     user: User,
-    full_name: str
+    full_name: str,
+    i18n: I18nContext,
 ) -> None:
     """Умный рендеринг главного меню с баннером WELCOME."""
-    text = get_main_menu_text(user, full_name)
+    text = get_main_menu_text(user, full_name, i18n)
     markup = get_start_kb(user)
     photo = FSInputFile(ImagePaths.WELCOME)
 
@@ -75,50 +77,42 @@ async def _get_news_channel_url(bot) -> str | None:
         logger.error(f"Не удалось получить URL новостного канала: {e}")
     return None
 
-async def _is_user_subscribed_to_news_channel(bot, user_id: int) -> bool | None:
-    if config.NEWS_CHANNEL_ID is None:
-        return None
-    try:
-        member = await bot.get_chat_member(config.NEWS_CHANNEL_ID, user_id)
-        return member.status not in {"left", "kicked"}
-    except Exception as e:
-        logger.error(f"Не удалось проверить подписку пользователя {user_id} на news-канал: {e}")
-        return None
-
-async def _build_trial_subscription_kb(bot) -> InlineKeyboardMarkup:
+async def _build_trial_subscription_kb(bot, i18n: I18nContext) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     news_channel_url = await _get_news_channel_url(bot)
     if news_channel_url:
         builder.row(
-            InlineKeyboardButton(text="📢 Перейти в новостной канал", url=news_channel_url)
+            InlineKeyboardButton(text=i18n.get("trial-button-news-channel"), url=news_channel_url)
         )
     builder.row(
         InlineKeyboardButton(
-            text="🔄 Проверить подписку и активировать",
-            callback_data="check_sub_and_activate"
+            text=i18n.get("trial-button-check-subscription"),
+            callback_data="confirm_trial_activation"
         )
     )
     return builder.as_markup()
 
-def get_main_menu_text(user: User, full_name: str) -> str:
+def get_main_menu_text(user: User, full_name: str, i18n: I18nContext) -> str:
     """Текст главного меню."""
     now = get_utc_now()
     has_sub = user.subscription_end and user.subscription_end > now
     
-    status_text = f"✅ Активна до {format_datetime(user.subscription_end)}" if has_sub else "❌ Не активна"
+    status_text = (
+        i18n.get("main-menu-status-active", subscription_end=format_datetime(user.subscription_end))
+        if has_sub
+        else i18n.get("main-menu-status-inactive")
+    )
     
-    return (
-        f"👋 Добро пожаловать, {hbold(full_name)}!\n\n"
-        f"Я профессиональный терминал для мониторинга ликвидаций на Bybit.\n"
-        f"Вы будете получать уведомления, когда на рынке начнутся сильные движения.\n\n"
-        f"💎 Подписка: {hbold(status_text)}\n"
-        f"💰 Баланс: {hbold(f'{format_smart_num(user.balance)}')} USDT\n\n"
-        f"👇 Выберите действие ниже:"
+    return i18n.get(
+        "main-menu",
+        full_name=full_name,
+        subscription_status=status_text,
+        balance=format_smart_num(user.balance),
     )
 
 
 @router.message(Command("start"))
-async def cmd_start(message: types.Message, session: AsyncSession):
+async def cmd_start(message: types.Message, session: AsyncSession, i18n: I18nContext):
     # Парсинг реферального кода из команды (например: /start ref_12345 или /start 12345)
     referrer_id = None
     if message.text and len(message.text.split()) > 1:
@@ -134,35 +128,45 @@ async def cmd_start(message: types.Message, session: AsyncSession):
         session, 
         message.from_user.id, 
         message.from_user.username,
-        referrer_id=referrer_id
+        referrer_id=referrer_id,
+        telegram_language_code=message.from_user.language_code,
     )
+    if user is None:
+        await message.answer(i18n.get("profile-not-found-start"))
+        return
 
-    await render_main_menu(message, user, message.from_user.full_name)
+    if not user.is_setup_completed:
+        await render_onboarding_language_screen(message, i18n)
+        return
+
+    await render_main_menu(message, user, message.from_user.full_name, i18n)
 
 @router.callback_query(F.data == "back_to_main")
-async def process_back_to_main(callback: types.CallbackQuery, session: AsyncSession):
+async def process_back_to_main(callback: types.CallbackQuery, session: AsyncSession, i18n: I18nContext):
     """Возврат в главное меню из настроек"""
     user = await session.get(User, callback.from_user.id)
     if not user:
-        return await callback.answer("Ошибка профиля", show_alert=True)
+        return await callback.answer(i18n.get("settings-error-profile"), show_alert=True)
 
-    await render_main_menu(callback, user, callback.from_user.full_name)
+    if not user.is_setup_completed:
+        await render_onboarding_language_screen(callback, i18n)
+        await callback.answer()
+        return
+
+    await render_main_menu(callback, user, callback.from_user.full_name, i18n)
     await callback.answer()
 
 @router.callback_query(F.data == "activate_trial")
-async def process_activate_trial(callback: types.CallbackQuery):
-    """Показывает условия активации триала перед фактической проверкой подписки."""
+async def process_activate_trial(callback: types.CallbackQuery, i18n: I18nContext):
+    """Показывает экран предложения триала и переход в новостной канал."""
     if config.NEWS_CHANNEL_ID is None:
         return await callback.answer(
-            "Триал через канал недоступен: NEWS_CHANNEL_ID не задан.",
+            i18n.get("trial-unavailable-news-channel"),
             show_alert=True,
         )
 
-    text = (
-        "❗ Для активации пробного периода (24ч) необходимо быть участником нашего новостного канала. ❗\n"
-        f"В качестве бонуса за подписку вам будет начислено дополнительно {hbold('48 часов')} доступа!"
-    )
-    markup = await _build_trial_subscription_kb(callback.bot)
+    text = i18n.get("trial-screen")
+    markup = await _build_trial_subscription_kb(callback.bot, i18n)
     photo = FSInputFile(ImagePaths.WELCOME)
 
     try:
@@ -185,41 +189,23 @@ async def process_activate_trial(callback: types.CallbackQuery):
         )
     await callback.answer()
 
-@router.callback_query(F.data == "check_sub_and_activate")
-async def process_check_sub_and_activate(callback: types.CallbackQuery, session: AsyncSession):
-    """Проверяет подписку на новостной канал и активирует триал на 72 часа."""
-    if config.NEWS_CHANNEL_ID is None or config.PRIVATE_CHANNEL_ID is None:
+@router.callback_query(F.data == "confirm_trial_activation")
+async def process_confirm_trial(callback: types.CallbackQuery, session: AsyncSession, i18n: I18nContext):
+    """Активирует триал без проверки подписки на новостной канал."""
+    if config.NEWS_CHANNEL_ID is None:
         return await callback.answer(
-            "Режим каналов отключен. Активация триала через канал недоступна.",
+            i18n.get("trial-mode-disabled"),
             show_alert=True,
         )
 
     user = await session.get(User, callback.from_user.id)
     if not user:
-        return await callback.answer("Профиль не найден. Нажмите /start.", show_alert=True)
+        return await callback.answer(i18n.get("profile-not-found-start"), show_alert=True)
 
     if user.is_trial_used:
-        return await callback.answer("Пробный период уже был использован.", show_alert=True)
+        return await callback.answer(i18n.get("trial-already-used"), show_alert=True)
 
-    try:
-        member = await callback.bot.get_chat_member(
-            chat_id=config.NEWS_CHANNEL_ID,
-            user_id=callback.from_user.id
-        )
-    except Exception as e:
-        logger.error(f"Не удалось проверить подписку пользователя {callback.from_user.id}: {e}")
-        return await callback.answer(
-            "Проверка подписки временно недоступна. Попробуйте чуть позже.",
-            show_alert=True
-        )
-
-    if member.status not in {"member", "administrator", "creator"}:
-        return await callback.answer(
-            "Подписка не обнаружена. Пожалуйста, подпишитесь на канал для активации 3-х дневного доступа.",
-            show_alert=True
-        )
-
-    success, msg = await activate_trial(session, callback.from_user.id)
+    success, msg = await user_service.activate_trial(session, callback.from_user.id)
     if not success:
         await session.rollback()
         return await callback.answer(msg, show_alert=True)
@@ -229,11 +215,11 @@ async def process_check_sub_and_activate(callback: types.CallbackQuery, session:
         user_id=callback.from_user.id,
         days=config.TRIAL_DURATION_DAYS,
         price=0,
-        description="Trial 72h"
+        description=f"Trial {config.TRIAL_DURATION_DAYS}d"
     )
     if not activated or not new_end:
         await session.rollback()
-        return await callback.answer("Не удалось активировать пробный период. Попробуйте позже.", show_alert=True)
+        return await callback.answer(i18n.get("trial-activation-failed"), show_alert=True)
 
     await session.commit()
     await invalidate_user_cache()
@@ -250,12 +236,13 @@ async def process_check_sub_and_activate(callback: types.CallbackQuery, session:
         logger.error(f"Ошибка создания ссылки в канал: {e}")
         link_url = None
 
-    success_text = f"✅ {hbold('Пробный период 72ч активирован!')}"
+    success_text = i18n.get("trial-activated-screen")
     
     builder = InlineKeyboardBuilder()
     if link_url:
-        builder.row(InlineKeyboardButton(text="🚀 Зайти в закрытый канал", url=link_url))
-    builder.row(InlineKeyboardButton(text="🏠 Главное меню", callback_data="back_to_main"))
+        builder.row(InlineKeyboardButton(text=i18n.get("main-button-private-channel"), url=link_url))
+    builder.row(InlineKeyboardButton(text=i18n.get("kb-main-settings"), callback_data="open_settings"))
+    builder.row(InlineKeyboardButton(text=i18n.get("main-button-home"), callback_data="back_to_main"))
     markup = builder.as_markup()
     
     photo = FSInputFile(ImagePaths.WELCOME)
@@ -279,14 +266,14 @@ async def process_check_sub_and_activate(callback: types.CallbackQuery, session:
             parse_mode="HTML"
         )
     
-    await callback.answer("Подписка активирована")
+    await callback.answer(i18n.get("trial-activated-toast"))
 
 @router.callback_query(F.data == "get_channel_link")
-async def process_get_channel_link(callback: types.CallbackQuery):
+async def process_get_channel_link(callback: types.CallbackQuery, i18n: I18nContext):
     """Кнопка для получения ссылки, если подписка уже активна"""
     if config.PRIVATE_CHANNEL_ID is None:
         return await callback.answer(
-            "Режим каналов отключен: ссылка в канал недоступна.",
+            i18n.get("channel-mode-disabled"),
             show_alert=True,
         )
 
@@ -298,15 +285,15 @@ async def process_get_channel_link(callback: types.CallbackQuery):
         )
         await callback.message.answer_photo(
             photo=FSInputFile(ImagePaths.WELCOME),
-            caption=f"👉 Ваша ссылка для входа в канал:\n{invite_link.invite_link}",
+            caption=i18n.get("channel-link-caption", invite_link=invite_link.invite_link),
             reply_markup=get_close_button_kb()
         )
         await callback.answer()
     except Exception as e:
         logger.error(f"Ошибка выдачи ссылки: {e}")
-        await callback.answer("Ошибка получения ссылки. Бот не админ.", show_alert=True)
+        await callback.answer(i18n.get("channel-link-error"), show_alert=True)
 
-async def generate_status_text(listener, liq_aggregator, data_queue: asyncio.Queue) -> str:
+async def generate_status_text(listener, liq_aggregator, data_queue: asyncio.Queue, i18n: I18nContext) -> str:
     """Хелпер для генерации текста статуса (используется в команде и кнопке Обновить)"""
     stats = await MetricsService.get_system_stats(listener, liq_aggregator, data_queue)
     latency = MetricsService.get_analytics_latency(listener)
@@ -320,36 +307,41 @@ async def generate_status_text(listener, liq_aggregator, data_queue: asyncio.Que
     queue_size = stats["queue_size"]
     queue_status = "🟢" if queue_size < 50 else "🟡" if queue_size < 200 else "🔴"
 
-    return (
-        f"{status_emoji} {hbold('Система активна')}\n\n"
-        f"🌐 Соединения: {hbold(active_pool)} / {hbold(total_pool)}\n"
-        f"💓 Последний сигнал API: {hbold(latency)} назад\n\n"
-        f"📡 Мониторинг пар: {hbold(stats['active_symbols'])}\n"
-        f"🧠 Событий в кэше: {hbold(stats['total_events'])}\n"
-        f"{queue_status} {hbold('Очередь обработки:')} {hbold(queue_size)}\n"
-        f"📊 Нагрузка: CPU {hbold('{:.1f}'.format(stats['process_cpu_pct']))}% | RAM {hbold('{:.2f}'.format(stats['process_ram_pct']))}%\n\n"
-        f"🕒 Время работы: {hbold(stats['uptime'])}\n"
-        f"🕒 Время сервера: {stats['server_time']} UTC"
+    return i18n.get(
+        "status-screen",
+        status_emoji=status_emoji,
+        title=i18n.get("system-status-title"),
+        active_pool=active_pool,
+        total_pool=total_pool,
+        latency=latency,
+        active_symbols=stats["active_symbols"],
+        total_events=stats["total_events"],
+        queue_status=queue_status,
+        queue_size=queue_size,
+        cpu_pct="{:.1f}".format(stats["process_cpu_pct"]),
+        ram_pct="{:.2f}".format(stats["process_ram_pct"]),
+        uptime=stats["uptime"],
+        server_time=stats["server_time"],
     )
 
 @router.message(Command("status"))
-async def cmd_status(message: types.Message, listener, liq_aggregator, data_queue: asyncio.Queue):
+async def cmd_status(message: types.Message, listener, liq_aggregator, data_queue: asyncio.Queue, i18n: I18nContext):
     """Вызов статуса через команду"""
     await message.delete()
-    text = await generate_status_text(listener, liq_aggregator, data_queue)
+    text = await generate_status_text(listener, liq_aggregator, data_queue, i18n)
     await message.answer(text, reply_markup=get_status_kb(), parse_mode="HTML")
 
 @router.callback_query(F.data == "refresh_status")
-async def process_refresh_status(callback: types.CallbackQuery, listener, liq_aggregator, data_queue: asyncio.Queue):
+async def process_refresh_status(callback: types.CallbackQuery, listener, liq_aggregator, data_queue: asyncio.Queue, i18n: I18nContext):
     """Обновление статуса по кнопке (меняет текст сообщения)"""
-    text = await generate_status_text(listener, liq_aggregator, data_queue)
+    text = await generate_status_text(listener, liq_aggregator, data_queue, i18n)
     try:
         await callback.message.edit_text(text, reply_markup=get_status_kb(), parse_mode="HTML")
-        await callback.answer("✅ Статус успешно обновлен!")
+        await callback.answer(i18n.get("status-refresh-success"))
     except TelegramBadRequest as e:
         # Игнорируем ошибку "Message is not modified", если за секунду статус не поменялся
         if "message is not modified" in str(e).lower():
-            await callback.answer("🔄 Данные не изменились", show_alert=False)
+            await callback.answer(i18n.get("status-refresh-no-changes"), show_alert=False)
         else:
             logger.error(f"Ошибка при обновлении статуса: {e}")
-            await callback.answer("Ошибка обновления", show_alert=True)
+            await callback.answer(i18n.get("status-refresh-error"), show_alert=True)

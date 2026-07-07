@@ -50,7 +50,7 @@ class Settings(BaseSettings):
         30: 25.0
     }
     SUB_MONTHLY_PRICE: float = TARIFFS[30]
-    TRIAL_DURATION_DAYS: int = 3
+    TRIAL_DURATION_DAYS: int = 1
     REFERRAL_BONUS_PERCENT: float = 15.0
 
     # === 3. ИНТЕРФЕЙС И UX (UI Logic) ===
