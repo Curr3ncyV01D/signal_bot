@@ -1,8 +1,10 @@
 import logging
 from datetime import timedelta
-from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_, func, or_
 from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from src.core.localization import resolve_initial_locale
 from src.database.models import User
 from src.database.functions import get_utc_now
 
@@ -16,7 +18,8 @@ async def get_or_create_user(
     session: AsyncSession, 
     user_id: int, 
     username: str | None, 
-    referrer_id: int | None = None
+    referrer_id: int | None = None,
+    telegram_language_code: str | None = None,
 ) -> User | None:
     """Регистрация или получение пользователя с поддержкой реферальной системы."""
     try:
@@ -37,7 +40,8 @@ async def get_or_create_user(
         new_user = User(
             id=user_id, 
             username=username, 
-            referrer_id=valid_referrer_id
+            referrer_id=valid_referrer_id,
+            language_code=resolve_initial_locale(telegram_language_code),
         )
         session.add(new_user)
         await session.commit()
@@ -51,14 +55,35 @@ async def get_or_create_user(
         logger.error(f"Непредвиденная ошибка в get_or_create_user: {e}")
         return await session.get(User, user_id)
 
-async def get_active_users(session: AsyncSession) -> list[User]:
+
+async def complete_user_setup(session: AsyncSession, user_id: int) -> User | None:
+    """Помечает онбординг пользователя завершенным."""
+    try:
+        user = await session.get(User, user_id)
+        if not user:
+            return None
+
+        user.is_setup_completed = True
+        await session.commit()
+        await session.refresh(user)
+        return user
+    except SQLAlchemyError as e:
+        await session.rollback()
+        logger.error(f"Ошибка БД при завершении онбординга для {user_id}: {e}")
+        return None
+    except Exception as e:
+        await session.rollback()
+        logger.error(f"Непредвиденная ошибка при завершении онбординга для {user_id}: {e}")
+        return None
+
+async def get_active_users(session: AsyncSession, force_refresh: bool = False) -> list[User]:
     """Получает пользователей с АКТИВНОЙ подпиской для рассылки алертов (с кешированием)."""
     global _active_users_cache, _last_cache_update
     
     now = get_utc_now()
     
     # Если кеш свежий (меньше 60 секунд) — отдаем его
-    if _last_cache_update and (now - _last_cache_update).total_seconds() < 60:
+    if not force_refresh and _last_cache_update and (now - _last_cache_update).total_seconds() < 60:
         return _active_users_cache
 
     try:
@@ -95,7 +120,7 @@ async def activate_trial(session: AsyncSession, user_id: int) -> tuple[bool, str
             return False, "Пробный период уже был использован."
 
         user.is_trial_used = True
-        return True, "✅ Пробный период на 24 часа успешно активирован!"
+        return True, "✅ Пробный период успешно активирован!"
     except SQLAlchemyError as e:
         await session.rollback()
         logger.error(f"Ошибка БД при активации триала для {user_id}: {e}")

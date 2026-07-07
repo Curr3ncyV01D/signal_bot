@@ -103,6 +103,10 @@ async def dashboard_worker(bot: Bot, liq_aggregator, market_aggregator):
     """
     Фоновый воркер для автоматического обновления закрепленного дэшборда в VIP-канале.
     """
+    if config.NEWS_CHANNEL_ID is None:
+        logger.warning("Дэшборд отключен: NEWS_CHANNEL_ID не задан.")
+        return
+
     logger.info("🚀 Dashboard worker запущен.")
     
     # Первичная проверка ID при старте

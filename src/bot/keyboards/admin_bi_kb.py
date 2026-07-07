@@ -1,37 +1,38 @@
 from aiogram.utils.keyboard import InlineKeyboardBuilder
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram_i18n import LazyProxy
+from aiogram_i18n.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 def get_bi_main_kb() -> InlineKeyboardMarkup:
     """Главное меню BI-аналитики"""
     builder = InlineKeyboardBuilder()
-    builder.row(InlineKeyboardButton(text="💰 Финансы", callback_data="admin_bi_finance"))
-    builder.row(InlineKeyboardButton(text="👥 Аудитория", callback_data="admin_bi_audience"))
-    builder.row(InlineKeyboardButton(text="⚙️ Система", callback_data="admin_bi_system"))
-    builder.row(InlineKeyboardButton(text="⬅️ Назад в админку", callback_data="admin_main"))
+    builder.row(InlineKeyboardButton(text=LazyProxy("kb-admin-bi-finance"), callback_data="admin_bi_finance"))
+    builder.row(InlineKeyboardButton(text=LazyProxy("kb-admin-bi-audience"), callback_data="admin_bi_audience"))
+    builder.row(InlineKeyboardButton(text=LazyProxy("kb-admin-bi-system"), callback_data="admin_bi_system"))
+    builder.row(InlineKeyboardButton(text=LazyProxy("kb-admin-bi-back-admin"), callback_data="admin_main"))
     return builder.as_markup()
 
 def get_bi_finance_kb() -> InlineKeyboardMarkup:
     """Клавиатура блока финансов"""
     builder = InlineKeyboardBuilder()
-    builder.row(InlineKeyboardButton(text="🔄 Обновить", callback_data="admin_bi_finance"))
-    builder.row(InlineKeyboardButton(text="📄 Выгрузить .csv", callback_data="admin_bi_export_csv"))
-    builder.row(InlineKeyboardButton(text="⬅️ Назад", callback_data="admin_bi_main"))
+    builder.row(InlineKeyboardButton(text=LazyProxy("kb-admin-refresh"), callback_data="admin_bi_finance"))
+    builder.row(InlineKeyboardButton(text=LazyProxy("kb-admin-bi-export-csv"), callback_data="admin_bi_export_csv"))
+    builder.row(InlineKeyboardButton(text=LazyProxy("kb-common-back"), callback_data="admin_bi_main"))
     return builder.as_markup()
 
 def get_bi_audience_kb() -> InlineKeyboardMarkup:
     """Клавиатура блока аудитории"""
     builder = InlineKeyboardBuilder()
-    builder.row(InlineKeyboardButton(text="🔄 Обновить", callback_data="admin_bi_audience"))
-    builder.row(InlineKeyboardButton(text="⬅️ Назад", callback_data="admin_bi_main"))
+    builder.row(InlineKeyboardButton(text=LazyProxy("kb-admin-refresh"), callback_data="admin_bi_audience"))
+    builder.row(InlineKeyboardButton(text=LazyProxy("kb-common-back"), callback_data="admin_bi_main"))
     return builder.as_markup()
 
 def get_bi_system_kb() -> InlineKeyboardMarkup:
     """Клавиатура технического блока"""
     builder = InlineKeyboardBuilder()
-    builder.row(InlineKeyboardButton(text="🔄 Обновить", callback_data="admin_bi_system"))
+    builder.row(InlineKeyboardButton(text=LazyProxy("kb-admin-refresh"), callback_data="admin_bi_system"))
     builder.row(
-        InlineKeyboardButton(text="🔍 Найти монету", callback_data="admin_bi_symbol_search"),
-        InlineKeyboardButton(text="📄 Список (TXT)", callback_data="admin_bi_symbol_export")
+        InlineKeyboardButton(text=LazyProxy("kb-admin-bi-find-coin"), callback_data="admin_bi_symbol_search"),
+        InlineKeyboardButton(text=LazyProxy("kb-admin-bi-export-txt"), callback_data="admin_bi_symbol_export")
     )
-    builder.row(InlineKeyboardButton(text="⬅️ Назад", callback_data="admin_bi_main"))
+    builder.row(InlineKeyboardButton(text=LazyProxy("kb-common-back"), callback_data="admin_bi_main"))
     return builder.as_markup()

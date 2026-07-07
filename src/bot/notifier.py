@@ -6,6 +6,7 @@ from aiogram.utils.markdown import hbold, hlink
 from aiogram.types import LinkPreviewOptions, BufferedInputFile, InputFile
 from aiogram.exceptions import TelegramRetryAfter, TelegramForbiddenError
 from src.core.config import config
+from src.core.dto import SignalDTO
 from src.utils import format_smart_num
 
 logger = logging.getLogger(__name__)
@@ -14,14 +15,74 @@ logger = logging.getLogger(__name__)
 broadcaster_semaphore = asyncio.Semaphore(25)
 MAX_PHOTO_CAPTION_LEN = 1024
 
+
+def build_alert_payload(
+    data: dict | SignalDTO,
+    *,
+    threshold_cascade: float | None = None,
+    settings_override: dict[str, bool] | None = None,
+    alert_type: str | None = None,
+    alert_title: str | None = None,
+) -> dict:
+    if "market_data" not in data:
+        payload = dict(data)
+        if threshold_cascade is not None:
+            payload["threshold_cascade"] = threshold_cascade
+        if settings_override:
+            payload.update(settings_override)
+        if alert_type is not None:
+            payload["alert_type"] = alert_type
+        if alert_title is not None:
+            payload["alert_title"] = alert_title
+        return payload
+
+    dto = data
+    market_data = dto["market_data"]
+    impact_metrics = dto["impact_metrics"]
+    trade_metrics = dto["trade_metrics"]
+    settings = dict(dto["settings"])
+
+    if settings_override:
+        settings.update(settings_override)
+
+    return {
+        "signal_id": dto["signal_id"],
+        "symbol": dto["symbol"],
+        "side_label": dto["side_label"],
+        "alert_type": alert_type or dto["alert_type"],
+        "alert_title": alert_title or dto["alert_title"],
+        "sum_5m": market_data["sum_5m"],
+        "sum_1h": market_data["sum_1h"],
+        "sum_cascade": market_data["sum_cascade"],
+        "cascade_count": market_data["cascade_count"],
+        "oi_pct": market_data["oi_pct"],
+        "oi_val": market_data["oi_val"],
+        "price_pct": market_data["price_pct"],
+        "total_oi": market_data["total_oi"],
+        "funding": market_data["funding"],
+        "rsi": market_data["rsi"],
+        "cap_ratio": impact_metrics["cap_ratio"],
+        "vol_ratio": impact_metrics["vol_ratio"],
+        "live_mcap": impact_metrics["live_mcap"],
+        "is_fallback": impact_metrics["is_fallback"],
+        "delta_5m": trade_metrics["delta_5m"],
+        "delta_30m": trade_metrics["delta_30m"],
+        "show_oi": settings["show_oi"],
+        "show_cvd": settings["show_cvd"],
+        "show_rsi": settings["show_rsi"],
+        "used_mcap": settings["used_mcap"],
+        "threshold_cascade": threshold_cascade if threshold_cascade is not None else 5000.0,
+        "timestamp": dto["timestamp"],
+    }
+
 class AlertFormatter:
     """Профессиональный конструктор уведомлений (SOLID)"""
     
-    def __init__(self, data: dict):
-        self.data = data
-        self.symbol = data.get("symbol", "UNKNOWN")
-        self.side_label = data.get("side_label", "UNKNOWN")
-        
+    def __init__(self, data: dict | SignalDTO):
+        self.data = build_alert_payload(data)
+        self.symbol = self.data.get("symbol", "UNKNOWN")
+        self.side_label = self.data.get("side_label", "UNKNOWN")
+
     @staticmethod
     def format_money(value: float | None) -> str:
         if value is None:
@@ -119,7 +180,7 @@ class AlertFormatter:
         
         res = ""
         if self.data.get("alert_type") == "CASCADE" or count_cas >= getattr(config, 'CASCADE_TRIGGER_COUNT', 10):
-            res += f"{cascade_emoji} {hbold('LIQ КАСКАД:')} {count_cas} шт ({self.format_money(sum_cas)})\n"
+            res += f"{cascade_emoji} {hbold('LIQ CASCADE:')} x{count_cas} ({self.format_money(sum_cas)})\n"
         else:
             res = f"{emoji_5m} {hbold(f'{side_5m} LIQ (5m):')} {self.format_money(sum_5m)}\n"
             
@@ -203,7 +264,7 @@ class AlertFormatter:
         )
         
         # Ссылка на инструкцию (Telegraph)
-        guide = f"\n\n📖 {hlink('Как читать этот сигнал?', config.GUIDE_URL)}"
+        guide = f"\n\n📖 {hlink('Как читать этот сигнал?/How to read this alert?', config.GUIDE_URL)}"
         
         return f"\n{links}{guide}"
 

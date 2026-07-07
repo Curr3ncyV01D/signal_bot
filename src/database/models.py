@@ -11,6 +11,8 @@ class User(Base):
     
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)  # Telegram ID
     username: Mapped[str] = mapped_column(String, nullable=True)
+    language_code: Mapped[str] = mapped_column(String(2), default="ru")
+    is_setup_completed: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=get_utc_now)
     is_admin: Mapped[bool] = mapped_column(Boolean, default=False)
     is_blocked: Mapped[bool] = mapped_column(Boolean, default=False)
@@ -90,6 +92,13 @@ class ChannelSettings(Base):
     # Технические поля канала
     dashboard_message_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     last_summary_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class SystemMetadata(Base):
+    __tablename__ = "system_metadata"
+
+    key: Mapped[str] = mapped_column(String(100), primary_key=True)
+    value: Mapped[str] = mapped_column(String(1024), nullable=False)
 
 
 class Liquidation(Base):
