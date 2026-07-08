@@ -140,9 +140,6 @@ async def main():
         historical_data = await get_recent_liquidations(session_db, minutes=60)
         liq_aggregator.load_historical_data(historical_data)
 
-        await ChannelService.get_settings(session_db)
-        logging.info("⚙️ Настройки канала успешно загружены в кэш.")
-
         # Загрузка данных об эмиссии монет
         fundamentals_query = select(CoinFundamental)
         fundamentals_result = await session_db.execute(fundamentals_query)
