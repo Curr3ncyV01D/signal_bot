@@ -56,8 +56,8 @@ settings-title =
     <b>📊 Фильтры ликвидаций (Режим: { $threshold_mode }):</b>
     🔶 Порог объема: <b>${ $threshold }</b>
     🔸 Порог каскада: <b>${ $threshold_cascade }</b>
-    🔷 Порог объема MCAP: <b>{ $threshold_mcap_pct }%</b> (мин. <b>${ $threshold_mcap_usd_min }</b>)
-    🔹 Порог каскада MCAP: <b>{ $threshold_cascade_mcap_pct }%</b> (мин. <b>${ $threshold_cascade_mcap_usd_min }</b>)
+    🔷 Порог объема MCAP: <b>{ $threshold_mcap_pct }</b> (мин. <b>${ $threshold_mcap_usd_min }</b>)
+    🔹 Порог каскада MCAP: <b>{ $threshold_cascade_mcap_pct }</b> (мин. <b>${ $threshold_cascade_mcap_usd_min }</b>)
 
     <b>📊 Фильтры аналитики (OI):</b>
     📈 Мин. рост OI: <b>{ $threshold_oi_percent }</b> и <b>${ $threshold_oi_value }</b>
@@ -82,9 +82,9 @@ settings-enter-mcap-cascade-pct =
     Рекомендуемое значение: 0.01%
 settings-enter-mcap-cascade-min-usd = Введите минимальный долларовый пол для каскада (например, 5000).
 settings-positive-number-required = ❌ Пожалуйста, введите положительное число.
-settings-mcap-pct-updated = ✅ Порог объема установлен на { $value }%
+settings-mcap-pct-updated = ✅ Порог объема установлен на { $value }
 settings-mcap-min-usd-updated = ✅ Мин. порог объема установлен на ${ $value }
-settings-mcap-cascade-pct-updated = ✅ Порог каскада установлен на { $value }%
+settings-mcap-cascade-pct-updated = ✅ Порог каскада установлен на { $value }
 settings-mcap-cascade-min-usd-updated = ✅ Мин. порог каскада установлен на ${ $value }
 
 help-liquidations =

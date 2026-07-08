@@ -55,8 +55,8 @@ settings-title =
     <b>📊 Liquidation Filters (Mode: { $threshold_mode }):</b>
     🔶 Volume threshold: <b>${ $threshold }</b>
     🔸 Cascade threshold: <b>${ $threshold_cascade }</b>
-    🔷 MCAP volume threshold: <b>{ $threshold_mcap_pct }%</b> (min. <b>${ $threshold_mcap_usd_min }</b>)
-    🔹 MCAP cascade threshold: <b>{ $threshold_cascade_mcap_pct }%</b> (min. <b>${ $threshold_cascade_mcap_usd_min }</b>)
+    🔷 MCAP volume threshold: <b>{ $threshold_mcap_pct }</b> (min. <b>${ $threshold_mcap_usd_min }</b>)
+    🔹 MCAP cascade threshold: <b>{ $threshold_cascade_mcap_pct }</b> (min. <b>${ $threshold_cascade_mcap_usd_min }</b>)
 
     <b>📊 Analytics Filters (OI):</b>
     📈 Min. OI growth: <b>{ $threshold_oi_percent }</b> and <b>${ $threshold_oi_value }</b>
@@ -81,9 +81,9 @@ settings-enter-mcap-cascade-pct =
     Recommended value: 0.01%
 settings-enter-mcap-cascade-min-usd = Enter the minimum USD floor for cascades (for example, 5000).
 settings-positive-number-required = ❌ Please enter a positive number.
-settings-mcap-pct-updated = ✅ Volume threshold set to { $value }%
+settings-mcap-pct-updated = ✅ Volume threshold set to { $value }
 settings-mcap-min-usd-updated = ✅ Minimum volume floor set to ${ $value }
-settings-mcap-cascade-pct-updated = ✅ Cascade threshold set to { $value }%
+settings-mcap-cascade-pct-updated = ✅ Cascade threshold set to { $value }
 settings-mcap-cascade-min-usd-updated = ✅ Minimum cascade floor set to ${ $value }
 
 help-liquidations =

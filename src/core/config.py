@@ -47,7 +47,8 @@ class Settings(BaseSettings):
     # Бизнес-правила (Тарифы и деньги)
     # Тарифы подписки (дней: цена_usdt)
     TARIFFS: dict[int, float] = {
-        30: 25.0
+        7: 7.5,
+        30: 25.0,
     }
     SUB_MONTHLY_PRICE: float = TARIFFS[30]
     TRIAL_DURATION_DAYS: int = 1

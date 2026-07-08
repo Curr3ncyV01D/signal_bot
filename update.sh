@@ -27,18 +27,18 @@ git pull origin $CURRENT_BRANCH
 echo -e "${GREEN}🏗 Пересборка контейнеров для проекта: $PROJECT_NAME...${NC}"
 docker compose up -d --build
 
-# Проверка запуска (сервис в compose называется "bot")
-echo -e "${GREEN}⏳ Проверка запуска сервиса bot...${NC}"
+# Проверка запуска (сервис в compose называется "brain")
+echo -e "${GREEN}⏳ Проверка запуска сервиса brain...${NC}"
 sleep 5
-STATE=$(docker compose ps bot --format "{{.State}}")
+STATE=$(docker compose ps brain --format "{{.State}}")
 
 if [ "$STATE" == "running" ]; then
-    echo -e "${GREEN}✅ Контейнер bot запущен (Проект: $PROJECT_NAME).${NC}"
+    echo -e "${GREEN}✅ Контейнер    запущен (Проект: $PROJECT_NAME).${NC}"
     
     echo -e "${GREEN}📋 Применение миграций...${NC}"
-    docker compose exec -T bot alembic upgrade head
+    docker compose exec -T brain alembic upgrade head
 else
-    echo -e "${RED}❌ Ошибка запуска. Проверь логи: docker compose logs bot${NC}"
+    echo -e "${RED}❌ Ошибка запуска. Проверь логи: docker compose logs brain${NC}"
     exit 1
 fi
 

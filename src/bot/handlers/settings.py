@@ -80,13 +80,13 @@ async def process_mcap_parameter(message: types.Message, state: FSMContext, sess
 
     if current_state == SettingsStates.waiting_for_mcap_pct:
         update_data["threshold_mcap_pct"] = val
-        msg = i18n.get("settings-mcap-pct-updated", value=format_smart_num(val))
+        msg = i18n.get("settings-mcap-pct-updated", value=format_smart_num(val, is_percent=True, decimal_places=4))
     elif current_state == SettingsStates.waiting_for_mcap_min_usd:
         update_data["threshold_mcap_usd_min"] = val
         msg = i18n.get("settings-mcap-min-usd-updated", value=format_smart_num(val))
     elif current_state == SettingsStates.waiting_for_mcap_cas_pct:
         update_data["threshold_cascade_mcap_pct"] = val
-        msg = i18n.get("settings-mcap-cascade-pct-updated", value=format_smart_num(val))
+        msg = i18n.get("settings-mcap-cascade-pct-updated", value=format_smart_num(val, is_percent=True, decimal_places=4))
     elif current_state == SettingsStates.waiting_for_mcap_cas_min_usd:
         update_data["threshold_cascade_mcap_usd_min"] = val
         msg = i18n.get("settings-mcap-cascade-min-usd-updated", value=format_smart_num(val))
@@ -168,11 +168,11 @@ async def render_settings_menu(event: types.Message | types.CallbackQuery, user:
         threshold_mode=user.threshold_mode,
         threshold=format_smart_num(user.threshold),
         threshold_cascade=format_smart_num(user.threshold_cascade),
-        threshold_mcap_pct=format_smart_num(user.threshold_mcap_pct),
+        threshold_mcap_pct=format_smart_num(user.threshold_mcap_pct, is_percent=True, decimal_places=4),
         threshold_mcap_usd_min=format_smart_num(user.threshold_mcap_usd_min),
-        threshold_cascade_mcap_pct=format_smart_num(user.threshold_cascade_mcap_pct),
+        threshold_cascade_mcap_pct=format_smart_num(user.threshold_cascade_mcap_pct, is_percent=True, decimal_places=4),
         threshold_cascade_mcap_usd_min=format_smart_num(user.threshold_cascade_mcap_usd_min),
-        threshold_oi_percent=format_smart_num(user.threshold_oi_percent, is_percent=True),
+        threshold_oi_percent=format_smart_num(user.threshold_oi_percent, is_percent=True, decimal_places=1),
         threshold_oi_value=format_smart_num(user.threshold_oi_value),
     )
 
