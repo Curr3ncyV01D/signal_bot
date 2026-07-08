@@ -3,7 +3,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 
 from aiogram import Bot
-from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
+from aiogram.exceptions import TelegramForbiddenError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -152,7 +152,7 @@ async def _handle_auto_renewal(
             (
                 "⚠️ <b>Недостаточно средств!</b>\n\n"
                 "Мы не смогли продлить подписку автоматически. Пополните баланс, "
-                "чтобы не потерять доступ к каналу через 1 час."
+                "чтобы не потерять доступ к персональным сигналам через 1 час."
             )
         )
         if sent:
@@ -161,37 +161,27 @@ async def _handle_auto_renewal(
 
     return False
 
-async def _kick_expired_user(session: AsyncSession, bot: Bot, user: User) -> None:
-    if config.PRIVATE_CHANNEL_ID is not None:
-        try:
-            await bot.ban_chat_member(chat_id=config.PRIVATE_CHANNEL_ID, user_id=user.id)
-            await bot.unban_chat_member(chat_id=config.PRIVATE_CHANNEL_ID, user_id=user.id)
-            logger.info(f"Пользователь {user.id} исключен из канала.")
-        except TelegramBadRequest as e:
-            logger.warning(f"Ошибка при исключении {user.id} (возможно, уже покинул канал сам): {e}")
-    else:
-        logger.info("PRIVATE_CHANNEL_ID не задан. Исключение из канала пропущено.")
-
+async def _handle_subscription_expiry(session: AsyncSession, bot: Bot, user: User) -> None:
     await _safe_send_message(
         bot,
         user.id,
         (
             "⚠️ <b>Срок действия вашей подписки/триала истек.</b>\n\n"
-            "Вы были исключены из VIP-канала, а рассылка сигналов приостановлена.\n"
-            "Нажмите /start для обновления доступа."
+            "Персональная рассылка сигналов приостановлена.\n"
+            "Нажмите /start и продлите подписку, чтобы восстановить доступ."
         )
     )
 
     user.subscription_end = None
     user.last_expiry_warning_at = None
     await session.commit()
-    await invalidate_user_cache()
+    await invalidate_user_cache(user.id)
 
 async def bouncer_worker(bot: Bot, interval_minutes: int = 15):
     """
     Фоновая задача "Вышибала".
-    Проверяет автопродление, уведомляет о нехватке средств и удаляет
-    пользователей из канала после истечения подписки.
+    Проверяет автопродление, уведомляет о нехватке средств и
+    отключает персональную рассылку после истечения подписки.
     """
     logger.info(f"👮‍♂️ Вышибала (Bouncer) запущен. Проверка каждые {interval_minutes} минут.")
 
@@ -226,7 +216,7 @@ async def bouncer_worker(bot: Bot, interval_minutes: int = 15):
                             continue
 
                         if user.subscription_end <= now:
-                            await _kick_expired_user(session, bot, user)
+                            await _handle_subscription_expiry(session, bot, user)
                     except Exception as e:
                         await session.rollback()
                         logger.error(f"Неизвестная ошибка при обработке {user.id}: {e}")

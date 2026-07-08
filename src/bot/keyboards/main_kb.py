@@ -33,7 +33,6 @@ def get_start_kb(user: User) -> InlineKeyboardMarkup:
     if not has_sub:
         builder.row(InlineKeyboardButton(text=LazyProxy("kb-main-renew"), callback_data="buy_subscription"))
     else:
-        builder.row(InlineKeyboardButton(text=LazyProxy("kb-main-private-channel"), callback_data="get_channel_link"))
         if days_left is not None and days_left <= 5:
             builder.row(
                 InlineKeyboardButton(

@@ -34,7 +34,6 @@ class Settings(BaseSettings):
     REDIS_CACHE_INVALIDATION_CHANNEL: str = "csl:cache_invalidation"
     REDIS_CHART_CACHE_PREFIX: str = "csl:chart_cache"
     REDIS_PENDING_IDLE_MS: int = 30000
-    PRIVATE_CHANNEL_ID: str | None = None
     LOG_CHANNEL_ID: str | None = None
     NEWS_CHANNEL_ID: str | None = None
     NEWS_CHANNEL_URL: str | None = None
@@ -104,7 +103,7 @@ class Settings(BaseSettings):
     # Фильтрация монет
     IGNORED_SYMBOLS: list[str] = [] 
 
-    @field_validator("PRIVATE_CHANNEL_ID", "LOG_CHANNEL_ID", "NEWS_CHANNEL_ID", mode="before")
+    @field_validator("LOG_CHANNEL_ID", "NEWS_CHANNEL_ID", mode="before")
     @classmethod
     def parse_optional_channel_ids(cls, value: str | None) -> str | None:
         if value is None:
@@ -135,13 +134,6 @@ class Settings(BaseSettings):
                 data = [item.strip() for item in value.split(",")]
             return [str(item).strip().upper() for item in data if str(item).strip()]
         return value
-
-    @property
-    def is_channel_mode_enabled(self) -> bool:
-        return (
-            self.PRIVATE_CHANNEL_ID is not None
-            and self.NEWS_CHANNEL_ID is not None
-        )
 
     # Сетевые параметры
     PROXY_URL: str | None = None 

@@ -16,7 +16,7 @@ from src.database.crud.user_service import get_or_create_user
 from src.database.models import User
 from src.database.functions import get_utc_now
 from src.bot.handlers.onboarding import render_onboarding_language_screen
-from src.bot.keyboards import get_start_kb, get_status_kb, get_close_button_kb
+from src.bot.keyboards import get_start_kb, get_status_kb
 from src.services.analyzer import invalidate_user_cache
 from src.services.metrics_service import MetricsService
 from src.utils import format_datetime, format_smart_num
@@ -224,23 +224,17 @@ async def process_confirm_trial(callback: types.CallbackQuery, session: AsyncSes
     await session.commit()
     await invalidate_user_cache()
 
-    # Формируем экран успеха
-    try:
-        invite_link = await callback.bot.create_chat_invite_link(
-            chat_id=config.PRIVATE_CHANNEL_ID,
-            name=f"Trial_{callback.from_user.id}",
-            creates_join_request=True
-        )
-        link_url = invite_link.invite_link
-    except Exception as e:
-        logger.error(f"Ошибка создания ссылки в канал: {e}")
-        link_url = None
-
     success_text = i18n.get("trial-activated-screen")
     
     builder = InlineKeyboardBuilder()
-    if link_url:
-        builder.row(InlineKeyboardButton(text=i18n.get("main-button-private-channel"), url=link_url))
+    news_channel_url = await _get_news_channel_url(callback.bot)
+    if news_channel_url:
+        builder.row(
+            InlineKeyboardButton(
+                text=i18n.get("trial-button-news-channel"),
+                url=news_channel_url,
+            )
+        )
     builder.row(InlineKeyboardButton(text=i18n.get("kb-main-settings"), callback_data="open_settings"))
     builder.row(InlineKeyboardButton(text=i18n.get("main-button-home"), callback_data="back_to_main"))
     markup = builder.as_markup()
@@ -267,31 +261,6 @@ async def process_confirm_trial(callback: types.CallbackQuery, session: AsyncSes
         )
     
     await callback.answer(i18n.get("trial-activated-toast"))
-
-@router.callback_query(F.data == "get_channel_link")
-async def process_get_channel_link(callback: types.CallbackQuery, i18n: I18nContext):
-    """Кнопка для получения ссылки, если подписка уже активна"""
-    if config.PRIVATE_CHANNEL_ID is None:
-        return await callback.answer(
-            i18n.get("channel-mode-disabled"),
-            show_alert=True,
-        )
-
-    try:
-        invite_link = await callback.bot.create_chat_invite_link(
-            chat_id=config.PRIVATE_CHANNEL_ID,
-            name=f"Sub_{callback.from_user.id}",
-            creates_join_request=True
-        )
-        await callback.message.answer_photo(
-            photo=FSInputFile(ImagePaths.WELCOME),
-            caption=i18n.get("channel-link-caption", invite_link=invite_link.invite_link),
-            reply_markup=get_close_button_kb()
-        )
-        await callback.answer()
-    except Exception as e:
-        logger.error(f"Ошибка выдачи ссылки: {e}")
-        await callback.answer(i18n.get("channel-link-error"), show_alert=True)
 
 async def generate_status_text(listener, liq_aggregator, data_queue: asyncio.Queue, i18n: I18nContext) -> str:
     """Хелпер для генерации текста статуса (используется в команде и кнопке Обновить)"""

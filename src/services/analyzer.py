@@ -10,7 +10,6 @@ from src.core.config import config
 from src.core.dto import SignalAlertType, SignalDTO, SignalOhlcRow, SignalSideLabel
 from src.core.localization import normalize_locale_code
 from src.core.redis_bus import redis_bus
-from src.database.crud.channel_service import ChannelService
 from src.database.crud.user_service import get_active_users
 from src.database.session import async_session
 from src.services.logic.trigger_engine import (
@@ -23,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 
 class CachedAlertTarget(TypedDict):
-    id: int | str
+    id: int
     language_code: str
     threshold: float
     threshold_cascade: float
@@ -66,7 +65,7 @@ def _decode_redis_payload(payload: bytes | str | None) -> bytes | None:
     return payload.encode("utf-8")
 
 
-def _build_cached_target(source: Any, target_id: int | str) -> CachedAlertTarget:
+def _build_cached_target(source: Any, target_id: int) -> CachedAlertTarget:
     return {
         "id": target_id,
         "language_code": normalize_locale_code(getattr(source, "language_code", None)),
@@ -105,26 +104,16 @@ async def _update_cache_logic() -> None:
             min_threshold = min(min_threshold, target["threshold"])
             min_cascade = min(min_cascade, target["threshold_cascade"])
 
-        if config.PRIVATE_CHANNEL_ID is not None:
-            channel_settings = await ChannelService.get_settings(session)
-            if channel_settings and channel_settings.is_active:
-                channel_target = _build_cached_target(channel_settings, "CHANNEL")
-                cached_targets.append(channel_target)
-                min_threshold = min(min_threshold, channel_target["threshold"])
-                min_cascade = min(min_cascade, channel_target["threshold_cascade"])
-        else:
-            pass
-
         _cached_users = cached_targets
         _min_system_threshold = (
             max(min_threshold, config.MIN_LIQ_VALUE_FILTER)
             if cached_targets
-            else config.MIN_LIQ_VALUE_FILTER
+            else float("inf")
         )
         _min_system_cascade = (
             min_cascade
             if cached_targets
-            else config.CASCADE_TRIGGER_COUNT * 1000
+            else float("inf")
         )
 
 

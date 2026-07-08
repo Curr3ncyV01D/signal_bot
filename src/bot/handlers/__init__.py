@@ -2,7 +2,6 @@ from aiogram import Router
 from .onboarding import router as onboarding_router
 from .commands import router as commands_router
 from .settings import router as settings_router
-from .join_requests import router as join_requests_router
 from .common import router as common_router
 from .admin import router as admin_router
 from .admin_bi import router as admin_bi_router
@@ -18,7 +17,6 @@ main_router.include_routers(
     wallet_router,
     shop_router,
     settings_router, 
-    join_requests_router, 
     common_router, 
     admin_router,
     admin_bi_router,

@@ -252,7 +252,7 @@ shop-subscription-menu =
     💎 <b>VIP Subscription</b>
 
     VIP access benefits:
-    • Access to the private alerts channel
+    • Personal alert flow inside the bot
     • Personal bot settings
     • Real-time analytics
 
@@ -288,7 +288,7 @@ shop-purchase-success =
     🎉 <b>Subscription activated successfully!</b>
 
     📅 Active until: { $new_end }
-    💰 Deducted from balance: { $price }{ $link_text }
+    💰 Deducted from balance: { $price }
 shop-subscription-extended = Subscription extended
 shop-purchase-cancelled = Purchase cancelled
 

@@ -14,7 +14,6 @@ from src.core.config import config, setup_logging
 from src.core.dto import SignalAlertType, SignalDTO
 from src.core.localization import normalize_locale_code
 from src.core.redis_bus import LockResult, redis_bus
-from src.database.crud.channel_service import ChannelService
 from src.database.crud.user_service import get_active_users, get_user_by_id
 from src.database.functions import get_utc_now
 from src.database.session import async_session
@@ -32,7 +31,7 @@ logger = logging.getLogger(__name__)
 
 
 class CachedAlertTarget(TypedDict):
-    id: int | str
+    id: int
     language_code: str
     threshold: float
     threshold_cascade: float
@@ -68,7 +67,7 @@ class TriggerResult(TypedDict):
     used_mcap: bool
 
 
-def _msg_history_redis_key(target_id: int | str, symbol: str, side_label: str) -> str:
+def _msg_history_redis_key(target_id: int, symbol: str, side_label: str) -> str:
     return f"csl:msg:history:{target_id}:{symbol}:{side_label}"
 
 
@@ -80,7 +79,7 @@ def _decode_redis_payload(payload: bytes | str | None) -> bytes | None:
     return payload.encode("utf-8")
 
 
-def _build_cached_target(source: Any, target_id: int | str) -> CachedAlertTarget:
+def _build_cached_target(source: Any, target_id: int) -> CachedAlertTarget:
     return {
         "id": target_id,
         "language_code": normalize_locale_code(getattr(source, "language_code", None)),
@@ -249,18 +248,13 @@ class MessengerWorker:
             for user in active_users:
                 cached_targets.append(_build_cached_target(user, user.id))
 
-            if config.PRIVATE_CHANNEL_ID is not None:
-                channel_settings = await ChannelService.get_settings(session)
-                if channel_settings and channel_settings.is_active:
-                    cached_targets.append(_build_cached_target(channel_settings, "CHANNEL"))
-
         async with self._cache_lock:
             self._cached_users = cached_targets
 
         logger.info("Кэш messenger worker обновлен: %s адресатов.", len(cached_targets))
 
     async def _refresh_single_target(self, raw_target_id: str) -> None:
-        if raw_target_id in {"ALL", "*", "CHANNEL"}:
+        if raw_target_id in {"ALL", "*"}:
             await self._load_cache()
             return
 
@@ -497,13 +491,7 @@ class MessengerWorker:
             if trigger_result is None:
                 continue
 
-            if target["id"] == "CHANNEL":
-                if config.PRIVATE_CHANNEL_ID is None:
-                    logger.info("PRIVATE_CHANNEL_ID не задан. Отправка сигнала в канал пропущена.")
-                    continue
-                recipient_id = int(config.PRIVATE_CHANNEL_ID)
-            else:
-                recipient_id = int(target["id"])
+            recipient_id = target["id"]
             payload = build_alert_payload(
                 dto,
                 threshold_cascade=trigger_result["threshold_cascade"],

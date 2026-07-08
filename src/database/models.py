@@ -54,46 +54,6 @@ class User(Base):
     # Отношения
     transactions: Mapped[list["Transaction"]] = relationship(back_populates="user")
 
-class ChannelSettings(Base):
-    __tablename__ = "channel_settings"
-    
-    # Всегда id=1 для глобальных настроек
-    id: Mapped[int] = mapped_column(primary_key=True, default=1)
-    
-    # Главный тумблер канала
-    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
-
-    # Ликвидация
-    threshold: Mapped[float] = mapped_column(Float, default=100000.0)
-    threshold_cascade: Mapped[float] = mapped_column(Float, default=50000.0)
-
-    threshold_mode: Mapped[str] = mapped_column(String(20), default="USD")
-    threshold_mcap_pct: Mapped[float] = mapped_column(Float, default=0.005)
-    threshold_mcap_usd_min: Mapped[float] = mapped_column(Float, default=1000.0)
-    threshold_cascade_mcap_pct: Mapped[float] = mapped_column(Float, default=0.01)
-    threshold_cascade_mcap_usd_min: Mapped[float] = mapped_column(Float, default=5000.0)
-
-    alert_cascade: Mapped[bool] = mapped_column(Boolean, default=True)
-    alert_volume: Mapped[bool] = mapped_column(Boolean, default=True)
-    alert_squeeze: Mapped[bool] = mapped_column(Boolean, default=True)
-    alert_longs: Mapped[bool] = mapped_column(Boolean, default=True)
-    alert_shorts: Mapped[bool] = mapped_column(Boolean, default=True)
-    threshold_vol_pct: Mapped[float] = mapped_column(Float, default=0.0)
-
-    # Открытый интерес (OI)
-    alert_oi: Mapped[bool] = mapped_column(Boolean, default=True)
-    threshold_oi_percent: Mapped[float] = mapped_column(Float, default=10.0)
-    threshold_oi_value: Mapped[float] = mapped_column(Float, default=1000000.0)
-
-    # CVD и RSI
-    alert_cvd: Mapped[bool] = mapped_column(Boolean, default=True)
-    alert_rsi: Mapped[bool] = mapped_column(Boolean, default=True)
-
-    # Технические поля канала
-    dashboard_message_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
-    last_summary_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
-
-
 class SystemMetadata(Base):
     __tablename__ = "system_metadata"
 

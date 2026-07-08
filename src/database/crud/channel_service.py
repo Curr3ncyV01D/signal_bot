@@ -1,11 +1,38 @@
 import logging
-from dataclasses import dataclass, fields
+from dataclasses import asdict, dataclass, fields
 from datetime import datetime
-from sqlalchemy import select
+import sqlalchemy as sa
+from sqlalchemy import BigInteger, Boolean, DateTime, Float, Integer, MetaData, String, Table, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from src.database.models import ChannelSettings
 
 logger = logging.getLogger(__name__)
+
+channel_settings_table = Table(
+    "channel_settings",
+    MetaData(),
+    sa.Column("id", Integer, primary_key=True),
+    sa.Column("is_active", Boolean, nullable=False),
+    sa.Column("threshold", Float, nullable=False),
+    sa.Column("threshold_cascade", Float, nullable=False),
+    sa.Column("alert_cascade", Boolean, nullable=False),
+    sa.Column("alert_volume", Boolean, nullable=False),
+    sa.Column("alert_squeeze", Boolean, nullable=False),
+    sa.Column("alert_longs", Boolean, nullable=False),
+    sa.Column("alert_shorts", Boolean, nullable=False),
+    sa.Column("threshold_vol_pct", Float, nullable=False),
+    sa.Column("threshold_mode", String(20), nullable=False),
+    sa.Column("threshold_mcap_pct", Float, nullable=False),
+    sa.Column("threshold_mcap_usd_min", Float, nullable=False),
+    sa.Column("threshold_cascade_mcap_pct", Float, nullable=False),
+    sa.Column("threshold_cascade_mcap_usd_min", Float, nullable=False),
+    sa.Column("alert_oi", Boolean, nullable=False),
+    sa.Column("threshold_oi_percent", Float, nullable=False),
+    sa.Column("threshold_oi_value", Float, nullable=False),
+    sa.Column("alert_cvd", Boolean, nullable=False),
+    sa.Column("alert_rsi", Boolean, nullable=False),
+    sa.Column("dashboard_message_id", BigInteger, nullable=True),
+    sa.Column("last_summary_at", DateTime, nullable=True),
+)
 
 @dataclass
 class ChannelSettingsData:
@@ -35,16 +62,20 @@ class ChannelSettingsData:
     last_summary_at: datetime | None = None
 
     @classmethod
-    def from_orm(cls, obj: ChannelSettings):
+    def from_mapping(cls, row: dict):
         data = {}
         for field in fields(cls):
-            if hasattr(obj, field.name):
-                data[field.name] = getattr(obj, field.name)
+            if field.name in row:
+                data[field.name] = row[field.name]
         return cls(**data)
 
 class ChannelService:
     # Глобальный кэш настроек в оперативной памяти
     _cached_settings: ChannelSettingsData | None = None
+
+    @staticmethod
+    def _default_payload() -> dict:
+        return asdict(ChannelSettingsData())
 
     @classmethod
     async def get_settings(cls, session: AsyncSession) -> ChannelSettingsData:
@@ -54,27 +85,27 @@ class ChannelService:
         Если в БД нет записи (первый запуск) — создает её.
         """
         try:
-            result = await session.execute(select(ChannelSettings).where(ChannelSettings.id == 1))
-            settings_orm = result.scalar_one_or_none()
-            
-            if not settings_orm:
-                # Инициализация первой записи
-                settings_orm = ChannelSettings(id=1)
-                session.add(settings_orm)
+            result = await session.execute(
+                select(channel_settings_table).where(channel_settings_table.c.id == 1)
+            )
+            row = result.mappings().one_or_none()
+
+            if row is None:
+                default_payload = cls._default_payload()
+                await session.execute(channel_settings_table.insert().values(**default_payload))
                 await session.commit()
-                await session.refresh(settings_orm)
                 logger.info("Создана базовая запись настроек канала в БД.")
-            else:
-                # Гарантируем актуальность данных из БД
-                await session.refresh(settings_orm)
-            
-            # Конвертируем в plain object для кэша
-            cls._cached_settings = ChannelSettingsData.from_orm(settings_orm)
+                cls._cached_settings = ChannelSettingsData(**default_payload)
+                return cls._cached_settings
+
+            cls._cached_settings = ChannelSettingsData.from_mapping(dict(row))
             return cls._cached_settings
-            
         except Exception as e:
-            logger.error(f"Ошибка при получении настроек канала: {e}")
-            # Возвращаем дефолтный объект из кэша или новый, чтобы бот не упал
+            logger.warning(
+                "Не удалось получить настройки канала. "
+                "Вероятно, переходная стадия между Фазой 1 и Фазой 2: %s",
+                e,
+            )
             return cls._cached_settings or ChannelSettingsData()
 
     @classmethod
@@ -83,27 +114,48 @@ class ChannelService:
         Универсальный метод для обновления любых полей настроек.
         """
         try:
-            # Получаем ORM объект для обновления
-            result = await session.execute(select(ChannelSettings).where(ChannelSettings.id == 1))
-            settings_orm = result.scalar_one_or_none()
-            
-            if not settings_orm:
-                settings_orm = ChannelSettings(id=1)
-                session.add(settings_orm)
+            allowed_keys = {field.name for field in fields(ChannelSettingsData)}
+            update_payload = {key: value for key, value in kwargs.items() if key in allowed_keys}
+            if not update_payload:
+                return cls._cached_settings or ChannelSettingsData()
 
-            for key, value in kwargs.items():
-                if hasattr(settings_orm, key):
-                    setattr(settings_orm, key, value)
-            
+            result = await session.execute(
+                select(channel_settings_table).where(channel_settings_table.c.id == 1)
+            )
+            row = result.mappings().one_or_none()
+
+            if row is None:
+                payload = cls._default_payload()
+                payload.update(update_payload)
+                await session.execute(channel_settings_table.insert().values(**payload))
+                await session.commit()
+                cls._cached_settings = ChannelSettingsData(**payload)
+                return cls._cached_settings
+
+            await session.execute(
+                channel_settings_table.update()
+                .where(channel_settings_table.c.id == 1)
+                .values(**update_payload)
+            )
             await session.commit()
-            await session.refresh(settings_orm)
-            
-            # Обновляем кэш
-            cls._cached_settings = ChannelSettingsData.from_orm(settings_orm)
+
+            refreshed = await session.execute(
+                select(channel_settings_table).where(channel_settings_table.c.id == 1)
+            )
+            refreshed_row = refreshed.mappings().one_or_none()
+            if refreshed_row is None:
+                cls._cached_settings = cls._cached_settings or ChannelSettingsData()
+                return cls._cached_settings
+
+            cls._cached_settings = ChannelSettingsData.from_mapping(dict(refreshed_row))
             return cls._cached_settings
         except Exception as e:
             await session.rollback()
-            logger.error(f"Ошибка при обновлении настроек канала: {e}")
+            logger.warning(
+                "Не удалось обновить настройки канала. "
+                "Вероятно, таблица уже удалена в рамках Фазы 1: %s",
+                e,
+            )
             return cls._cached_settings or ChannelSettingsData()
 
     @classmethod
