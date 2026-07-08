@@ -3,7 +3,7 @@ import re
 from math import ceil
 
 from aiogram import Bot, F, Router, types
-from aiogram.exceptions import TelegramForbiddenError
+from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
@@ -71,6 +71,34 @@ async def cmd_admin(message: types.Message):
         "выдавать блокировки и проверять статусы подписок."
     )
     await message.answer(text, reply_markup=get_admin_main_kb(), parse_mode="HTML")
+
+
+@router.message(Command("access"), F.reply_to_message)
+async def cmd_access(message: types.Message):
+    """Копирует replied-сообщение в текущий чат без защиты контента."""
+    try:
+        await message.reply_to_message.copy_to(
+            chat_id=message.chat.id,
+            protect_content=False,
+        )
+        await message.delete()
+    except TelegramBadRequest as exc:
+        logger.warning(
+            "Не удалось снять protect_content через /access для chat_id=%s: %s",
+            message.chat.id,
+            exc,
+        )
+        await message.answer(
+            "❌ Не удалось скопировать сообщение. Возможно, оно недоступно или его тип не поддерживается."
+        )
+    except Exception as exc:
+        logger.error(
+            "Ошибка при выполнении /access для chat_id=%s: %s",
+            message.chat.id,
+            exc,
+            exc_info=True,
+        )
+        await message.answer("❌ Произошла ошибка при копировании сообщения.")
 
 
 @router.callback_query(F.data == "admin_main")
