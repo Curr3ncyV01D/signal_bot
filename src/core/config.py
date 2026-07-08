@@ -5,7 +5,7 @@ import sys
 from pathlib import Path
 from datetime import datetime
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from pydantic import field_validator
+from pydantic import field_validator, model_validator
 
 class Settings(BaseSettings):
     # === 0. СИСТЕМНЫЕ МЕТРИКИ (Internal) ===
@@ -25,7 +25,9 @@ class Settings(BaseSettings):
     # === 1. ОСНОВНЫЕ НАСТРОЙКИ (Infrastructure) ===
     BOT_TOKEN: str
     DB_URL: str
-    REDIS_URL: str = "redis://:pass@redis:6379/0"
+    REDIS_PASSWORD: str
+    REDIS_PORT: int = 6379
+    REDIS_URL: str | None = None
     REDIS_RAW_STREAM_NAME: str = "csl:signals:raw"
     REDIS_READY_STREAM_NAME: str = "csl:signals:ready"
     REDIS_STREAM_MAXLEN: int = 1000
@@ -134,6 +136,14 @@ class Settings(BaseSettings):
                 data = [item.strip() for item in value.split(",")]
             return [str(item).strip().upper() for item in data if str(item).strip()]
         return value
+
+    @model_validator(mode="after")
+    def build_redis_url(self):
+        if self.REDIS_URL:
+            self.REDIS_URL = self.REDIS_URL.strip()
+            return self
+        self.REDIS_URL = f"redis://:{self.REDIS_PASSWORD}@redis:{self.REDIS_PORT}/0"
+        return self
 
     # Сетевые параметры
     PROXY_URL: str | None = None 
