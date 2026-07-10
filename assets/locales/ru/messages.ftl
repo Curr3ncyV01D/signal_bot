@@ -238,6 +238,7 @@ kb-admin-main-menu = 🔙 В главное меню
 kb-admin-unblock = ✅ Разблокировать
 kb-admin-block = 🛑 Заблокировать
 kb-admin-edit-subscription = 📅 Изменить подписку
+kb-admin-send-message = ✉️ Написать сообщение
 kb-admin-channel-posting-on = 🟢 Постинг ВКЛЮЧЕН
 kb-admin-channel-posting-off = 🔴 Постинг ВЫКЛЮЧЕН
 kb-admin-channel-oi-thresholds = ⚙️ Пороги OI (% и $)
@@ -367,6 +368,15 @@ admin-user-subscription-updated-notification =
 
     Новый срок действия: { $subscription_end }
 admin-user-subscription-cancelled-notification = ❌ <b>Ваша подписка была аннулирована администратором.</b>
+admin-personal-message-prompt =
+    Введите сообщение для пользователя.
+
+    Поддерживаются любые форматы: текст, фото, голосовые сообщения.
+admin-personal-message-success = ✅ Сообщение успешно отправлено пользователю { $user_id }.
+admin-personal-message-user-blocked = ❌ Ошибка: пользователь заблокировал бота.
+admin-personal-message-copy-failed = ❌ Ошибка: не удалось отправить сообщение пользователю.
+admin-personal-message-cancelled = Действие отменено.
+admin-personal-message-user-not-found = ❌ Пользователь не найден в базе.
 
 join-request-declined-notification =
     ❌ <b>Ваша заявка на вступление отклонена.</b>

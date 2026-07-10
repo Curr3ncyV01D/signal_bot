@@ -1,6 +1,6 @@
 import logging
 from datetime import timedelta
-from sqlalchemy import select, and_, func, or_
+from sqlalchemy import String, and_, cast, func, or_, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -188,6 +188,70 @@ async def get_users_page(session: AsyncSession, limit: int = 10, offset: int = 0
     except Exception as e:
         logger.error(f"Непредвиденная ошибка при получении страницы пользователей: {e}")
         return []
+
+async def get_users_filtered(
+    session: AsyncSession,
+    page: int,
+    limit: int,
+    status_filter: str = "all",
+    search_query: str | None = None,
+) -> tuple[list[User], int]:
+    """Возвращает отфильтрованную страницу пользователей и общее количество записей."""
+    try:
+        normalized_page = max(page, 1)
+        normalized_limit = max(limit, 1)
+        now = get_utc_now()
+        conditions = []
+
+        if status_filter == "active":
+            conditions.extend(
+                [
+                    User.subscription_end.is_not(None),
+                    User.subscription_end > now,
+                ]
+            )
+        elif status_filter == "inactive":
+            conditions.append(
+                or_(
+                    User.subscription_end.is_(None),
+                    User.subscription_end <= now,
+                )
+            )
+
+        normalized_search = search_query.strip() if search_query else ""
+        if normalized_search:
+            search_conditions = [
+                User.username.ilike(f"%{normalized_search}%"),
+                cast(User.id, String).like(f"%{normalized_search}%"),
+            ]
+
+            if normalized_search.isdigit():
+                search_conditions.insert(0, User.id == int(normalized_search))
+
+            conditions.append(or_(*search_conditions))
+
+        users_query = select(User)
+        count_query = select(func.count(User.id))
+
+        if conditions:
+            filter_clause = and_(*conditions)
+            users_query = users_query.where(filter_clause)
+            count_query = count_query.where(filter_clause)
+
+        users_query = users_query.order_by(User.created_at.desc()).limit(normalized_limit).offset(
+            (normalized_page - 1) * normalized_limit
+        )
+
+        users_result = await session.execute(users_query)
+        total_count_result = await session.execute(count_query)
+
+        return list(users_result.scalars().all()), total_count_result.scalar() or 0
+    except SQLAlchemyError as e:
+        logger.error(f"Ошибка БД при получении отфильтрованных пользователей: {e}")
+        return [], 0
+    except Exception as e:
+        logger.error(f"Непредвиденная ошибка при получении отфильтрованных пользователей: {e}")
+        return [], 0
 
 async def toggle_user_block(session: AsyncSession, user_id: int) -> bool | None:
     """Инвертирует статус блокировки."""
