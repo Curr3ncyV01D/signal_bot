@@ -5,7 +5,7 @@ import sys
 from pathlib import Path
 from datetime import datetime
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from pydantic import field_validator
+from pydantic import field_validator, model_validator
 
 class Settings(BaseSettings):
     # === 0. СИСТЕМНЫЕ МЕТРИКИ (Internal) ===
@@ -25,7 +25,9 @@ class Settings(BaseSettings):
     # === 1. ОСНОВНЫЕ НАСТРОЙКИ (Infrastructure) ===
     BOT_TOKEN: str
     DB_URL: str
-    REDIS_URL: str = "redis://:pass@redis:6379/0"
+    REDIS_PASSWORD: str
+    REDIS_PORT: int = 6379
+    REDIS_URL: str | None = None
     REDIS_RAW_STREAM_NAME: str = "csl:signals:raw"
     REDIS_READY_STREAM_NAME: str = "csl:signals:ready"
     REDIS_STREAM_MAXLEN: int = 1000
@@ -34,7 +36,6 @@ class Settings(BaseSettings):
     REDIS_CACHE_INVALIDATION_CHANNEL: str = "csl:cache_invalidation"
     REDIS_CHART_CACHE_PREFIX: str = "csl:chart_cache"
     REDIS_PENDING_IDLE_MS: int = 30000
-    PRIVATE_CHANNEL_ID: str | None = None
     LOG_CHANNEL_ID: str | None = None
     NEWS_CHANNEL_ID: str | None = None
     NEWS_CHANNEL_URL: str | None = None
@@ -104,7 +105,7 @@ class Settings(BaseSettings):
     # Фильтрация монет
     IGNORED_SYMBOLS: list[str] = [] 
 
-    @field_validator("PRIVATE_CHANNEL_ID", "LOG_CHANNEL_ID", "NEWS_CHANNEL_ID", mode="before")
+    @field_validator("LOG_CHANNEL_ID", "NEWS_CHANNEL_ID", mode="before")
     @classmethod
     def parse_optional_channel_ids(cls, value: str | None) -> str | None:
         if value is None:
@@ -136,12 +137,13 @@ class Settings(BaseSettings):
             return [str(item).strip().upper() for item in data if str(item).strip()]
         return value
 
-    @property
-    def is_channel_mode_enabled(self) -> bool:
-        return (
-            self.PRIVATE_CHANNEL_ID is not None
-            and self.NEWS_CHANNEL_ID is not None
-        )
+    @model_validator(mode="after")
+    def build_redis_url(self):
+        if self.REDIS_URL:
+            self.REDIS_URL = self.REDIS_URL.strip()
+            return self
+        self.REDIS_URL = f"redis://:{self.REDIS_PASSWORD}@redis:{self.REDIS_PORT}/0"
+        return self
 
     # Сетевые параметры
     PROXY_URL: str | None = None 

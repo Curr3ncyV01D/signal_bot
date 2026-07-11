@@ -230,6 +230,7 @@ kb-admin-main-menu = 🔙 Main menu
 kb-admin-unblock = ✅ Unblock
 kb-admin-block = 🛑 Block
 kb-admin-edit-subscription = 📅 Edit subscription
+kb-admin-send-message = ✉️ Send message
 kb-admin-channel-posting-on = 🟢 Posting ON
 kb-admin-channel-posting-off = 🔴 Posting OFF
 kb-admin-channel-oi-thresholds = ⚙️ OI thresholds (% and $)
@@ -252,7 +253,7 @@ shop-subscription-menu =
     💎 <b>VIP Subscription</b>
 
     VIP access benefits:
-    • Access to the private alerts channel
+    • Personal alert flow inside the bot
     • Personal bot settings
     • Real-time analytics
 
@@ -288,7 +289,7 @@ shop-purchase-success =
     🎉 <b>Subscription activated successfully!</b>
 
     📅 Active until: { $new_end }
-    💰 Deducted from balance: { $price }{ $link_text }
+    💰 Deducted from balance: { $price }
 shop-subscription-extended = Subscription extended
 shop-purchase-cancelled = Purchase cancelled
 
@@ -359,6 +360,15 @@ admin-user-subscription-updated-notification =
 
     New expiration date: { $subscription_end }
 admin-user-subscription-cancelled-notification = ❌ <b>Your subscription was cancelled by an administrator.</b>
+admin-personal-message-prompt =
+    Enter a message for the user.
+
+    Any format is supported: text, photo, voice messages.
+admin-personal-message-success = ✅ Message successfully sent to user { $user_id }.
+admin-personal-message-user-blocked = ❌ Error: the user has blocked the bot.
+admin-personal-message-copy-failed = ❌ Error: failed to send the message to the user.
+admin-personal-message-cancelled = Action cancelled.
+admin-personal-message-user-not-found = ❌ User not found in the database.
 
 join-request-declined-notification =
     ❌ <b>Your request to join was declined.</b>

@@ -17,6 +17,7 @@ from src.bot.i18n import build_i18n_middleware
 from src.bot.middlewares.block_middleware import BlockMiddleware
 from src.bot.middlewares.fsm_cleaner import FSMCleanerMiddleware
 from src.bot.middlewares.db_session import DbSessionMiddleware
+from src.bot.middlewares.analytics import AnalyticsMiddleware
 from src.services.bybit_ws import BybitListener
 from src.services.aggregators.liq_aggregator import LiquidationAggregator
 from src.services.aggregators.market_aggregator import MarketAggregator
@@ -108,6 +109,8 @@ async def main():
     dp.update.outer_middleware(DbSessionMiddleware(async_session))
     i18n_middleware.setup(dp)
     dp.update.outer_middleware(BlockMiddleware())
+    dp.message.outer_middleware(AnalyticsMiddleware(async_session))
+    dp.callback_query.outer_middleware(AnalyticsMiddleware(async_session))
     dp.message.outer_middleware(FSMCleanerMiddleware())
     
     dp.include_router(router)
@@ -139,9 +142,6 @@ async def main():
         await AssetManager.ensure_placeholder(bot, session_db)
         historical_data = await get_recent_liquidations(session_db, minutes=60)
         liq_aggregator.load_historical_data(historical_data)
-
-        await ChannelService.get_settings(session_db)
-        logging.info("⚙️ Настройки канала успешно загружены в кэш.")
 
         # Загрузка данных об эмиссии монет
         fundamentals_query = select(CoinFundamental)
@@ -176,7 +176,9 @@ async def main():
 
     # 6. Запускаем фоновые задачи и Вышибалу
     lag_detector_task = asyncio.create_task(lag_detector(queue))
-    retention_task = asyncio.create_task(retention_policy_worker(hours=4))
+    retention_task = asyncio.create_task(
+        retention_policy_worker(hours=4, event_retention_days=30, events_interval_hours=24)
+    )
     aggregator_task = asyncio.create_task(liq_aggregator.cleanup_task())
     market_gc_task = asyncio.create_task(market_aggregator.cleanup_task())
     user_cache_task = asyncio.create_task(user_cache_refresher_task())

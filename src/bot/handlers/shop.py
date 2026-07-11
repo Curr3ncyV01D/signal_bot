@@ -109,21 +109,6 @@ async def _send_referral_bonus_notification(
         logger.error(f"Не удалось уведомить реферера {referrer_id} о бонусе: {e}")
 
 
-async def _build_invite_link_text(callback: types.CallbackQuery, user_id: int, i18n: I18nContext) -> str:
-    if config.PRIVATE_CHANNEL_ID is None:
-        return ""
-
-    try:
-        invite_link = await callback.bot.create_chat_invite_link(
-            chat_id=config.PRIVATE_CHANNEL_ID,
-            name=f"Sub_{user_id}",
-            creates_join_request=True
-        )
-        return i18n.get("shop-invite-link", invite_link=invite_link.invite_link)
-    except Exception as e:
-        logger.error(f"Ошибка создания ссылки: {e}")
-        return i18n.get("shop-invite-link-error")
-
 @router.callback_query(F.data == "buy_subscription")
 async def callback_buy_subscription(callback: types.CallbackQuery, i18n: I18nContext):
     """Меню выбора тарифа"""
@@ -219,13 +204,10 @@ async def callback_confirm_balance_purchase(callback: types.CallbackQuery, sessi
     await invalidate_user_cache()
     purchaser = await user_service.get_user_by_id(session, user_id)
     referrer_id = purchaser.referrer_id if purchaser else None
-    link_text = await _build_invite_link_text(callback, user_id, i18n)
-
     text = i18n.get(
         "shop-purchase-success",
         new_end=hbold(format_datetime(new_end)),
         price=hbold(f"{format_smart_num(price)} USDT"),
-        link_text=link_text,
     )
 
     await _render_shop_screen(callback, text, image_path=ImagePaths.PAYMENT)

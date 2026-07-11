@@ -42,12 +42,20 @@ class AssetManager:
         return row.value if row is not None else None
 
     @classmethod
+    async def get_metadata_value(
+        cls,
+        session: AsyncSession,
+        key: str,
+    ) -> str | None:
+        await cls.ensure_metadata_table()
+        return await cls._get_metadata_value(session, key)
+
+    @classmethod
     async def get_placeholder_metadata(
         cls,
         session: AsyncSession,
     ) -> str | None:
-        await cls.ensure_metadata_table()
-        return await cls._get_metadata_value(session, PLACEHOLDER_MSG_ID_KEY)
+        return await cls.get_metadata_value(session, PLACEHOLDER_MSG_ID_KEY)
 
     @staticmethod
     async def _upsert_metadata(
@@ -60,6 +68,16 @@ class AssetManager:
             session.add(SystemMetadata(key=key, value=value))
             return
         row.value = value
+
+    @classmethod
+    async def upsert_metadata_value(
+        cls,
+        session: AsyncSession,
+        key: str,
+        value: str,
+    ) -> None:
+        await cls.ensure_metadata_table()
+        await cls._upsert_metadata(session, key, value)
 
     @staticmethod
     async def _sync_placeholder_to_redis(message_id: str) -> None:

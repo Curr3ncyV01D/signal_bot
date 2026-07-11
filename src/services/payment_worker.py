@@ -2,8 +2,7 @@ import asyncio
 import logging
 from datetime import datetime, timezone
 
-from aiogram import Bot, types
-from aiogram.utils.keyboard import InlineKeyboardBuilder
+from aiogram import Bot
 from sqlalchemy import select
 
 from src.core.config import config
@@ -40,14 +39,6 @@ async def _has_subscription_activation(
     result = await session.execute(query)
     return result.scalar_one_or_none() is not None
 
-
-def _build_channel_link_markup(invite_link: str | None):
-    if not invite_link:
-        return None
-
-    builder = InlineKeyboardBuilder()
-    builder.row(types.InlineKeyboardButton(text="🚀 Зайти в канал", url=invite_link))
-    return builder.as_markup()
 
 async def payment_checker_worker(bot: Bot):
     """Фоновый воркер для проверки статусов инвойсов CryptoPay."""
@@ -145,30 +136,12 @@ async def payment_checker_worker(bot: Bot):
 
                         try:
                             if activated_sub and new_end:
-                                invite_link: str | None = None
-                                if config.PRIVATE_CHANNEL_ID is not None:
-                                    try:
-                                        link_obj = await bot.create_chat_invite_link(
-                                            chat_id=config.PRIVATE_CHANNEL_ID,
-                                            name=f"DirectPay_{inv.user_id}",
-                                            creates_join_request=True
-                                        )
-                                        invite_link = link_obj.invite_link
-                                    except Exception as link_err:
-                                        logger.error(f"Ошибка создания ссылки: {link_err}")
-                                else:
-                                    logger.info("PRIVATE_CHANNEL_ID не задан. Ссылка в канал не создается.")
-
-                                text = (
-                                    "✅ <b>Оплата подтверждена!</b>\n\n"
-                                    f"Ваша подписка активирована до <b>{format_datetime(new_end)}</b>."
-                                )
-                                if invite_link:
-                                    text += "\nСсылка на закрытый канал ниже:"
                                 await bot.send_message(
                                     chat_id=inv.user_id,
-                                    text=text,
-                                    reply_markup=_build_channel_link_markup(invite_link),
+                                    text=(
+                                    "✅ <b>Оплата подтверждена!</b>\n\n"
+                                    f"Ваша подписка активирована до <b>{format_datetime(new_end)}</b>."
+                                    ),
                                     parse_mode="HTML"
                                 )
                             else:

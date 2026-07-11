@@ -1,21 +1,25 @@
 import asyncio
 import logging
 import time
+from datetime import datetime, timezone
 from aiogram import Bot
 from aiogram.types import LinkPreviewOptions
 from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
 
 from src.core.config import config
 from src.database.session import async_session
-from src.database.crud.channel_service import ChannelService
 from src.bot.utils.dashboard_formatter import DashboardFormatter
+from src.services.asset_manager import AssetManager
 
 logger = logging.getLogger(__name__)
 
 DASHBOARD_CACHE_TTL_SEC = 55.0
+DASHBOARD_MESSAGE_ID_KEY = "dashboard_message_id"
+LAST_SUMMARY_AT_KEY = "last_summary_at"
 _last_data: dict | None = None
 _last_update_ts: float = 0.0
 _dashboard_recreate_in_progress = False
+_cached_dashboard_message_id: int | None = None
 
 
 def _get_combined_data(liq_aggregator, market_aggregator, use_cache: bool = True) -> dict:
@@ -34,6 +38,50 @@ def _get_combined_data(liq_aggregator, market_aggregator, use_cache: bool = True
     return combined_data
 
 
+async def _get_dashboard_message_id() -> int | None:
+    global _cached_dashboard_message_id
+
+    if _cached_dashboard_message_id is not None:
+        return _cached_dashboard_message_id
+
+    async with async_session() as session:
+        raw_value = await AssetManager.get_metadata_value(session, DASHBOARD_MESSAGE_ID_KEY)
+
+    if raw_value is None or raw_value == "":
+        return None
+
+    try:
+        _cached_dashboard_message_id = int(raw_value)
+    except (TypeError, ValueError):
+        logger.warning("Некорректный `%s` в system_metadata: %s", DASHBOARD_MESSAGE_ID_KEY, raw_value)
+        _cached_dashboard_message_id = None
+
+    return _cached_dashboard_message_id
+
+
+async def _set_dashboard_message_id(message_id: int | None) -> None:
+    global _cached_dashboard_message_id
+
+    async with async_session() as session:
+        if message_id is None:
+            await AssetManager.upsert_metadata_value(session, DASHBOARD_MESSAGE_ID_KEY, "")
+        else:
+            await AssetManager.upsert_metadata_value(session, DASHBOARD_MESSAGE_ID_KEY, str(message_id))
+        await session.commit()
+
+    _cached_dashboard_message_id = message_id
+
+
+async def _set_last_summary_at() -> None:
+    async with async_session() as session:
+        await AssetManager.upsert_metadata_value(
+            session,
+            LAST_SUMMARY_AT_KEY,
+            datetime.now(timezone.utc).replace(tzinfo=None).isoformat(),
+        )
+        await session.commit()
+
+
 async def recreate_dashboard_logic(bot: Bot, liq_aggregator, market_aggregator) -> int | None:
     """Пересоздает дэшборд в канале и сохраняет новый `dashboard_message_id`."""
     global _dashboard_recreate_in_progress, _last_data, _last_update_ts
@@ -44,11 +92,7 @@ async def recreate_dashboard_logic(bot: Bot, liq_aggregator, market_aggregator) 
 
     _dashboard_recreate_in_progress = True
     try:
-        # 1. Принудительно проверяем БД перед пересозданием, чтобы не плодить дубликаты
-        async with async_session() as session:
-            settings = await ChannelService.get_settings(session)
-        
-        old_message_id = settings.dashboard_message_id
+        old_message_id = await _get_dashboard_message_id()
 
         if old_message_id:
             logger.info(f"🗑 Попытка удаления старого дэшборда ID: {old_message_id}")
@@ -89,8 +133,8 @@ async def recreate_dashboard_logic(bot: Bot, liq_aggregator, market_aggregator) 
         except Exception as e:
             logger.warning(f"Не удалось закрепить сообщение: {e}")
 
-        async with async_session() as session:
-            await ChannelService.set_dashboard_id(session, msg.message_id)
+        await _set_dashboard_message_id(msg.message_id)
+        await _set_last_summary_at()
 
         _last_data = combined_data
         _last_update_ts = time.time()
@@ -108,10 +152,8 @@ async def dashboard_worker(bot: Bot, liq_aggregator, market_aggregator):
         return
 
     logger.info("🚀 Dashboard worker запущен.")
-    
-    # Первичная проверка ID при старте
-    settings = ChannelService.get_cached_settings()
-    logger.info(f"📊 Начальный ID дэшборда из кэша: {settings.dashboard_message_id}")
+    initial_message_id = await _get_dashboard_message_id()
+    logger.info(f"📊 Начальный ID дэшборда из metadata: {initial_message_id}")
     
     while True:
         try:
@@ -119,17 +161,7 @@ async def dashboard_worker(bot: Bot, liq_aggregator, market_aggregator):
                 await asyncio.sleep(1)
                 continue
 
-            # 1. Получаем текущие настройки (из кэша)
-            settings = ChannelService.get_cached_settings()
-            
-            # Если кэш пустой или не инициализирован (проверяем по отсутствию данных, которые должны быть в БД)
-            # В нашем случае, если dashboard_message_id None и это первый цикл, стоит проверить БД
-            if settings.dashboard_message_id is None:
-                async with async_session() as session:
-                    settings = await ChannelService.get_settings(session)
-                    logger.info(f"🔄 Кэш настроек принудительно обновлен из БД. ID: {settings.dashboard_message_id}")
-
-            message_id = settings.dashboard_message_id
+            message_id = await _get_dashboard_message_id()
             
             if message_id is None:
                 await recreate_dashboard_logic(bot, liq_aggregator, market_aggregator)
@@ -148,6 +180,7 @@ async def dashboard_worker(bot: Bot, liq_aggregator, market_aggregator):
                         ),
                         timeout=10.0
                     )
+                    await _set_last_summary_at()
                     
                 except asyncio.TimeoutError:
                     logger.error("❌ Таймаут при редактировании дэшборда (10 сек).")
