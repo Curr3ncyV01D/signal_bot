@@ -54,6 +54,18 @@ class User(Base):
     # Отношения
     transactions: Mapped[list["Transaction"]] = relationship(back_populates="user")
 
+
+class UserEvent(Base):
+    __tablename__ = "user_events"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.id"), index=True, nullable=False)
+    event_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    event_data: Mapped[str] = mapped_column(String(255), nullable=False)
+    is_admin: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=get_utc_now, index=True, nullable=False)
+
+
 class SystemMetadata(Base):
     __tablename__ = "system_metadata"
 
