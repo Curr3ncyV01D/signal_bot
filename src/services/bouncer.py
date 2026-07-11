@@ -198,7 +198,7 @@ async def bouncer_worker(bot: Bot, interval_minutes: int = 15):
                 candidate_ids = list(result.scalars().all())
 
                 if candidate_ids:
-                    logger.info(
+                    logger.debug(
                         f"👮‍♂️ Вышибала нашел {len(candidate_ids)} пользователей "
                         "в окне автопродления/истечения."
                     )

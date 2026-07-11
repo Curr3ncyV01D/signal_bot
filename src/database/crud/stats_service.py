@@ -1,14 +1,17 @@
+import logging
 import time
 from datetime import datetime, timedelta
-from sqlalchemy import select, func, and_, desc, case
+from sqlalchemy import select, func, and_, desc, case, delete
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
-from src.database.models import User, Transaction
+from src.database.models import User, Transaction, UserEvent
 from src.database.functions import get_utc_now
 
 # Простой кеш в памяти
 _stats_cache = {}
 _last_update = {}
 CACHE_TTL = 300  # 5 минут
+logger = logging.getLogger(__name__)
 
 async def _get_cached_data(cache_key: str, force_refresh: bool, fetch_func, *args, **kwargs):
     """Вспомогательная функция для кеширования."""
@@ -21,6 +24,54 @@ async def _get_cached_data(cache_key: str, force_refresh: bool, fetch_func, *arg
     _stats_cache[cache_key] = data
     _last_update[cache_key] = now_ts
     return data
+
+
+async def log_user_event(
+    session: AsyncSession,
+    user_id: int,
+    event_type: str,
+    data: str,
+    is_admin: bool,
+) -> bool:
+    """Безопасно сохраняет событие пользователя, не пробрасывая исключения наружу."""
+    try:
+        session.add(
+            UserEvent(
+                user_id=user_id,
+                event_type=event_type,
+                event_data=data,
+                is_admin=is_admin,
+            )
+        )
+        await session.commit()
+        return True
+    except SQLAlchemyError as exc:
+        await session.rollback()
+        logger.error("Ошибка БД при логировании события пользователя %s: %s", user_id, exc)
+        return False
+    except Exception as exc:
+        await session.rollback()
+        logger.exception("Непредвиденная ошибка при логировании события пользователя %s: %s", user_id, exc)
+        return False
+
+
+async def delete_old_user_events(session: AsyncSession, days: int = 30) -> int:
+    """Удаляет события пользователей старше указанного количества дней."""
+    try:
+        threshold_time = get_utc_now() - timedelta(days=days)
+        result = await session.execute(
+            delete(UserEvent).where(UserEvent.created_at < threshold_time)
+        )
+        await session.commit()
+        return result.rowcount or 0
+    except SQLAlchemyError as exc:
+        await session.rollback()
+        logger.error("Ошибка БД при очистке старых событий пользователей: %s", exc)
+        return 0
+    except Exception as exc:
+        await session.rollback()
+        logger.exception("Непредвиденная ошибка при очистке старых событий пользователей: %s", exc)
+        return 0
 
 async def get_financial_metrics(session: AsyncSession, force_refresh: bool = False) -> dict:
     """
