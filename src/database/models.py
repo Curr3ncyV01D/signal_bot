@@ -27,14 +27,14 @@ class User(Base):
     referrer_id: Mapped[int | None] = mapped_column(BigInteger, ForeignKey("users.id"), nullable=True)
 
     # Ликвидации (Аналитика)
-    threshold: Mapped[float] = mapped_column(Float, default=30000.0) 
-    threshold_cascade: Mapped[float] = mapped_column(Float, default=40000.0) 
+    threshold: Mapped[float] = mapped_column(Float, default=15000.0) 
+    threshold_cascade: Mapped[float] = mapped_column(Float, default=25000.0) 
 
     threshold_mode: Mapped[str] = mapped_column(String(20), default="PERCENT")
-    threshold_mcap_pct: Mapped[float] = mapped_column(Float, default=0.015)
-    threshold_mcap_usd_min: Mapped[float] = mapped_column(Float, default=25000.0)
-    threshold_cascade_mcap_pct: Mapped[float] = mapped_column(Float, default=0.025)
-    threshold_cascade_mcap_usd_min: Mapped[float] = mapped_column(Float, default=35000.0)
+    threshold_mcap_pct: Mapped[float] = mapped_column(Float, default=0.01)
+    threshold_mcap_usd_min: Mapped[float] = mapped_column(Float, default=10000.0)
+    threshold_cascade_mcap_pct: Mapped[float] = mapped_column(Float, default=0.015)
+    threshold_cascade_mcap_usd_min: Mapped[float] = mapped_column(Float, default=20000.0)
 
     alert_cascade: Mapped[bool] = mapped_column(Boolean, default=True)
     alert_volume: Mapped[bool] = mapped_column(Boolean, default=True)
@@ -44,8 +44,8 @@ class User(Base):
 
     # Открытый интерес (OI)
     alert_oi: Mapped[bool] = mapped_column(Boolean, default=True)
-    threshold_oi_percent: Mapped[float] = mapped_column(Float, default=8.5)
-    threshold_oi_value: Mapped[float] = mapped_column(Float, default=1000000.0)
+    threshold_oi_percent: Mapped[float] = mapped_column(Float, default=6.0)
+    threshold_oi_value: Mapped[float] = mapped_column(Float, default=500000.0)
 
     # CVD и RSI
     alert_cvd: Mapped[bool] = mapped_column(Boolean, default=True)
