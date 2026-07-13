@@ -1,3 +1,5 @@
+from dataclasses import dataclass
+from datetime import datetime
 from typing import Literal, TypedDict
 
 
@@ -52,3 +54,19 @@ class SignalDTO(TypedDict):
     ohlc_history: list[SignalOhlcRow]
     chart_message_id: int | None
     timestamp: float
+
+
+@dataclass(slots=True)
+class PaymentUpdateDTO:
+    is_paid: bool
+    delta_credited: float
+    sub_activated: bool
+    new_balance: float
+    new_end_date: datetime | None
+    error: str | None
+    amount_actual: float = 0.0
+    amount_expected: float = 0.0
+    invoice_status: str = "PENDING"
+    needed_amount: float = 0.0
+    intent_action: str | None = None
+    intent_days: int | None = None

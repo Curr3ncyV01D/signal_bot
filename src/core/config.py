@@ -40,10 +40,19 @@ class Settings(BaseSettings):
     NEWS_CHANNEL_ID: str | None = None
     NEWS_CHANNEL_URL: str | None = None
     
-    # === 2. ПЛАТЕЖНАЯ СИСТЕМА (Billing & CryptoPay) ===
+    # === 2. ПЛАТЕЖНАЯ СИСТЕМА (Billing & CryptoPay / Cryptomus) ===
     # Интеграция
     CRYPTOPAY_TOKEN: str
     CRYPTOPAY_TESTNET: bool = False
+    CRYPTOMUS_MERCHANT_ID: str | None = None
+    CRYPTOMUS_PAYMENT_API_KEY: str | None = None
+    CRYPTOMUS_API_BASE_URL: str = "https://api.cryptomus.com/v1"
+    CRYPTOMUS_CREATE_PAYMENT_PATH: str = "/payment"
+    CRYPTOMUS_PAYMENT_INFO_PATH: str = "/payment/info"
+    CRYPTOMUS_REQUEST_TIMEOUT_SEC: int = 15
+    CRYPTOMUS_INVOICE_LIFETIME_SEC: int = 7200
+    CRYPTOMUS_ACCURACY_PAYMENT_PERCENT: float = 0.0
+    PAYMENT_TOLERANCE_USD: float = 0.5
     
     # Бизнес-правила (Тарифы и деньги)
     # Тарифы подписки (дней: цена_usdt)

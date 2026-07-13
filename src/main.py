@@ -32,6 +32,7 @@ from src.services.warmup import warmup_ohlc, warmup_system
 from src.services.bouncer import bouncer_worker
 from src.services.dashboard import dashboard_worker
 from src.services.payment_worker import payment_checker_worker
+from src.services.cryptomus import cryptomus_client
 from src.services.cryptopay import cryptopay
 from src.services.asset_manager import AssetManager
 from src.services.symbol_sync import build_target_symbols, symbol_sync_worker
@@ -258,6 +259,7 @@ async def on_shutdown(bot: Bot, listener: BybitListener, tasks: list[asyncio.Tas
         except Exception as e:
             logging.error(f"Ошибка при закрытии WebSocket: {e}")
 
+    await cryptomus_client.close()
     await cryptopay.close()
     await bot.session.close()
     logging.info("Все соединения закрыты.")

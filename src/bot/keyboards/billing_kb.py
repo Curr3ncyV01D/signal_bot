@@ -11,7 +11,6 @@ def get_wallet_main_kb(user: User) -> InlineKeyboardMarkup:
     language_code = normalize_locale_code(user.language_code)
 
     builder.row(InlineKeyboardButton(text=LazyProxy("kb-wallet-renew"), callback_data="buy_subscription"))
-    builder.row(InlineKeyboardButton(text=LazyProxy("kb-wallet-deposit"), callback_data="deposit"))
     auto_renewal_text = LazyProxy("kb-wallet-autorenew-on") if user.auto_renewal else LazyProxy("kb-wallet-autorenew-off")
     builder.row(InlineKeyboardButton(text=auto_renewal_text, callback_data="toggle_auto_renewal"))
     language_button = (
@@ -25,24 +24,19 @@ def get_wallet_main_kb(user: User) -> InlineKeyboardMarkup:
     builder.row(InlineKeyboardButton(text=LazyProxy("kb-wallet-back-main"), callback_data="back_to_main"))
     return builder.as_markup()
 
-def get_deposit_amounts_kb() -> InlineKeyboardMarkup:
-    """Выбор суммы пополнения"""
+def get_payment_link_kb(url: str, external_id: str) -> InlineKeyboardMarkup:
+    """Ссылка на оплату и кнопки действий по инвойсу."""
     builder = InlineKeyboardBuilder()
-    # Используем цены из тарифов как пресеты
-    for days, price in config.TARIFFS.items():
-        builder.button(text=f"{price} USDT", callback_data=f"deposit_{price}")
-    
-    builder.adjust(2)
-    builder.row(InlineKeyboardButton(text=LazyProxy("kb-common-back"), callback_data="wallet_main"))
+    builder.row(InlineKeyboardButton(text=LazyProxy("kb-wallet-pay-cryptomus"), url=url))
+    builder.row(InlineKeyboardButton(text=LazyProxy("kb-wallet-check-payment"), callback_data=f"check_pay_{external_id}"))
+    builder.row(InlineKeyboardButton(text=LazyProxy("kb-wallet-cancel"), callback_data="buy_subscription"))
     return builder.as_markup()
 
-def get_payment_link_kb(url: str, invoice_id: int) -> InlineKeyboardMarkup:
-    """Ссылка на оплату и кнопка проверки"""
+
+def get_payment_success_kb() -> InlineKeyboardMarkup:
+    """Клавиатура для успешной оплаты с возвратом в главное меню."""
     builder = InlineKeyboardBuilder()
-    builder.row(InlineKeyboardButton(text=LazyProxy("kb-wallet-pay-cryptobot"), url=url))
-    builder.row(InlineKeyboardButton(text=LazyProxy("kb-wallet-check-payment"), callback_data=f"check_pay_{invoice_id}"))
-    builder.row(InlineKeyboardButton(text=LazyProxy("kb-wallet-payment-issue"), url=config.SUPPORT_URL))
-    builder.row(InlineKeyboardButton(text=LazyProxy("kb-common-back"), callback_data="deposit"))
+    builder.row(InlineKeyboardButton(text=LazyProxy("main-button-home"), callback_data="back_to_main"))
     return builder.as_markup()
 
 def get_wallet_back_kb() -> InlineKeyboardMarkup:

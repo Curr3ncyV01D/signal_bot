@@ -1,136 +1,69 @@
 import logging
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, update, func, desc
-from sqlalchemy.exc import SQLAlchemyError
-from sqlalchemy.orm import joinedload
 from datetime import datetime, timedelta
-from src.database.models import User, Transaction, Invoice
-from src.database.functions import get_utc_now
+from sqlalchemy import desc, func, select
+from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from src.core.config import config
+from src.database.functions import get_utc_now
+from src.database.models import Invoice, Transaction, User
 
 logger = logging.getLogger(__name__)
 
-async def add_balance(
-    session: AsyncSession, 
-    user_id: int, 
-    amount: float, 
-    tx_type: str, 
-    description: str | None = None
-) -> bool:
-    """
-    Атомарно увеличивает баланс пользователя и создает запись в истории транзакций.
-    
-    :param session: Асинхронная сессия SQLAlchemy
-    :param user_id: ID пользователя (Telegram ID)
-    :param amount: Сумма пополнения
-    :param tx_type: Тип транзакции ('DEPOSIT', 'REWARD', и т.д.)
-    :param description: Описание операции
-    :return: True если успешно, иначе False
-    """
-    try:
-        amount = round(float(amount), 2)
-        user = await session.get(User, user_id, with_for_update=True)
-        if not user:
-            logger.warning(f"Попытка пополнить баланс несуществующему пользователю {user_id}")
-            return False
-        
-        user.balance = round(user.balance + amount, 2)
-        
-        tx = Transaction(
-            user_id=user_id,
-            amount=amount,
-            type=tx_type,
-            description=description
-        )
-        session.add(tx)
-        await session.commit()
-        logger.info(f"Баланс пользователя {user_id} пополнен на {amount} ({tx_type})")
-        return True
-    except SQLAlchemyError as e:
-        await session.rollback()
-        logger.error(f"Ошибка БД в add_balance для {user_id}: {e}")
-        return False
-    except Exception as e:
-        await session.rollback()
-        logger.error(f"Непредвиденная ошибка в add_balance для {user_id}: {e}")
-        return False
+DEFAULT_PAYMENT_PROVIDER = "CRYPTOMUS"
 
-async def spend_balance(
-    session: AsyncSession, 
-    user_id: int, 
-    amount: float, 
-    description: str | None = None
-) -> bool:
-    """
-    Атомарно списывает средства с баланса пользователя, если их достаточно.
-    
-    :param session: Асинхронная сессия SQLAlchemy
-    :param user_id: ID пользователя (Telegram ID)
-    :param amount: Сумма списания
-    :param description: Описание операции
-    :return: True если списание успешно, False если недостаточно средств или ошибка
-    """
-    try:
-        amount = round(float(amount), 2)
-        user = await session.get(User, user_id, with_for_update=True)
-        
-        if not user:
-            logger.warning(f"Попытка списания у несуществующего пользователя {user_id}")
-            return False
-            
-        if user.balance < amount:
-            logger.info(f"Недостаточно средств у пользователя {user_id}: balance={user.balance}, required={amount}")
-            return False
-            
-        user.balance = round(user.balance - amount, 2)
-        
-        tx = Transaction(
-            user_id=user_id,
-            amount=-amount,
-            type='WITHDRAW',
-            description=description
-        )
-        session.add(tx)
-        await session.commit()
-        logger.info(f"С баланса пользователя {user_id} списано {amount} (WITHDRAW)")
-        return True
-    except SQLAlchemyError as e:
-        await session.rollback()
-        logger.error(f"Ошибка БД в spend_balance для {user_id}: {e}")
-        return False
-    except Exception as e:
-        await session.rollback()
-        logger.error(f"Непредвиденная ошибка в spend_balance для {user_id}: {e}")
-        return False
+
+def _round_money(value: float | int | None) -> float:
+    if value is None:
+        return 0.0
+    return round(float(value), 2)
 
 async def create_invoice(
     session: AsyncSession,
     user_id: int,
-    amount: float,
-    crypto_pay_id: str,
-    payload: str | None = None
+    external_id: str,
+    amount_expected: float,
+    payload: str | None = None,
+    *,
+    provider: str = DEFAULT_PAYMENT_PROVIDER,
+    address: str | None = None,
+    network: str | None = None,
+    amount_actual: float = 0.0,
 ) -> Invoice | None:
     """
     Создает новый инвойс для оплаты.
     
     :param session: Асинхронная сессия SQLAlchemy
     :param user_id: ID пользователя
-    :param amount: Сумма инвойса
-    :param crypto_pay_id: Внешний ID из CryptoPay
+    :param external_id: Внешний ID провайдера
+    :param amount_expected: Ожидаемая сумма инвойса
     :param payload: Дополнительная информация (например, 'sub_30')
     :return: Объект Invoice или None при ошибке
     """
     try:
+        rounded_amount_expected = round(float(amount_expected), 2)
+        rounded_amount_actual = round(float(amount_actual), 2)
         invoice = Invoice(
             user_id=user_id,
-            amount=round(float(amount), 2),
-            crypto_pay_id=crypto_pay_id,
+            external_id=str(external_id),
+            provider=provider,
+            address=address,
+            network=network,
+            amount_expected=rounded_amount_expected,
+            amount_actual=rounded_amount_actual,
             status='PENDING',
             payload=payload
         )
         session.add(invoice)
         await session.commit()
-        logger.info(f"Создан инвойс {crypto_pay_id} для пользователя {user_id} на сумму {amount} (payload={payload})")
+        logger.info(
+            "Создан инвойс %s provider=%s для пользователя %s на сумму %s (payload=%s)",
+            external_id,
+            provider,
+            user_id,
+            rounded_amount_expected,
+            payload,
+        )
         return invoice
     except SQLAlchemyError as e:
         await session.rollback()
@@ -141,68 +74,114 @@ async def create_invoice(
         logger.error(f"Непредвиденная ошибка в create_invoice для {user_id}: {e}")
         return None
 
-async def get_invoice_by_ext_id(session: AsyncSession, ext_id: str) -> Invoice | None:
-    """
-    Получает инвойс по его внешнему идентификатору.
-    
-    :param session: Асинхронная сессия SQLAlchemy
-    :param ext_id: Внешний ID (crypto_pay_id)
-    :return: Объект Invoice или None
-    """
+async def get_invoice_by_external_id(session: AsyncSession, ext_id: str) -> Invoice | None:
+    """Ищет инвойс по внешнему идентификатору без загрузки связей."""
     try:
-        query = select(Invoice).where(Invoice.crypto_pay_id == ext_id)
-        result = await session.execute(query)
-        return result.scalar_one_or_none()
+        invoice_id = await session.scalar(
+            select(Invoice.id).where(Invoice.external_id == ext_id)
+        )
+        if invoice_id is None:
+            return None
+        return await session.get(Invoice, invoice_id)
     except SQLAlchemyError as e:
-        logger.error(f"Ошибка БД в get_invoice_by_ext_id {ext_id}: {e}")
+        logger.error("Ошибка БД в get_invoice_by_external_id %s: %s", ext_id, e)
         return None
     except Exception as e:
-        logger.error(f"Непредвиденная ошибка в get_invoice_by_ext_id {ext_id}: {e}")
+        logger.error("Непредвиденная ошибка в get_invoice_by_external_id %s: %s", ext_id, e)
         return None
 
-async def update_invoice_status(session: AsyncSession, ext_id: str, status: str) -> bool:
+
+async def get_billing_entities(session: AsyncSession, ext_id: str) -> tuple[Invoice | None, User | None]:
     """
-    Обновляет статус инвойса.
-    
-    :param session: Асинхронная сессия SQLAlchemy
-    :param ext_id: Внешний ID (crypto_pay_id)
-    :param status: Новый статус ('PAID', 'EXPIRED', и т.д.)
-    :return: True если успешно, иначе False
+    Возвращает `(Invoice, User)` через два отдельных запроса с блокировкой строк.
     """
-    try:
-        query = update(Invoice).where(Invoice.crypto_pay_id == ext_id).values(status=status)
-        result = await session.execute(query)
-        if result.rowcount == 0:
-            logger.warning(f"Инвойс {ext_id} не найден для обновления статуса")
-            return False
-            
-        await session.commit()
-        logger.info(f"Статус инвойса {ext_id} изменен на {status}")
-        return True
-    except SQLAlchemyError as e:
-        await session.rollback()
-        logger.error(f"Ошибка БД в update_invoice_status {ext_id}: {e}")
-        return False
-    except Exception as e:
-        await session.rollback()
-        logger.error(f"Непредвиденная ошибка в update_invoice_status {ext_id}: {e}")
-        return False
+    invoice = await get_invoice_by_external_id(session, ext_id)
+    if invoice is None:
+        return None, None
+
+    locked_invoice = await session.get(Invoice, invoice.id, with_for_update=True)
+    if locked_invoice is None:
+        return None, None
+
+    locked_user = await session.get(User, locked_invoice.user_id, with_for_update=True)
+    return locked_invoice, locked_user
+
+
+async def update_invoice_record(
+    session: AsyncSession,
+    invoice_id: int,
+    amount_actual: float,
+    status: str,
+) -> Invoice | None:
+    """Обновляет `amount_actual` и `status` у инвойса."""
+    invoice = await session.get(Invoice, invoice_id, with_for_update=True)
+    if invoice is None:
+        return None
+
+    invoice.amount_actual = _round_money(amount_actual)
+    invoice.status = status
+    return invoice
+
+
+async def adjust_user_balance(
+    session: AsyncSession,
+    user_id: int,
+    amount: float,
+    tx_type: str,
+    description: str | None,
+) -> float | None:
+    """
+    Атомарно меняет баланс пользователя и создает запись в `Transaction`.
+    Возвращает новый баланс пользователя.
+    """
+    user = await session.get(User, user_id, with_for_update=True)
+    if user is None:
+        return None
+
+    rounded_amount = _round_money(amount)
+    user.balance = _round_money(user.balance + rounded_amount)
+    session.add(
+        Transaction(
+            user_id=user_id,
+            amount=rounded_amount,
+            type=tx_type,
+            description=description,
+        )
+    )
+    return _round_money(user.balance)
+
+
+async def extend_user_subscription(
+    session: AsyncSession,
+    user_id: int,
+    days: int,
+) -> datetime | None:
+    """Продлевает подписку пользователя и возвращает новую дату окончания."""
+    user = await session.get(User, user_id, with_for_update=True)
+    if user is None:
+        return None
+
+    now = get_utc_now()
+    current_end = user.subscription_end if user.subscription_end and user.subscription_end > now else now
+    new_end = current_end + timedelta(days=days)
+    user.subscription_end = new_end
+    return new_end
 
 
 
-async def get_all_deposits(session: AsyncSession) -> list[Transaction]:
+async def get_all_deposits(session: AsyncSession) -> list[tuple[Transaction, str | None]]:
     """
     Возвращает список всех депозитов с данными пользователей.
     """
     try:
         query = (
-            select(Transaction)
-            .options(joinedload(Transaction.user))
+            select(Transaction, User.username)
+            .outerjoin(User, Transaction.user_id == User.id)
             .where(Transaction.type == 'DEPOSIT')
             .order_by(desc(Transaction.created_at))
         )
         result = await session.execute(query)
-        return list(result.scalars().all())
+        return list(result.all())
     except SQLAlchemyError as e:
         logger.error(f"Ошибка БД в get_all_deposits: {e}")
         return []
@@ -271,66 +250,6 @@ async def get_partner_stats(session: AsyncSession, user_id: int) -> tuple[int, f
         logger.error(f"Непредвиденная ошибка в get_partner_stats для {user_id}: {e}")
         return 0, 0.0
 
-async def confirm_invoice_payment(session: AsyncSession, ext_id: str) -> bool:
-    """
-    Атомарно подтверждает оплату инвойса:
-    1. Начисляет баланс пользователю.
-    2. Создает транзакцию DEPOSIT.
-    3. Меняет статус инвойса на 'PAID'.
-
-    Не делает session.commit(), чтобы можно было продолжить сценарий
-    в рамках той же транзакции.
-
-    :param session: Асинхронная сессия SQLAlchemy
-    :param ext_id: Внешний ID инвойса (crypto_pay_id)
-    :return: True если успешно, иначе False
-    """
-    try:
-        # 1. Получаем инвойс и блокируем его
-        query = select(Invoice).where(Invoice.crypto_pay_id == ext_id).with_for_update()
-        result = await session.execute(query)
-        invoice = result.scalar_one_or_none()
-        
-        if not invoice:
-            logger.warning(f"Инвойс {ext_id} не найден для подтверждения оплаты")
-            return False
-            
-        if invoice.status != 'PENDING':
-            logger.warning(f"Попытка повторного подтверждения инвойса {ext_id} (текущий статус: {invoice.status})")
-            return False
-
-        # 2. Получаем пользователя и блокируем строку
-        user = await session.get(User, invoice.user_id, with_for_update=True)
-        if not user:
-            logger.error(f"Пользователь {invoice.user_id} не найден для начисления по инвойсу {ext_id}")
-            return False
-
-        # 3. Начисляем баланс
-        amount = round(float(invoice.amount), 2)
-        user.balance = round(user.balance + amount, 2)
-
-        # 4. Создаем запись транзакции
-        tx = Transaction(
-            user_id=invoice.user_id,
-            amount=amount,
-            type='DEPOSIT',
-            description=f"Пополнение через CryptoPay (Invoice #{ext_id})"
-        )
-        session.add(tx)
-
-        # 5. Обновляем статус инвойса
-        invoice.status = 'PAID'
-        
-        logger.info(f"Оплата инвойса {ext_id} успешно подтверждена. Пользователю {invoice.user_id} начислено {amount} USDT.")
-        return True
-    except SQLAlchemyError as e:
-        await session.rollback()
-        logger.error(f"Ошибка БД при подтверждении оплаты инвойса {ext_id}: {e}")
-        return False
-    except Exception as e:
-        await session.rollback()
-        logger.error(f"Непредвиденная ошибка при подтверждении оплаты инвойса {ext_id}: {e}")
-        return False
 
 async def activate_subscription_logic(
     session: AsyncSession, 
@@ -345,29 +264,17 @@ async def activate_subscription_logic(
     НЕ делает session.commit().
     """
     try:
-        # 1. Получаем пользователя с блокировкой
         user = await session.get(User, user_id, with_for_update=True)
         if not user:
             logger.error(f"Пользователь {user_id} не найден для активации подписки")
             return False, None
 
-        # 2. Расчет даты
-        now = get_utc_now()
-        current_end = user.subscription_end if user.subscription_end and user.subscription_end > now else now
-        new_end = current_end + timedelta(days=days)
-        user.subscription_end = new_end
+        new_end = await extend_user_subscription(session, user_id, days)
+        if new_end is None:
+            return False, None
 
-        # 3. Транзакция списания (для истории)
         price = round(float(price), 2)
-        tx = Transaction(
-            user_id=user_id,
-            amount=-price,
-            type='WITHDRAW',
-            description=description
-        )
-        session.add(tx)
 
-        # 4. Реферальная система
         if user.referrer_id:
             bonus_percent = getattr(config, "REFERRAL_BONUS_PERCENT", 15.0)
             bonus_amount = round(price * (bonus_percent / 100.0), 2)
@@ -411,14 +318,22 @@ async def charge_and_activate_subscription(
             logger.info(f"Недостаточно средств у {user_id}: {user.balance} < {price}")
             return False, None, 0.0
 
-        user.balance = round(user.balance - price, 2)
+        new_balance = await adjust_user_balance(
+            session=session,
+            user_id=user_id,
+            amount=-price,
+            tx_type="WITHDRAW",
+            description=description,
+        )
+        if new_balance is None:
+            return False, None, 0.0
 
         success, new_end = await activate_subscription_logic(
             session=session,
             user_id=user_id,
             days=days,
             price=price,
-            description=description
+            description=description,
         )
         if not success:
             return False, None, 0.0

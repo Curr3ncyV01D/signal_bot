@@ -1,26 +1,29 @@
 import asyncio
 import logging
 
+import orjson
 from aiogram import Router, types, F
 from aiogram_i18n import I18nContext
 from aiogram.types import FSInputFile, InputMediaPhoto
-from aiogram.utils.markdown import hbold
+from aiogram.utils.markdown import hbold, hcode
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.bot.keyboards import get_close_button_kb
 from src.bot.keyboards.billing_kb import (
     get_balance_purchase_confirm_kb,
     get_payment_link_kb,
+    get_payment_success_kb,
     get_subscription_tariffs_kb,
 )
 from src.core.config import config, ImagePaths
 from src.database.crud import billing_service, user_service
 from src.services.analyzer import invalidate_user_cache
-from src.services.cryptopay import cryptopay
+from src.services.cryptomus import CryptomusAPIError, cryptomus_client
 from src.utils import format_datetime, format_smart_num
 
 logger = logging.getLogger(__name__)
 router = Router()
+PAYLOAD_ACTION_SUB = "sub"
 
 
 def _format_plan_label(days: int, i18n: I18nContext) -> str:
@@ -32,6 +35,15 @@ def _format_plan_label(days: int, i18n: I18nContext) -> str:
 
 def _get_subscription_menu_text(i18n: I18nContext) -> str:
     return i18n.get("shop-subscription-menu")
+
+
+def _build_subscription_payload(days: int) -> str:
+    return orjson.dumps(
+        {
+            "a": PAYLOAD_ACTION_SUB,
+            "d": days,
+        }
+    ).decode("utf-8")
 
 
 async def _render_shop_screen(
@@ -121,7 +133,7 @@ async def callback_buy_subscription(callback: types.CallbackQuery, i18n: I18nCon
 
 @router.callback_query(F.data.startswith("buy_plan_"))
 async def callback_process_purchase(callback: types.CallbackQuery, session: AsyncSession, i18n: I18nContext):
-    """Процесс выбора тарифа: списание с баланса или fallback в Direct Pay."""
+    """Target-Action Flow покупки тарифа: баланс или доплата через Cryptomus."""
     try:
         days = int(callback.data.split("_")[2])
     except (ValueError, IndexError):
@@ -139,11 +151,12 @@ async def callback_process_purchase(callback: types.CallbackQuery, session: Asyn
 
     plan_label = _format_plan_label(days, i18n)
     price = round(float(price), 2)
+    current_balance = round(float(user.balance), 2)
 
-    if round(float(user.balance), 2) >= price:
+    if current_balance >= price:
         text = i18n.get(
             "shop-balance-purchase-confirm",
-            balance=hbold(f"{format_smart_num(user.balance)} USDT"),
+            balance=hbold(f"{format_smart_num(current_balance)} USDT"),
             plan_label=hbold(plan_label),
             price=hbold(f"{format_smart_num(price)} USDT"),
         )
@@ -152,37 +165,55 @@ async def callback_process_purchase(callback: types.CallbackQuery, session: Asyn
 
     await callback.answer()
 
+    amount_to_pay = round(price - current_balance, 2)
+    payload = _build_subscription_payload(days=days)
+
     try:
-        res = await asyncio.wait_for(
-            cryptopay.create_payment_invoice(price, user_id),
+        payment_response = await asyncio.wait_for(
+            cryptomus_client.create_payment(
+                amount=amount_to_pay,
+                currency="USD",
+                to_currency="USDT",
+                order_id=f"sub_{user_id}_{days}_{int(callback.message.message_id if callback.message else 0)}",
+                additional_data=payload,
+            ),
             timeout=15
         )
     except asyncio.TimeoutError:
-        logger.warning("CryptoPay API timeout при создании инвойса на подписку")
-        return await callback.answer(i18n.get("wallet-cryptopay-timeout"), show_alert=True)
+        logger.warning("Cryptomus API timeout при создании инвойса на подписку")
+        return await callback.answer(i18n.get("wallet-payment-gateway-timeout"), show_alert=True)
+    except CryptomusAPIError as e:
+        logger.error(f"Ошибка Cryptomus API при создании инвойса на подписку: {e}")
+        return await callback.answer(i18n.get("wallet-payment-gateway-error"), show_alert=True)
     except Exception as e:
-        logger.error(f"Ошибка CryptoPay API при создании инвойса на подписку: {e}")
-        return await callback.answer(i18n.get("wallet-cryptopay-error"), show_alert=True)
+        logger.error(f"Непредвиденная ошибка при создании инвойса на подписку: {e}")
+        return await callback.answer(i18n.get("wallet-payment-gateway-error"), show_alert=True)
 
-    if not res:
-        return await callback.answer(i18n.get("wallet-cryptopay-error"), show_alert=True)
-
-    pay_url, invoice_id = res
     await billing_service.create_invoice(
         session=session,
         user_id=user_id,
-        amount=price,
-        crypto_pay_id=str(invoice_id),
-        payload=f"sub_{days}"
+        external_id=payment_response.uuid,
+        amount_expected=amount_to_pay,
+        provider="CRYPTOMUS",
+        address=payment_response.address,
+        network=payment_response.network,
+        payload=payload,
     )
 
     text = i18n.get(
         "shop-direct-pay-screen",
         plan_label=plan_label,
         price=hbold(f"{format_smart_num(price)} USDT"),
-        balance=hbold(f"{format_smart_num(user.balance)} USDT"),
+        balance=hbold(f"{format_smart_num(current_balance)} USDT"),
+        amount_to_pay=hbold(f"{format_smart_num(amount_to_pay)} USDT"),
+        address=hcode(payment_response.address or "N/A"),
+        network=hbold(payment_response.network or i18n.get("shop-payment-network-auto")),
     )
-    await _render_shop_screen(callback, text, get_payment_link_kb(pay_url, invoice_id))
+    await _render_shop_screen(
+        callback,
+        text,
+        get_payment_link_kb(payment_response.url or config.SUPPORT_URL, payment_response.uuid),
+    )
 
 @router.callback_query(F.data.startswith("confirm_balance_purchase_"))
 async def callback_confirm_balance_purchase(callback: types.CallbackQuery, session: AsyncSession, i18n: I18nContext):
@@ -210,7 +241,7 @@ async def callback_confirm_balance_purchase(callback: types.CallbackQuery, sessi
         price=hbold(f"{format_smart_num(price)} USDT"),
     )
 
-    await _render_shop_screen(callback, text, image_path=ImagePaths.PAYMENT)
+    await _render_shop_screen(callback, text, reply_markup=get_payment_success_kb(), image_path=ImagePaths.PAYMENT)
     await callback.answer(i18n.get("shop-subscription-extended"))
 
     await _send_referral_bonus_notification(callback, session, referrer_id, bonus_amount, i18n)

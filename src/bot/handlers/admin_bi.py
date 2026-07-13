@@ -98,13 +98,13 @@ async def process_bi_export_csv(callback: types.CallbackQuery, session: AsyncSes
     # Заголовки
     writer.writerow(["ID транзакции", "Дата (UTC)", "User ID", "Username", "Сумма (USDT)", "Описание"])
     
-    for tx in deposits:
-        username = f"@{tx.user.username}" if tx.user and tx.user.username else "N/A"
+    for tx, username in deposits:
+        formatted_username = f"@{username}" if username else "N/A"
         writer.writerow([
             tx.id,
             tx.created_at.strftime('%Y-%m-%d %H:%M:%S'),
             tx.user_id,
-            username,
+            formatted_username,
             tx.amount,
             tx.description or ""
         ])

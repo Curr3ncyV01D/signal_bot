@@ -203,9 +203,10 @@ kb-wallet-language-en = 🌐 Язык: English (Click to change language)
 kb-wallet-partner = 🤝 Партнерская программа
 kb-wallet-history = 📜 История транзакций
 kb-wallet-back-main = ⬅️ Назад в меню
-kb-wallet-pay-cryptobot = 🔗 Оплатить (CryptoBot)
+kb-wallet-pay-cryptomus = ✅ Оплатить
 kb-wallet-check-payment = 🔄 Проверить оплату
 kb-wallet-payment-issue = 👨‍💻 Проблема с оплатой?
+kb-wallet-card-guide = 💳 Как оплатить картой
 kb-wallet-plan-months = { $months ->
     [one] { $months } месяц
     [few] { $months } месяца
@@ -290,8 +291,14 @@ shop-direct-pay-screen =
 
     💰 Стоимость: { $price }
     💳 На балансе сейчас: { $balance }
+    🧾 К доплате: { $amount_to_pay }
 
-    На балансе недостаточно средств, поэтому мы подготовили ссылку на оплату в CryptoBot.
+    <b>Реквизиты для оплаты:</b>
+    Сеть: { $network }
+    Адрес: { $address }
+
+    На балансе недостаточно средств, поэтому мы создали платеж только на недостающую сумму.
+shop-payment-network-auto = будет определена на странице оплаты
 shop-insufficient-balance = ❌ Недостаточно средств на балансе.
 shop-purchase-success =
     🎉 <b>Подписка успешно оформлена!</b>
@@ -329,10 +336,10 @@ wallet-partner-screen =
 wallet-deposit-screen =
     ➕ <b>Пополнение баланса</b>
 
-    Выберите сумму пополнения в USDT.
-    Оплата принимается через { $cryptobot }.
-wallet-cryptopay-timeout = ❌ Таймаут CryptoPay API. Попробуйте позже.
-wallet-cryptopay-error = ❌ Ошибка CryptoPay API. Попробуйте позже.
+    Ручное пополнение отключено. Оплата создается автоматически внутри покупки конкретного тарифа.
+wallet-deposit-removed-toast = Ручное пополнение отключено. Выберите тариф
+wallet-payment-gateway-timeout = ❌ Платежный шлюз не ответил вовремя. Попробуйте позже.
+wallet-payment-gateway-error = ❌ Ошибка платежного шлюза. Попробуйте позже.
 wallet-invoice-screen =
     🧾 <b>Счет на оплату #{ $invoice_id }</b>
 
@@ -341,7 +348,7 @@ wallet-invoice-screen =
 
     Нажмите кнопку ниже для перехода в CryptoBot:
 wallet-payment-pending-status = Ожидание оплаты
-wallet-invalid-invoice-id = ❌ Некорректный ID счета.
+wallet-invalid-invoice-id = ❌ Некорректный идентификатор платежа.
 wallet-invoice-not-found = ❌ Счет не найден в базе.
 wallet-invalid-subscription-payload = ❌ Некорректный payload подписки.
 wallet-subscription-activation-failed = ❌ Не удалось активировать подписку после оплаты. Обратитесь в поддержку.
@@ -358,7 +365,47 @@ wallet-success-toast = Успешно!
 wallet-crediting-error = Ошибка при зачислении. Обратитесь в поддержку.
 wallet-invoice-expired-screen = ❌ Срок действия счета истек.
 wallet-expired-toast = Истек
+wallet-payment-partial-screen =
+    ⚠️ <b>Обнаружена частичная оплата.</b>
+
+    Получено: { $paid_amount }
+    Ожидалось: { $expected_amount }
+    Не хватает: { $needed_amount }
+wallet-payment-partial-toast = Обнаружена частичная оплата
 wallet-payment-not-found-yet = ⏳ Оплата еще не обнаружена.
+wallet-payment-processing = ⏳ Платеж уже обрабатывается. Подождите пару секунд.
+wallet-payment-price-changed-screen =
+    ✅ <b>Оплата подтверждена!</b>
+
+    Средства зачислены на баланс: { $balance }
+    Авто-активация не выполнена, потому что текущая цена изменилась.
+    Для покупки тарифа не хватает: { $needed }
+wallet-payment-price-changed-toast = Средства зачислены, авто-активация требует доплаты
+payment-worker-reminder-active-link =
+    ⏳ <b>Ваша ссылка на оплату всё еще активна.</b>
+
+    Если возникли трудности с оплатой, напишите в поддержку.
+payment-worker-subscription-paid-notification =
+    ✅ <b>Оплата подтверждена!</b>
+
+    Баланс пополнен на <b>{ $amount }</b>.
+    Тариф на <b>{ $days }</b> дн. активирован автоматически до <b>{ $new_end }</b>.
+payment-worker-balance-paid-notification =
+    ✅ <b>Оплата получена!</b>
+
+    Ваш баланс пополнен на <b>{ $amount }</b>.
+payment-worker-partial-payment-notification =
+    ⚠️ <b>Обнаружена частичная оплата.</b>
+
+    Получено: <b>{ $paid_amount }</b>
+    Ожидалось: <b>{ $expected_amount }</b>
+    Для активации тарифа доплатите еще <b>{ $needed_amount }</b> на тот же адрес.
+payment-worker-price-changed-notification =
+    ✅ <b>Оплата подтверждена!</b>
+
+    Средства зачислены на баланс: <b>{ $balance }</b>
+    Авто-активация не выполнена: цена тарифа изменилась.
+    Для покупки сейчас не хватает <b>{ $needed }</b>.
 
 admin-user-blocked-notification =
     ❌ <b>Ваш аккаунт был заблокирован администрацией.</b>
@@ -382,3 +429,29 @@ join-request-declined-notification =
     ❌ <b>Ваша заявка на вступление отклонена.</b>
 
     У вас нет активной подписки или пробного периода. Пожалуйста, перейдите в бота и нажмите /start для приобретения подписки.
+
+bouncer-trial-expiry-warning =
+    ⏳ <b>Ваш пробный доступ истекает через 1 час.</b>
+
+    Чтобы не потерять доступ к сигналам, продлите подписку заранее в меню /start.
+
+bouncer-subscription-expiry-warning =
+    ⏳ <b>Ваша подписка истекает через 24 часа.</b>
+
+    Убедитесь, что на балансе достаточно средств для автопродления, или продлите её вручную в меню /start.
+
+bouncer-auto-renewal-success =
+    ✅ <b>Подписка продлена!</b>
+
+    Мы успешно списали <b>{ $amount } USDT</b> с вашего баланса. Спасибо, что остаетесь с нами.
+
+bouncer-auto-renewal-failed-balance =
+    ⚠️ <b>Недостаточно средств!</b>
+
+    Мы не смогли продлить подписку автоматически. Пополните баланс, чтобы не потерять доступ к персональным сигналам через 1 час.
+
+bouncer-subscription-expired =
+    ⚠️ <b>Срок действия вашей подписки/триала истек.</b>
+
+    Персональная рассылка сигналов приостановлена.
+    Нажмите /start и продлите подписку, чтобы восстановить доступ.

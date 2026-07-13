@@ -201,9 +201,10 @@ kb-wallet-language-en = 🌐 Language: English
 kb-wallet-partner = 🤝 Partner program
 kb-wallet-history = 📜 Transaction history
 kb-wallet-back-main = ⬅️ Back to menu
-kb-wallet-pay-cryptobot = 🔗 Pay with CryptoBot
+kb-wallet-pay-cryptomus = ✅ Pay
 kb-wallet-check-payment = 🔄 Check payment
 kb-wallet-payment-issue = 👨‍💻 Payment issue?
+kb-wallet-card-guide = 💳 How to pay by card
 kb-wallet-plan-months = { $months ->
     [one] { $months } month
    *[other] { $months } months
@@ -282,8 +283,14 @@ shop-direct-pay-screen =
 
     💰 Price: { $price }
     💳 Current balance: { $balance }
+    🧾 Amount to pay: { $amount_to_pay }
 
-    Your balance is insufficient, so we prepared a CryptoBot payment link.
+    <b>Payment details:</b>
+    Network: { $network }
+    Address: { $address }
+
+    Your balance is insufficient, so we created a payment only for the missing amount.
+shop-payment-network-auto = will be selected on the payment page
 shop-insufficient-balance = ❌ Insufficient balance.
 shop-purchase-success =
     🎉 <b>Subscription activated successfully!</b>
@@ -321,10 +328,10 @@ wallet-partner-screen =
 wallet-deposit-screen =
     ➕ <b>Balance top-up</b>
 
-    Choose the top-up amount in USDT.
-    Payment is accepted via { $cryptobot }.
-wallet-cryptopay-timeout = ❌ CryptoPay API timeout. Try again later.
-wallet-cryptopay-error = ❌ CryptoPay API error. Try again later.
+    Manual top-ups are disabled. Payment is now created automatically inside a specific plan purchase flow.
+wallet-deposit-removed-toast = Manual top-ups are disabled. Choose a plan
+wallet-payment-gateway-timeout = ❌ Payment gateway timeout. Try again later.
+wallet-payment-gateway-error = ❌ Payment gateway error. Try again later.
 wallet-invoice-screen =
     🧾 <b>Invoice #{ $invoice_id }</b>
 
@@ -333,7 +340,7 @@ wallet-invoice-screen =
 
     Click the button below to open CryptoBot:
 wallet-payment-pending-status = Pending payment
-wallet-invalid-invoice-id = ❌ Invalid invoice ID.
+wallet-invalid-invoice-id = ❌ Invalid payment identifier.
 wallet-invoice-not-found = ❌ Invoice not found in the database.
 wallet-invalid-subscription-payload = ❌ Invalid subscription payload.
 wallet-subscription-activation-failed = ❌ Failed to activate the subscription after payment. Contact support.
@@ -350,7 +357,47 @@ wallet-success-toast = Success!
 wallet-crediting-error = Crediting error. Contact support.
 wallet-invoice-expired-screen = ❌ Invoice expired.
 wallet-expired-toast = Expired
+wallet-payment-partial-screen =
+    ⚠️ <b>Partial payment detected.</b>
+
+    Received: { $paid_amount }
+    Expected: { $expected_amount }
+    Still needed: { $needed_amount }
+wallet-payment-partial-toast = Partial payment detected
 wallet-payment-not-found-yet = ⏳ Payment not detected yet.
+wallet-payment-processing = ⏳ Payment is already being processed. Please wait a few seconds.
+wallet-payment-price-changed-screen =
+    ✅ <b>Payment confirmed!</b>
+
+    Funds were credited to your balance: { $balance }
+    Auto-activation was not completed because the current price has changed.
+    You still need: { $needed }
+wallet-payment-price-changed-toast = Funds credited, auto-activation needs an extra top-up
+payment-worker-reminder-active-link =
+    ⏳ <b>Your payment link is still active.</b>
+
+    If you have any payment issues, contact support.
+payment-worker-subscription-paid-notification =
+    ✅ <b>Payment confirmed!</b>
+
+    Your balance was topped up by <b>{ $amount }</b>.
+    The { $days }-day plan was activated automatically until <b>{ $new_end }</b>.
+payment-worker-balance-paid-notification =
+    ✅ <b>Payment received!</b>
+
+    Your balance has been topped up by <b>{ $amount }</b>.
+payment-worker-partial-payment-notification =
+    ⚠️ <b>Partial payment detected.</b>
+
+    Received: <b>{ $paid_amount }</b>
+    Expected: <b>{ $expected_amount }</b>
+    Send another <b>{ $needed_amount }</b> to the same address to activate the plan.
+payment-worker-price-changed-notification =
+    ✅ <b>Payment confirmed!</b>
+
+    Funds were credited to your balance: <b>{ $balance }</b>
+    Auto-activation was not completed because the plan price has changed.
+    You still need <b>{ $needed }</b> to purchase the plan.
 
 admin-user-blocked-notification =
     ❌ <b>Your account has been blocked by an administrator.</b>
@@ -374,3 +421,29 @@ join-request-declined-notification =
     ❌ <b>Your request to join was declined.</b>
 
     You do not have an active subscription or trial period. Please open the bot and use /start to purchase a subscription.
+
+bouncer-trial-expiry-warning =
+    ⏳ <b>Your trial access expires in 1 hour.</b>
+
+    To keep receiving alerts, extend your subscription in the /start menu.
+
+bouncer-subscription-expiry-warning =
+    ⏳ <b>Your subscription expires in 24 hours.</b>
+
+    Make sure you have enough balance for auto-renewal or extend it manually in the /start menu.
+
+bouncer-auto-renewal-success =
+    ✅ <b>Subscription extended!</b>
+
+    We successfully deducted <b>{ $amount } USDT</b> from your balance. Thank you for staying with us.
+
+bouncer-auto-renewal-failed-balance =
+    ⚠️ <b>Insufficient funds!</b>
+
+    We couldn't renew your subscription automatically. Top up your balance to keep receiving alerts after 1 hour.
+
+bouncer-subscription-expired =
+    ⚠️ <b>Your subscription/trial has expired.</b>
+
+    Personal signal alerts have been suspended.
+    Press /start to extend your subscription and restore access.
