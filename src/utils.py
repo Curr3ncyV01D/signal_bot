@@ -6,15 +6,6 @@ from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
-# Ручной маппинг для случаев, когда тикер не совпадает с ID CoinGecko
-MANUAL_MAPPING = {
-    "BIT": "bitdao",
-    "WLD": "worldcoin-org",
-    "PEPE": "pepe",
-    "SHIB": "shiba-inu",
-    # Добавляйте сюда другие монеты по мере необходимости
-}
-
 
 SYMBOL_MULTIPLIER_REGEX = re.compile(r'^(\d+)')
 

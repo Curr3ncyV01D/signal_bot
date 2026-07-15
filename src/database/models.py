@@ -123,6 +123,14 @@ class Invoice(Base):
     user: Mapped["User"] = relationship(back_populates="invoices")
 
 
+class CoinMapping(Base):
+    __tablename__ = "coin_mappings"
+
+    symbol: Mapped[str] = mapped_column(String(20), primary_key=True)  # Базовый тикер Bybit (WLD, BIT)
+    cg_id: Mapped[str] = mapped_column(String(100), index=True, nullable=False)  # Явный CoinGecko ID
+    comment: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
+
 class CoinFundamental(Base):
     __tablename__ = "coin_fundamentals"
 
