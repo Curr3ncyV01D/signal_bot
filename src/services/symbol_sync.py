@@ -2,6 +2,8 @@ import asyncio
 import logging
 
 from src.core.config import config
+from src.database.crud.fundamentals_service import sync_coin_fundamentals_list
+from src.database.session import async_session
 from src.services.aggregators.market_aggregator import MarketAggregator
 from src.services.bybit_ws import BybitListener
 from src.services.warmup import warmup_ohlc, warmup_system
@@ -31,6 +33,11 @@ async def symbol_sync_worker(listener: BybitListener, market_aggregator: MarketA
                 new_symbols = [symbol for symbol in new_all_symbols if symbol not in current_symbols]
 
                 if new_symbols:
+                    async with async_session() as session_db:
+                        seeded_count = await sync_coin_fundamentals_list(session_db, new_symbols)
+                        if seeded_count:
+                            logger.info("🌱 Новые листинги добавлены в coin_fundamentals: %s", seeded_count)
+
                     await warmup_system(market_aggregator, new_symbols)
                     await warmup_ohlc(market_aggregator, new_symbols)
 

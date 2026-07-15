@@ -1,165 +1,217 @@
 import asyncio
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from aiogram import Bot
 from sqlalchemy import select
 
+from src.core.i18n_runtime import background_i18n
 from src.core.config import config
-from src.database.crud import billing_service
+from src.core.localization import normalize_locale_code
 from src.database.functions import get_utc_now
-from src.database.models import Invoice, Transaction
+from src.database.models import Invoice, User
 from src.database.session import async_session
-from src.services.analyzer import invalidate_user_cache
-from src.services.cryptopay import cryptopay
-from src.utils import format_datetime
+from src.services.logic.billing_processor import process_payment_update
+from src.utils import format_datetime, format_smart_num
 
 logger = logging.getLogger(__name__)
 
+MANUAL_PAYMENT_PROVIDER = "MANUAL"
+MANUAL_PAYMENT_NETWORK = "TRC20"
+
 ABANDONED_CART_REMINDER_MINUTES = 30
 ABANDONED_CART_REMINDER_MAX_MINUTES = 120
-INVOICE_EXPIRE_MINUTES = 24 * 60
+INVOICE_EXPIRE_MINUTES = 120
+MANUAL_INVOICE_EXPIRE_MINUTES = 1440
+FAST_POLL_UNTIL_MINUTES = 15
+FAST_POLL_INTERVAL_SECONDS = 30
+SLOW_POLL_INTERVAL_SECONDS = 180
+MANUAL_POLL_INTERVAL_SECONDS = 1800
+POLLING_CONCURRENCY = 5
 
 class PaymentManager:
     """Контроль состояния воркера платежей (Heartbeat)"""
     last_run: datetime | None = None
+    next_poll_at: dict[str, datetime] = {}
 
 
-async def _has_subscription_activation(
-    session,
-    user_id: int,
-    crypto_pay_id: str
-) -> bool:
-    description = f"Direct Pay subscription via Invoice #{crypto_pay_id}"
-    query = select(Transaction.id).where(
-        Transaction.user_id == user_id,
-        Transaction.type == "WITHDRAW",
-        Transaction.description == description
+def _get_i18n_text(locale: str | None, key: str, **kwargs: object) -> str:
+    return background_i18n.get(
+        key,
+        locale=normalize_locale_code(locale),
+        **kwargs,
     )
-    result = await session.execute(query)
-    return result.scalar_one_or_none() is not None
+
+
+def _resolve_poll_interval_seconds(age_minutes: float) -> int:
+    return FAST_POLL_INTERVAL_SECONDS if age_minutes < FAST_POLL_UNTIL_MINUTES else SLOW_POLL_INTERVAL_SECONDS
+
+
+async def _process_invoice(bot: Bot, invoice_id: int, semaphore: asyncio.Semaphore) -> None:
+    async with semaphore:
+        async with async_session() as session:
+            inv = await session.get(Invoice, invoice_id)
+            if not inv or inv.status not in {"PENDING", "PARTIAL"}:
+                if inv:
+                    PaymentManager.next_poll_at.pop(inv.external_id, None)
+                return
+
+            invoice_external_id = str(inv.external_id)
+            invoice_user_id = int(inv.user_id)
+            invoice_created_at = inv.created_at
+            invoice_reminder_sent = bool(inv.is_reminder_sent)
+            invoice_provider = str(inv.provider or "")
+            invoice_screenshot_file_id = inv.screenshot_file_id
+            user = await session.get(User, invoice_user_id)
+            user_locale = normalize_locale_code(user.language_code if user else None)
+
+            now = get_utc_now()
+            age_minutes = (now - invoice_created_at).total_seconds() / 60
+
+            if invoice_provider.upper() == MANUAL_PAYMENT_PROVIDER:
+                if inv.status != "PENDING" or invoice_screenshot_file_id:
+                    PaymentManager.next_poll_at.pop(invoice_external_id, None)
+                    return
+
+                if age_minutes >= MANUAL_INVOICE_EXPIRE_MINUTES:
+                    inv.status = "EXPIRED"
+                    await session.commit()
+                    PaymentManager.next_poll_at.pop(invoice_external_id, None)
+                    logger.info(
+                        "Manual invoice #%s закрыт по таймауту без скриншота (%s мин)",
+                        invoice_external_id,
+                        MANUAL_INVOICE_EXPIRE_MINUTES,
+                    )
+                    return
+
+                PaymentManager.next_poll_at[invoice_external_id] = now + timedelta(seconds=MANUAL_POLL_INTERVAL_SECONDS)
+                return
+
+            if age_minutes >= INVOICE_EXPIRE_MINUTES:
+                inv.status = "EXPIRED"
+                await session.commit()
+                PaymentManager.next_poll_at.pop(invoice_external_id, None)
+                logger.info("Инвойс #%s закрыт по таймауту (%s мин)", invoice_external_id, INVOICE_EXPIRE_MINUTES)
+                return
+
+            PaymentManager.next_poll_at[invoice_external_id] = now + timedelta(seconds=_resolve_poll_interval_seconds(age_minutes))
+
+            if (
+                age_minutes >= ABANDONED_CART_REMINDER_MINUTES
+                and age_minutes <= ABANDONED_CART_REMINDER_MAX_MINUTES
+                and not invoice_reminder_sent
+            ):
+                try:
+                    await bot.send_message(
+                        chat_id=invoice_user_id,
+                        text=_get_i18n_text(user_locale, "payment-worker-reminder-active-link"),
+                        parse_mode="HTML"
+                    )
+                    inv.is_reminder_sent = True
+                    await session.commit()
+                    logger.info("Отправлено напоминание о брошенной корзине пользователю %s", invoice_user_id)
+                except Exception as e:
+                    logger.warning("Не удалось отправить напоминание %s: %s", invoice_user_id, e)
+
+            payment_result = await process_payment_update(session, invoice_external_id)
+
+            if payment_result.sub_activated and payment_result.new_end_date:
+                PaymentManager.next_poll_at.pop(invoice_external_id, None)
+                try:
+                    await bot.send_message(
+                        chat_id=invoice_user_id,
+                        text=_get_i18n_text(
+                            user_locale,
+                            "payment-worker-subscription-paid-notification",
+                            amount=f"{format_smart_num(payment_result.delta_credited or payment_result.amount_actual)} USDT",
+                            days=payment_result.intent_days or 0,
+                            new_end=format_datetime(payment_result.new_end_date),
+                        ),
+                        parse_mode="HTML"
+                    )
+                except Exception as notify_err:
+                    logger.error("Не удалось отправить уведомление пользователю %s: %s", invoice_user_id, notify_err)
+
+            elif payment_result.intent_action == "sub" and payment_result.is_paid and not payment_result.sub_activated:
+                try:
+                    await bot.send_message(
+                        chat_id=invoice_user_id,
+                        text=_get_i18n_text(
+                            user_locale,
+                            "payment-worker-price-changed-notification",
+                            balance=f"{format_smart_num(payment_result.new_balance)} USDT",
+                            needed=f"{format_smart_num(payment_result.needed_amount)} USDT",
+                        ),
+                        parse_mode="HTML",
+                    )
+                except Exception as notify_err:
+                    logger.error("Не удалось отправить уведомление о неавтоактивированной подписке пользователю %s: %s", invoice_user_id, notify_err)
+
+            elif payment_result.delta_credited > 0:
+                try:
+                    await bot.send_message(
+                        chat_id=invoice_user_id,
+                        text=_get_i18n_text(
+                            user_locale,
+                            "payment-worker-balance-paid-notification",
+                            amount=f"{format_smart_num(payment_result.delta_credited)} USDT",
+                        ),
+                        parse_mode="HTML"
+                    )
+                except Exception as notify_err:
+                    logger.error("Не удалось отправить уведомление о пополнении пользователю %s: %s", invoice_user_id, notify_err)
+
+                if not payment_result.is_paid and payment_result.amount_actual > 0:
+                    try:
+                        await bot.send_message(
+                            chat_id=invoice_user_id,
+                            text=_get_i18n_text(
+                                user_locale,
+                                "payment-worker-partial-payment-notification",
+                                paid_amount=f"{format_smart_num(payment_result.amount_actual)} USDT",
+                                expected_amount=f"{format_smart_num(payment_result.amount_expected)} USDT",
+                                needed_amount=f"{format_smart_num(payment_result.needed_amount)} USDT",
+                                network=MANUAL_PAYMENT_NETWORK,
+                                wallet=config.PAYMENT_MANUAL_WALLET or "—",
+                            ),
+                            parse_mode="HTML"
+                        )
+                    except Exception as notify_err:
+                        logger.error("Не удалось отправить уведомление о частичной оплате пользователю %s: %s", invoice_user_id, notify_err)
+
+            elif payment_result.invoice_status in {"EXPIRED", "PAID"}:
+                PaymentManager.next_poll_at.pop(invoice_external_id, None)
 
 
 async def payment_checker_worker(bot: Bot):
-    """Фоновый воркер для проверки статусов инвойсов CryptoPay."""
-    logger.info("Запущен воркер проверки платежей CryptoPay")
-    
+    """Фоновый воркер для проверки статусов инвойсов."""
+    logger.info("Запущен воркер проверки платежей")
+    semaphore = asyncio.Semaphore(POLLING_CONCURRENCY)
+
     while True:
         PaymentManager.last_run = datetime.now(timezone.utc)
         try:
             async with async_session() as session:
-                query = select(Invoice.id).where(Invoice.status == "PENDING")
+                query = select(Invoice.id, Invoice.external_id).where(
+                    ((Invoice.provider != MANUAL_PAYMENT_PROVIDER) & Invoice.status.in_(("PENDING", "PARTIAL")))
+                    | (
+                        (Invoice.provider == MANUAL_PAYMENT_PROVIDER)
+                        & (Invoice.status == "PENDING")
+                        & (Invoice.screenshot_file_id.is_(None))
+                    )
+                )
                 result = await session.execute(query)
-                pending_invoice_ids = list(result.scalars().all())
+                pending_invoices = list(result.all())
 
-                for invoice_id in pending_invoice_ids:
-                    inv = await session.get(Invoice, invoice_id, with_for_update=True)
-                    if not inv or inv.status != "PENDING":
-                        continue
+            now = get_utc_now()
+            invoice_ids_to_poll = [
+                invoice_id
+                for invoice_id, external_id in pending_invoices
+                if PaymentManager.next_poll_at.get(external_id, now) <= now
+            ]
 
-                    now = get_utc_now()
-                    age_minutes = (now - inv.created_at).total_seconds() / 60
-
-                    if age_minutes >= INVOICE_EXPIRE_MINUTES:
-                        inv.status = "EXPIRED"
-                        await session.commit()
-                        logger.info(f"Инвойс #{inv.crypto_pay_id} закрыт по таймауту (24ч)")
-                        continue
-
-                    if (
-                        age_minutes >= ABANDONED_CART_REMINDER_MINUTES
-                        and age_minutes <= ABANDONED_CART_REMINDER_MAX_MINUTES
-                        and not inv.is_reminder_sent
-                    ):
-                        try:
-                            await bot.send_message(
-                                chat_id=inv.user_id,
-                                text="⏳ <b>Ваша ссылка на оплату всё еще активна.</b>\n\n"
-                                     "Если возникли трудности с оплатой — напишите в поддержку.",
-                                parse_mode="HTML"
-                            )
-                            inv.is_reminder_sent = True
-                            await session.commit()
-                            logger.info(f"Отправлено напоминание о брошенной корзине пользователю {inv.user_id}")
-                        except Exception as e:
-                            logger.warning(f"Не удалось отправить напоминание {inv.user_id}: {e}")
-
-                    status = await cryptopay.check_invoice_status(int(inv.crypto_pay_id))
-
-                    if status == "paid":
-                        success = await billing_service.confirm_invoice_payment(session, inv.crypto_pay_id)
-
-                        if not success:
-                            await session.rollback()
-                            continue
-
-                        activated_sub = False
-                        new_end: datetime | None = None
-
-                        if inv.payload and inv.payload.startswith("sub_"):
-                            try:
-                                already_activated = await _has_subscription_activation(
-                                    session=session,
-                                    user_id=inv.user_id,
-                                    crypto_pay_id=inv.crypto_pay_id
-                                )
-                                if not already_activated:
-                                    days = int(inv.payload.split("_", 1)[1])
-                                    price = round(float(config.TARIFFS.get(days, inv.amount)), 2)
-                                    success_charge, new_end, _ = await billing_service.charge_and_activate_subscription(
-                                        session=session,
-                                        user_id=inv.user_id,
-                                        days=days,
-                                        price=price,
-                                        description=f"Direct Pay subscription via Invoice #{inv.crypto_pay_id}"
-                                    )
-                                    if success_charge:
-                                        activated_sub = True
-                                        logger.info(
-                                            f"Авто-активация подписки для {inv.user_id} "
-                                            f"по инвойсу #{inv.crypto_pay_id} успешна"
-                                        )
-                                    else:
-                                        logger.warning(
-                                            f"Не удалось активировать подписку для {inv.user_id} "
-                                            f"по инвойсу #{inv.crypto_pay_id}"
-                                        )
-                            except Exception as sub_err:
-                                await session.rollback()
-                                logger.error(f"Ошибка авто-активации для {inv.user_id}: {sub_err}")
-                                continue
-
-                        await session.commit()
-
-                        if activated_sub:
-                            await invalidate_user_cache()
-
-                        try:
-                            if activated_sub and new_end:
-                                await bot.send_message(
-                                    chat_id=inv.user_id,
-                                    text=(
-                                    "✅ <b>Оплата подтверждена!</b>\n\n"
-                                    f"Ваша подписка активирована до <b>{format_datetime(new_end)}</b>."
-                                    ),
-                                    parse_mode="HTML"
-                                )
-                            else:
-                                await bot.send_message(
-                                    chat_id=inv.user_id,
-                                    text=(
-                                        "✅ <b>Оплата получена!</b>\n\n"
-                                        f"Ваш баланс пополнен на <b>{inv.amount} USDT</b>."
-                                    ),
-                                    parse_mode="HTML"
-                                )
-                        except Exception as notify_err:
-                            logger.error(f"Не удалось отправить уведомление пользователю {inv.user_id}: {notify_err}")
-
-                    elif status in ["expired", "deleted", "cancelled"]:
-                        inv.status = "EXPIRED"
-                        await session.commit()
-                        logger.info(f"Инвойс #{inv.crypto_pay_id} закрыт (статус: {status})")
+            if invoice_ids_to_poll:
+                await asyncio.gather(*(_process_invoice(bot, invoice_id, semaphore) for invoice_id in invoice_ids_to_poll))
 
         except Exception as e:
             logger.error(f"Ошибка в payment_checker_worker: {e}")
