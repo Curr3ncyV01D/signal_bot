@@ -4,7 +4,6 @@ from .admin_kb import (
     get_admin_main_kb,
     get_users_list_kb,
     get_user_manage_kb,
-    get_admin_channel_kb,
     get_cancel_fsm_kb,
     get_cancel_admin_action_kb,
 )
@@ -19,7 +18,6 @@ __all__ = [
     "get_admin_main_kb",
     "get_users_list_kb",
     "get_user_manage_kb",
-    "get_admin_channel_kb",
     "get_status_kb",
     "get_cancel_fsm_kb",
     "get_cancel_admin_action_kb",

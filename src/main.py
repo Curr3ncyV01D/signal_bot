@@ -10,6 +10,7 @@ from src.core.config import config, setup_logging
 from src.core.security import SecurityManager
 from src.database.session import async_session
 from src.database.models import User, CoinFundamental
+from src.database.crud.fundamentals_service import sync_coin_fundamentals_list
 from src.database.crud.liq_service import get_recent_liquidations
 from src.database.crud.channel_service import ChannelService
 from src.bot.handlers import main_router as router
@@ -32,6 +33,7 @@ from src.services.warmup import warmup_ohlc, warmup_system
 from src.services.bouncer import bouncer_worker
 from src.services.dashboard import dashboard_worker
 from src.services.payment_worker import payment_checker_worker
+from src.services.cryptomus import cryptomus_client
 from src.services.cryptopay import cryptopay
 from src.services.asset_manager import AssetManager
 from src.services.symbol_sync import build_target_symbols, symbol_sync_worker
@@ -140,6 +142,9 @@ async def main():
     logging.info("Прогрев ликвидаций из базы данных...")
     async with async_session() as session_db:
         await AssetManager.ensure_placeholder(bot, session_db)
+        seeded_count = await sync_coin_fundamentals_list(session_db, target_symbols)
+        if seeded_count:
+            logging.info(f"🌱 Добавлены новые тикеры Bybit в coin_fundamentals: {seeded_count}")
         historical_data = await get_recent_liquidations(session_db, minutes=60)
         liq_aggregator.load_historical_data(historical_data)
 
@@ -258,6 +263,7 @@ async def on_shutdown(bot: Bot, listener: BybitListener, tasks: list[asyncio.Tas
         except Exception as e:
             logging.error(f"Ошибка при закрытии WebSocket: {e}")
 
+    await cryptomus_client.close()
     await cryptopay.close()
     await bot.session.close()
     logging.info("Все соединения закрыты.")

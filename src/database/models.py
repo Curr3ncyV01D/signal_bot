@@ -53,6 +53,7 @@ class User(Base):
     
     # Отношения
     transactions: Mapped[list["Transaction"]] = relationship(back_populates="user")
+    invoices: Mapped[list["Invoice"]] = relationship(back_populates="user")
 
 
 class UserEvent(Base):
@@ -104,12 +105,30 @@ class Invoice(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.id"), index=True, nullable=False)
-    amount: Mapped[float] = mapped_column(Float, nullable=False)
-    crypto_pay_id: Mapped[str] = mapped_column(String(50), unique=True, nullable=False)
-    status: Mapped[str] = mapped_column(String(20), nullable=False) # PENDING, PAID, EXPIRED
+    amount_actual: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
+    amount_expected: Mapped[float] = mapped_column(Float, nullable=False)
     payload: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    status: Mapped[str] = mapped_column(String(20), nullable=False) # PENDING, PAID, PARTIAL, EXPIRED
     is_reminder_sent: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=get_utc_now, nullable=False)
+    external_id: Mapped[str] = mapped_column(String(100), unique=True, index=True, nullable=False)
+    provider: Mapped[str] = mapped_column(String(20), default="CRYPTOMUS", nullable=False)  # CRYPTOMUS, CRYPTOPAY, MANUAL
+    address: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    network: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    screenshot_file_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    approved_by_admin_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    rejection_reason: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
+    # Отношения
+    user: Mapped["User"] = relationship(back_populates="invoices")
+
+
+class CoinMapping(Base):
+    __tablename__ = "coin_mappings"
+
+    symbol: Mapped[str] = mapped_column(String(20), primary_key=True)  # Базовый тикер Bybit (WLD, BIT)
+    cg_id: Mapped[str] = mapped_column(String(100), index=True, nullable=False)  # Явный CoinGecko ID
+    comment: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
 
 class CoinFundamental(Base):

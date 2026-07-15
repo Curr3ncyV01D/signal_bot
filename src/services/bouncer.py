@@ -8,6 +8,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.config import config
+from src.core.i18n_runtime import background_i18n
+from src.core.localization import normalize_locale_code
 from src.database.crud import billing_service
 from src.database.functions import get_utc_now
 from src.database.models import Transaction, User
@@ -73,21 +75,15 @@ async def _handle_expiry_warning(
     hours_left = (user.subscription_end - now).total_seconds() / 3600
     minutes_left = (user.subscription_end - now).total_seconds() / 60
     is_active_trial = await _has_active_trial_access(session, user)
+    user_locale = normalize_locale_code(user.language_code)
     if is_active_trial:
         in_warning_window = TRIAL_EXPIRY_WARNING_MIN_MINUTES <= minutes_left <= TRIAL_EXPIRY_WARNING_MAX_MINUTES
         warning_threshold = user.subscription_end - timedelta(minutes=TRIAL_EXPIRY_WARNING_MAX_MINUTES)
-        warning_text = (
-            "⏳ <b>Ваш пробный доступ истекает через 1 час.</b>\n\n"
-            "Чтобы не потерять доступ к сигналам, продлите подписку заранее в меню /start."
-        )
+        warning_text = background_i18n.get("bouncer-trial-expiry-warning", locale=user_locale)
     else:
         in_warning_window = EXPIRY_WARNING_24H_MIN_HOURS <= hours_left <= EXPIRY_WARNING_24H_MAX_HOURS
         warning_threshold = user.subscription_end - timedelta(hours=EXPIRY_WARNING_24H_MAX_HOURS)
-        warning_text = (
-            "⏳ <b>Ваша подписка истекает через 24 часа.</b>\n\n"
-            "Убедитесь, что на балансе достаточно средств для автопродления, "
-            "или продлите её вручную в меню /start."
-        )
+        warning_text = background_i18n.get("bouncer-subscription-expiry-warning", locale=user_locale)
 
     if not in_warning_window:
         return
@@ -129,14 +125,16 @@ async def _handle_auto_renewal(
         user.last_renewal_attempt = None
         user.last_expiry_warning_at = None
         await session.commit()
-        await invalidate_user_cache()
+        await invalidate_user_cache(user.id)
+        
+        user_locale = normalize_locale_code(user.language_code)
         await _safe_send_message(
             bot,
             user.id,
-            (
-                "✅ <b>Подписка продлена!</b>\n\n"
-                f"Мы успешно списали {monthly_price:.2f} USDT с вашего баланса. "
-                "Спасибо, что остаетесь с нами."
+            background_i18n.get(
+                "bouncer-auto-renewal-success", 
+                locale=user_locale, 
+                amount=f"{monthly_price:.2f}"
             )
         )
         return True
@@ -146,14 +144,11 @@ async def _handle_auto_renewal(
         or (now - user.last_renewal_attempt) >= timedelta(hours=AUTO_RENEWAL_COOLDOWN_HOURS)
     )
     if should_notify:
+        user_locale = normalize_locale_code(user.language_code)
         sent = await _safe_send_message(
             bot,
             user.id,
-            (
-                "⚠️ <b>Недостаточно средств!</b>\n\n"
-                "Мы не смогли продлить подписку автоматически. Пополните баланс, "
-                "чтобы не потерять доступ к персональным сигналам через 1 час."
-            )
+            background_i18n.get("bouncer-auto-renewal-failed-balance", locale=user_locale)
         )
         if sent:
             user.last_renewal_attempt = now
@@ -162,14 +157,11 @@ async def _handle_auto_renewal(
     return False
 
 async def _handle_subscription_expiry(session: AsyncSession, bot: Bot, user: User) -> None:
+    user_locale = normalize_locale_code(user.language_code)
     await _safe_send_message(
         bot,
         user.id,
-        (
-            "⚠️ <b>Срок действия вашей подписки/триала истек.</b>\n\n"
-            "Персональная рассылка сигналов приостановлена.\n"
-            "Нажмите /start и продлите подписку, чтобы восстановить доступ."
-        )
+        background_i18n.get("bouncer-subscription-expired", locale=user_locale)
     )
 
     user.subscription_end = None

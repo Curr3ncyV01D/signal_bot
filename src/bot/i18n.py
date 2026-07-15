@@ -2,13 +2,12 @@ from typing import Any
 
 from aiogram.types import User as TelegramUser
 from aiogram_i18n import I18nMiddleware
-from aiogram_i18n.cores.fluent_runtime_core import FluentRuntimeCore
 from aiogram_i18n.managers.base import BaseManager
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.core.i18n_runtime import app_i18n_core
 from src.core.localization import (
     DEFAULT_LOCALE,
-    LOCALES_DIR,
     normalize_locale_code,
     resolve_initial_locale,
 )
@@ -74,14 +73,12 @@ class UserLocaleManager(BaseManager):
         return resolve_initial_locale(event_from_user.language_code)
 
 
+i18n_core = app_i18n_core
+
+
 def build_i18n_middleware() -> I18nMiddleware:
-    core = FluentRuntimeCore(
-        path=LOCALES_DIR,
-        default_locale=DEFAULT_LOCALE,
-        raise_key_error=True,
-    )
     return I18nMiddleware(
-        core=core,
+        core=i18n_core,
         manager=UserLocaleManager(default_locale=DEFAULT_LOCALE),
         default_locale=DEFAULT_LOCALE,
     )

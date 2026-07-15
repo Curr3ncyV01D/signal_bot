@@ -46,6 +46,7 @@ def get_start_kb(user: User) -> InlineKeyboardMarkup:
         text=LazyProxy("kb-main-wallet", balance=format_smart_num(user.balance)),
         callback_data="wallet_main"
     ))
+    builder.row(InlineKeyboardButton(text=LazyProxy("kb-main-profile"), callback_data="profile_main"))
     builder.row(InlineKeyboardButton(text=LazyProxy("kb-main-settings"), callback_data="open_settings"))
     builder.row(InlineKeyboardButton(text=LazyProxy("kb-main-support"), url=config.SUPPORT_URL))
     return builder.as_markup()
