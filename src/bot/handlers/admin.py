@@ -13,7 +13,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.bot.filters.admin import IsAdminFilter
 from src.bot.keyboards import (
-    get_admin_channel_kb,
     get_cancel_admin_action_kb,
     get_admin_main_kb,
     get_cancel_fsm_kb,
