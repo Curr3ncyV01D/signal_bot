@@ -112,9 +112,12 @@ class Invoice(Base):
     is_reminder_sent: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=get_utc_now, nullable=False)
     external_id: Mapped[str] = mapped_column(String(100), unique=True, index=True, nullable=False)
-    provider: Mapped[str] = mapped_column(String(20), default="CRYPTOMUS", nullable=False)
+    provider: Mapped[str] = mapped_column(String(20), default="CRYPTOMUS", nullable=False)  # CRYPTOMUS, CRYPTOPAY, MANUAL
     address: Mapped[str | None] = mapped_column(String(128), nullable=True)
     network: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    screenshot_file_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    approved_by_admin_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    rejection_reason: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
     # Отношения
     user: Mapped["User"] = relationship(back_populates="invoices")

@@ -5,30 +5,35 @@ from src.core.config import config
 from src.core.localization import normalize_locale_code
 from src.database.models import User
 
-def get_wallet_main_kb(user: User) -> InlineKeyboardMarkup:
+def get_wallet_main_kb(
+    user: User,
+    *,
+    renew_button_key: str = "kb-wallet-renew",
+) -> InlineKeyboardMarkup:
     """Главное меню кошелька"""
     builder = InlineKeyboardBuilder()
-    language_code = normalize_locale_code(user.language_code)
 
-    builder.row(InlineKeyboardButton(text=LazyProxy("kb-wallet-renew"), callback_data="buy_subscription"))
+    builder.row(InlineKeyboardButton(text=LazyProxy(renew_button_key), callback_data="buy_subscription"))
     auto_renewal_text = LazyProxy("kb-wallet-autorenew-on") if user.auto_renewal else LazyProxy("kb-wallet-autorenew-off")
     builder.row(InlineKeyboardButton(text=auto_renewal_text, callback_data="toggle_auto_renewal"))
-    language_button = (
-        LazyProxy("kb-wallet-language-ru")
-        if language_code == "ru"
-        else LazyProxy("kb-wallet-language-en")
-    )
-    builder.row(InlineKeyboardButton(text=language_button, callback_data="change_language"))
-    builder.row(InlineKeyboardButton(text=LazyProxy("kb-wallet-partner"), callback_data="partner_cabinet"))
     builder.row(InlineKeyboardButton(text=LazyProxy("kb-wallet-history"), callback_data="tx_history"))
     builder.row(InlineKeyboardButton(text=LazyProxy("kb-wallet-back-main"), callback_data="back_to_main"))
     return builder.as_markup()
 
-def get_payment_link_kb(url: str, external_id: str) -> InlineKeyboardMarkup:
-    """Ссылка на оплату и кнопки действий по инвойсу."""
+
+def get_manual_payment_kb(
+    external_id: str,
+    *,
+    screenshot_button_key: str = "kb-wallet-send-screenshot",
+) -> InlineKeyboardMarkup:
+    """Клавиатура ручной оплаты со скриншотом."""
     builder = InlineKeyboardBuilder()
-    builder.row(InlineKeyboardButton(text=LazyProxy("kb-wallet-pay-cryptomus"), url=url))
-    builder.row(InlineKeyboardButton(text=LazyProxy("kb-wallet-check-payment"), callback_data=f"check_pay_{external_id}"))
+    builder.row(
+        InlineKeyboardButton(
+            text=LazyProxy(screenshot_button_key),
+            callback_data=f"manual_upload_{external_id}",
+        )
+    )
     builder.row(InlineKeyboardButton(text=LazyProxy("kb-wallet-cancel"), callback_data="buy_subscription"))
     return builder.as_markup()
 
@@ -39,25 +44,40 @@ def get_payment_success_kb() -> InlineKeyboardMarkup:
     builder.row(InlineKeyboardButton(text=LazyProxy("main-button-home"), callback_data="back_to_main"))
     return builder.as_markup()
 
-def get_wallet_back_kb() -> InlineKeyboardMarkup:
-    """Кнопка возврата в главное меню кошелька."""
+def get_wallet_back_kb(back_callback: str = "wallet_main") -> InlineKeyboardMarkup:
+    """Кнопка возврата на предыдущий уровень меню."""
     builder = InlineKeyboardBuilder()
-    builder.row(InlineKeyboardButton(text=LazyProxy("kb-common-back"), callback_data="wallet_main"))
+    builder.row(InlineKeyboardButton(text=LazyProxy("kb-common-back"), callback_data=back_callback))
     return builder.as_markup()
 
-def get_subscription_tariffs_kb() -> InlineKeyboardMarkup:
+
+def get_profile_main_kb(user: User) -> InlineKeyboardMarkup:
+    """Меню личного кабинета."""
+    builder = InlineKeyboardBuilder()
+    language_code = normalize_locale_code(user.language_code)
+
+    language_button = (
+        LazyProxy("kb-wallet-language-ru")
+        if language_code == "ru"
+        else LazyProxy("kb-wallet-language-en")
+    )
+    builder.row(InlineKeyboardButton(text=language_button, callback_data="profile_change_language"))
+
+    builder.row(InlineKeyboardButton(text=LazyProxy("kb-wallet-partner"), callback_data="profile_partner_cabinet"))
+    builder.row(InlineKeyboardButton(text=LazyProxy("kb-wallet-back-main"), callback_data="back_to_main"))
+    return builder.as_markup()
+
+def get_subscription_tariffs_kb(back_callback: str = "wallet_main") -> InlineKeyboardMarkup:
     """Список тарифов для покупки"""
     builder = InlineKeyboardBuilder()
     for days, price in config.TARIFFS.items():
-        # Передаем только сырые данные (days и price). 
-        # Никаких вложенных LazyProxy!
         builder.row(InlineKeyboardButton(
             text=LazyProxy("kb-wallet-plan-price", days=days, price=price), 
             callback_data=f"buy_plan_{days}"
         ))
     
     builder.row(InlineKeyboardButton(text=LazyProxy("kb-main-support"), url=config.SUPPORT_URL))
-    builder.row(InlineKeyboardButton(text=LazyProxy("kb-common-back"), callback_data="wallet_main"))
+    builder.row(InlineKeyboardButton(text=LazyProxy("kb-common-back"), callback_data=back_callback))
     return builder.as_markup()
 
 def get_balance_purchase_confirm_kb(days: int) -> InlineKeyboardMarkup:

@@ -6,7 +6,9 @@ from .common import router as common_router
 from .admin import router as admin_router
 from .admin_bi import router as admin_bi_router
 from .admin_broadcast import router as admin_broadcast_router
+from .admin_payments import router as admin_payments_router
 from .wallet import router as wallet_router
+from .profile import router as profile_router
 from .shop import router as shop_router
 
 # Собираем все роутеры в один главный
@@ -15,10 +17,12 @@ main_router.include_routers(
     onboarding_router,
     commands_router, 
     wallet_router,
+    profile_router,
     shop_router,
     settings_router, 
     common_router, 
     admin_router,
     admin_bi_router,
-    admin_broadcast_router
+    admin_broadcast_router,
+    admin_payments_router,
 )

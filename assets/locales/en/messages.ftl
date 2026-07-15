@@ -162,6 +162,7 @@ kb-main-renew-left = ⚡️ Extend subscription ({ $days ->
    *[other] { $days } days left
 })
 kb-main-wallet = 💰 Wallet ({ $balance } USDT)
+kb-main-profile = 👤 Profile
 kb-main-settings = ⚙️ Settings and filters
 kb-main-support = 👨‍💻 Support
 
@@ -193,15 +194,14 @@ kb-settings-ask-question = 💬 Ask a question
 kb-settings-back = ⬅️ Back to settings
 
 kb-wallet-renew = 💎 Extend subscription
+kb-wallet-renew-pending-review = ⏳ Request under review
 kb-wallet-deposit = 💰 Top up balance
 kb-wallet-autorenew-on = 🔁 Auto-renewal: ON
 kb-wallet-autorenew-off = 🔁 Auto-renewal: OFF
-kb-wallet-language-ru = 🌐 Language: Russian
-kb-wallet-language-en = 🌐 Language: English
+kb-wallet-language-en = 🌐 Language: English (Click to change language)
 kb-wallet-partner = 🤝 Partner program
 kb-wallet-history = 📜 Transaction history
 kb-wallet-back-main = ⬅️ Back to menu
-kb-wallet-pay-cryptomus = ✅ Pay
 kb-wallet-check-payment = 🔄 Check payment
 kb-wallet-payment-issue = 👨‍💻 Payment issue?
 kb-wallet-card-guide = 💳 How to pay by card
@@ -249,6 +249,12 @@ kb-admin-broadcast-vip = 💎 Subscribers only
 kb-admin-broadcast-free = 🆓 Non-subscribers only
 kb-admin-broadcast-start = 🚀 Start broadcast
 kb-admin-broadcast-change-cancel = 🔄 Change / Cancel
+kb-admin-pay-approve = ✅ Approve { $amount }
+kb-admin-pay-custom = ✏️ Custom amount
+kb-admin-pay-reject = ❌ Reject
+kb-wallet-pay-manual = 👛 Transfer to wallet
+kb-wallet-send-screenshot = 📸 Send screenshot
+kb-wallet-send-topup-screenshot = 📸 Send top-up screenshot
 
 shop-subscription-menu =
     💎 <b>VIP Subscription</b>
@@ -278,19 +284,28 @@ shop-balance-purchase-confirm =
     You have enough balance: { $balance }.
 
     Extend the subscription for { $plan_label } for { $price }?
-shop-direct-pay-screen =
-    💎 <b>Subscription payment: { $plan_label }</b>
+shop-manual-pay-screen =
+    💎 <b>Manual subscription payment: { $plan_label }</b>
 
     💰 Price: { $price }
     💳 Current balance: { $balance }
     🧾 Amount to pay: { $amount_to_pay }
 
-    <b>Payment details:</b>
-    Network: { $network }
-    Address: { $address }
+    <b>Transfer the amount to the cold wallet:</b>
+    { $wallet }
 
-    Your balance is insufficient, so we created a payment only for the missing amount.
-shop-payment-network-auto = will be selected on the payment page
+    After the transfer, tap the button below and send a payment screenshot.
+shop-manual-payment-unavailable = ❌ Manual payment is unavailable right now. Please use another method.
+shop-manual-payment-screenshot-prompt = Send the payment screenshot in the next message
+shop-manual-payment-photo-only = ❌ Please send a photo or an image file with the payment screenshot.
+shop-manual-payment-already-submitted = ⏳ The screenshot has already been submitted. The request is waiting for admin review.
+shop-manual-payment-already-approved = ✅ This payment has already been confirmed. No need to send the screenshot again.
+shop-manual-payment-expired = ❌ This payment request has expired. Please create a new payment.
+shop-manual-payment-upload-unavailable = ❌ A screenshot cannot be submitted again for this payment right now.
+shop-manual-payment-request-accepted =
+    ✅ <b>Screenshot received.</b>
+
+    Your request has been sent for manual review. This usually takes up to 2 hours.
 shop-insufficient-balance = ❌ Insufficient balance.
 shop-purchase-success =
     🎉 <b>Subscription activated successfully!</b>
@@ -309,7 +324,15 @@ wallet-main-screen =
     🆔 Your ID: { $user_id }
 
     If you have payment issues, contact support
+wallet-pending-verification-info = ⏳ Your payment review request #{ $invoice_id } is awaiting administrator confirmation. This usually takes up to 2 hours.
 wallet-language-changed = Language changed
+profile-main-screen =
+    👤 <b>Profile</b>
+
+    🆔 Your ID: { $user_id }
+    🌐 Language: { $language }
+
+    Balance: { $balance }
 wallet-autorenew-enabled = enabled
 wallet-autorenew-disabled = disabled
 wallet-autorenew-status = Auto-renewal { $status }
@@ -392,12 +415,60 @@ payment-worker-partial-payment-notification =
     Received: <b>{ $paid_amount }</b>
     Expected: <b>{ $expected_amount }</b>
     Send another <b>{ $needed_amount }</b> to the same address to activate the plan.
+    Wallet address: { $wallet }
 payment-worker-price-changed-notification =
     ✅ <b>Payment confirmed!</b>
 
     Funds were credited to your balance: <b>{ $balance }</b>
     Auto-activation was not completed because the plan price has changed.
     You still need <b>{ $needed }</b> to purchase the plan.
+manual-payment-approved-notification =
+    ✅ <b>An administrator has confirmed your payment.</b>
+
+    Credited to your balance: <b>{ $amount }</b>
+    Current balance: <b>{ $balance }</b>
+manual-payment-rejected-notification =
+    ❌ <b>Your payment was rejected by an administrator.</b>
+
+    Reason: { $reason }
+manual-payment-rejected-reason-default = Please send a clearer screenshot of the receipt.
+admin-pay-review-card-title-new = 📥 <b>New request</b>
+admin-pay-review-card-title-topup = 🔄 <b>Top-up request</b>
+admin-pay-review-card-already-paid = Already confirmed: { $amount }
+admin-pay-review-card-needed = Still needed for activation: { $amount }
+admin-pay-review-card-caption =
+    📥 <b>New manual payment review request</b>
+
+    User ID: { $user_id }
+    Username: { $username }
+    { $user_profile_link }
+    Invoice: { $invoice_id }
+    Provider: { $provider }
+    Amount to confirm: { $amount }
+    Plan: { $plan }
+    Status: { $status }
+admin-pay-user-profile-link = 👤 User profile
+admin-pay-wrong-chat = This button works only in the private payment review group.
+admin-pay-invoice-not-found = Request not found or no longer available.
+admin-pay-already-processed = This request has already been processed.
+admin-pay-custom-amount-prompt =
+    Enter the confirmed amount for invoice { $invoice_id }.
+
+    Expected amount: { $expected_amount }
+admin-pay-enter-rejection-reason = Enter the rejection reason for the user.
+admin-pay-custom-amount-invalid = Invalid amount. Enter a number like `25` or `25.5`.
+admin-pay-approve-done = Payment confirmed
+admin-pay-reject-done = Payment rejected
+admin-pay-review-processing = ⏳ Processing: { $admin }
+admin-pay-review-processed-by = 👤 Processed by admin: { $admin }
+admin-pay-review-result-title = ✅ <b>Manual review completed</b>
+admin-pay-review-result-subscription = Subscription activated until { $new_end }.
+admin-pay-review-result-error = Result code: { $error }
+admin-pay-review-rejected =
+    ❌ <b>Manual request rejected</b>
+
+    Invoice: { $invoice_id }
+    Reason: { $reason }
 
 admin-user-blocked-notification =
     ❌ <b>Your account has been blocked by an administrator.</b>

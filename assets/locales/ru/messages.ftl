@@ -164,6 +164,7 @@ kb-main-renew-left = ⚡️ Продлить подписку (осталось 
    *[other] { $days } дней
 })
 kb-main-wallet = 💰 Кошелек ({ $balance } USDT)
+kb-main-profile = 👤 Личный кабинет
 kb-main-settings = ⚙️ Настройки и фильтры
 kb-main-support = 👨‍💻 Тех. поддержка
 
@@ -195,15 +196,14 @@ kb-settings-ask-question = 💬 Задать вопрос
 kb-settings-back = ⬅️ Назад к настройкам
 
 kb-wallet-renew = 💎 Продлить подписку
+kb-wallet-renew-pending-review = ⏳ Продлить подписку
 kb-wallet-deposit = 💰 Пополнить баланс
 kb-wallet-autorenew-on = 🔁 Автопродление: ВКЛ
 kb-wallet-autorenew-off = 🔁 Автопродление: ВЫКЛ
 kb-wallet-language-ru = 🌐 Язык: Русский (Click to change language)
-kb-wallet-language-en = 🌐 Язык: English (Click to change language)
 kb-wallet-partner = 🤝 Партнерская программа
 kb-wallet-history = 📜 История транзакций
 kb-wallet-back-main = ⬅️ Назад в меню
-kb-wallet-pay-cryptomus = ✅ Оплатить
 kb-wallet-check-payment = 🔄 Проверить оплату
 kb-wallet-payment-issue = 👨‍💻 Проблема с оплатой?
 kb-wallet-card-guide = 💳 Как оплатить картой
@@ -218,7 +218,7 @@ kb-wallet-plan-days = { $days ->
    *[other] { $days } дней
 }
 kb-wallet-plan-price = { $days ->
-    [30] 1 месяц
+    [30] 🔥 1 месяц
     [60] 2 месяца
     [90] 3 месяца
     [150] 5 месяцев
@@ -257,16 +257,36 @@ kb-admin-broadcast-vip = 💎 Только с подпиской
 kb-admin-broadcast-free = 🆓 Только без подписки
 kb-admin-broadcast-start = 🚀 Запустить рассылку
 kb-admin-broadcast-change-cancel = 🔄 Изменить / Отмена
+kb-admin-pay-approve = ✅ Одобрить { $amount }
+kb-admin-pay-custom = ✏️ Другая сумма
+kb-admin-pay-reject = ❌ Отклонить
+kb-wallet-pay-manual = 👛 Перевод на кошелек
+kb-wallet-send-screenshot = 📸 Отправить скриншот
+kb-wallet-send-topup-screenshot = 📸 Отправить скриншот доплаты
 
 shop-subscription-menu =
-    💎 <b>VIP-Подписка</b>
+    💎 <b>Приобритение премиум подписки</b>
 
-    Преимущества VIP-доступа:
-    • Персональный поток сигналов в боте
-    • Персональные настройки в боте
-    • Аналитика в реальном времени
+    <b>Что вы получаете:</b>
+    • <b>Отслеживание всей биржи:</b> 
+    Мониторинг всех USDT-пар без исключений.
 
-    Выберите подходящий тариф:
+    • <b>Live-Графики:</b> 
+    Мгновенный рендеринг 15m OHLC прямо в алерте 📊
+
+    • <b>Умная аналитика:</b> 
+    Метрики Cap/Vol Ratio — отличайте шум от реальных движений.
+
+    • <b>Продвинутые метрики:</b> 
+    Отслеживание CVD, RSI и Открытого интереса (OI) 📈
+
+    • <b>Пользовательские фильтры:</b> 
+    Гибкая настройка порогов под вашу стратегию.
+
+    • <b>Моментальные сигналы:</b> 
+    Секундная доставка сигналов через выделенные узлы ⚡️
+
+    <i>Выберите подходящий тариф, чтобы получить преимущество прямо сейчас:</i>
 shop-referral-bonus-notification =
     🤝 <b>Партнерский бонус начислен!</b>
 
@@ -286,19 +306,41 @@ shop-balance-purchase-confirm =
     У вас достаточно средств на балансе: { $balance }.
 
     Хотите продлить подписку на { $plan_label } за { $price }?
-shop-direct-pay-screen =
-    💎 <b>Оплата подписки: { $plan_label }</b>
+shop-manual-pay-screen =
+     <b>Оплата тарифа премиальной подписки: { $plan_label }</b>
 
-    💰 Стоимость: { $price }
+    <b>📄 Номер инвойса:</b>
+    { $invoice_id }
+
+    🧾 Стоимость тарифа: { $price }
     💳 На балансе сейчас: { $balance }
-    🧾 К доплате: { $amount_to_pay }
 
-    <b>Реквизиты для оплаты:</b>
-    Сеть: { $network }
-    Адрес: { $address }
+    💰 Сумма к оплате: { $amount_to_pay }
 
-    На балансе недостаточно средств, поэтому мы создали платеж только на недостающую сумму.
-shop-payment-network-auto = будет определена на странице оплаты
+    <b>🌐 Сеть:</b> { $network }
+    <b>👛 Кошелек для оплаты:</b>
+
+    { $wallet }
+    <i>(нажмите на адрес, чтобы скопировать его)</i>
+
+    🕒 Подтверждение платежа происходит администраторами и обычно занимает от нескольких минут до 2-х часов.
+
+    🔐<b>Важно:</b> Для идентификации вашего платежа обязательно пришлите скриншот чека после перевода, чтобы его отправить нажмите кнопку снизу.
+    
+    <i>Если вы хотите провести оплату по карте, то обратитесь в тех. поддержку и мы вам поможем</i>
+shop-manual-payment-unavailable = ❌ Ручная оплата сейчас недоступна. Попробуйте другой способ.
+shop-manual-payment-screenshot-prompt = Отправьте скриншот оплаты в следующем сообщении
+shop-manual-payment-photo-only = ❌ Пожалуйста, отправьте фото или файл-изображение со скриншотом оплаты.
+shop-manual-payment-already-submitted = ⏳ Скриншот уже отправлен. Заявка ожидает проверки администратора.
+shop-manual-payment-already-approved = ✅ Этот платеж уже подтвержден. Повторная отправка скриншота не требуется.
+shop-manual-payment-expired = ❌ Время ожидания по этому платежу истекло. Пожалуйста, создайте новый платеж.
+shop-manual-payment-upload-unavailable = ❌ Для этого платежа сейчас нельзя отправить скриншот повторно.
+shop-manual-payment-request-accepted =
+    ✅ <b>Скриншот получен и отправлен администраторам.</b>
+
+    Оплата инвойса отправлена администраторам на проверку. Обычно это занимает от нескольких минут до 2-х часов.
+    
+    Как только администратор проверит оплату, мы сразу вам отправим уведомление о результатах!
 shop-insufficient-balance = ❌ Недостаточно средств на балансе.
 shop-purchase-success =
     🎉 <b>Подписка успешно оформлена!</b>
@@ -316,8 +358,16 @@ wallet-main-screen =
 
     🆔 Ваш ID: { $user_id }
 
-    Если у вас возникли проблемы с оплатой, обратитесь в техническую поддержку
+    Если у вас возникли проблемы с оплатой, обратитесь в техническую поддержку. Мы обязательно вам поможем!
+wallet-pending-verification-info = ⏳ Инвойс { $invoice_id } ожидает подтверждения администратором. Обычно это занимает от нескольких минут до 2-х часов.
 wallet-language-changed = Язык изменен
+profile-main-screen =
+    👤 <b>Личный кабинет</b>
+
+    🆔 Ваш ID: { $user_id }
+    🌐 Язык: { $language }
+
+    Баланс: { $balance }
 wallet-autorenew-enabled = включено
 wallet-autorenew-disabled = выключено
 wallet-autorenew-status = Автопродление { $status }
@@ -384,7 +434,7 @@ wallet-payment-price-changed-toast = Средства зачислены, авт
 payment-worker-reminder-active-link =
     ⏳ <b>Ваша ссылка на оплату всё еще активна.</b>
 
-    Если возникли трудности с оплатой, напишите в поддержку.
+    Если возникли трудности с оплатой, обратитесь в тех поддержку. Мы обязательно вам поможем!
 payment-worker-subscription-paid-notification =
     ✅ <b>Оплата подтверждена!</b>
 
@@ -399,13 +449,57 @@ payment-worker-partial-payment-notification =
 
     Получено: <b>{ $paid_amount }</b>
     Ожидалось: <b>{ $expected_amount }</b>
+    
     Для активации тарифа доплатите еще <b>{ $needed_amount }</b> на тот же адрес.
+
+    <b>🌐 Сеть:</b> { $network }
+    <b>👛 Кошелек для оплаты:</b>
+
+    { $wallet }
+    <i>(нажмите на адрес, чтобы скопировать его)</i>
 payment-worker-price-changed-notification =
     ✅ <b>Оплата подтверждена!</b>
 
     Средства зачислены на баланс: <b>{ $balance }</b>
     Авто-активация не выполнена: цена тарифа изменилась.
     Для покупки сейчас не хватает <b>{ $needed }</b>.
+manual-payment-approved-notification =
+    ✅ <b>Администратор подтвердил ваш платеж.</b>
+
+    На баланс зачислено: <b>{ $amount }</b>
+    Текущий баланс: <b>{ $balance }</b>
+manual-payment-rejected-notification =
+    ❌ <b>Факт оплаты инвойса отклонен администратором.</b>
+
+    Причина: { $reason }
+    <i>Если вы считаете, что это ошибка обратитесь в тех. поддержку</i>
+manual-payment-rejected-reason-default = Пожалуйста, отправьте более четкий скриншот чека.
+admin-pay-review-card-title-new = 📥 <b>Новая заявка на оплату инвойса</b>
+admin-pay-review-card-title-topup = 🔄 <b>Заявка на ДОПЛАТУ</b>
+admin-pay-review-card-already-paid = Уже подтверждено: { $amount }
+admin-pay-review-card-needed = Осталось доплатить: { $amount }
+admin-pay-user-profile-link = 👤 Профиль пользователя
+admin-pay-wrong-chat = Эта кнопка работает только в закрытой группе проверки платежей.
+admin-pay-invoice-not-found = Заявка не найдена или уже недоступна.
+admin-pay-already-processed = Заявка уже была обработана ранее.
+admin-pay-custom-amount-prompt =
+    Введите подтвержденную сумму для инвойса { $invoice_id }.
+
+    Ожидаемая сумма: { $expected_amount }
+admin-pay-enter-rejection-reason = Введите причину отклонения для пользователя.
+admin-pay-custom-amount-invalid = Некорректная сумма. Введите число, например `25` или `25.5`.
+admin-pay-approve-done = Платеж подтвержден
+admin-pay-reject-done = Платеж отклонен
+admin-pay-review-processing = ⏳ Обработка: { $admin }
+admin-pay-review-processed-by = 👤 Обработано админом: { $admin }
+admin-pay-review-result-title = ✅ <b>Проверка завершена</b>
+admin-pay-review-result-subscription = Подписка активирована до { $new_end }.
+admin-pay-review-result-error = Код результата: { $error }
+admin-pay-review-rejected =
+    ❌ <b>Заявка отклонена</b>
+
+    Invoice: { $invoice_id }
+    Причина: { $reason }
 
 admin-user-blocked-notification =
     ❌ <b>Ваш аккаунт был заблокирован администрацией.</b>

@@ -91,6 +91,30 @@ async def get_invoice_by_external_id(session: AsyncSession, ext_id: str) -> Invo
         return None
 
 
+async def get_latest_pending_manual_invoice(session: AsyncSession, user_id: int) -> Invoice | None:
+    """Возвращает последний manual invoice пользователя в статусе WAITING_ADMIN."""
+    try:
+        invoice_id = await session.scalar(
+            select(Invoice.id)
+            .where(
+                Invoice.user_id == user_id,
+                Invoice.provider == "MANUAL",
+                Invoice.status == "WAITING_ADMIN",
+            )
+            .order_by(Invoice.created_at.desc(), Invoice.id.desc())
+            .limit(1)
+        )
+        if invoice_id is None:
+            return None
+        return await session.get(Invoice, invoice_id)
+    except SQLAlchemyError as e:
+        logger.error("Ошибка БД в get_latest_pending_manual_invoice user_id=%s: %s", user_id, e)
+        return None
+    except Exception as e:
+        logger.error("Непредвиденная ошибка в get_latest_pending_manual_invoice user_id=%s: %s", user_id, e)
+        return None
+
+
 async def get_billing_entities(session: AsyncSession, ext_id: str) -> tuple[Invoice | None, User | None]:
     """
     Возвращает `(Invoice, User)` через два отдельных запроса с блокировкой строк.
@@ -120,6 +144,37 @@ async def update_invoice_record(
 
     invoice.amount_actual = _round_money(amount_actual)
     invoice.status = status
+    return invoice
+
+
+async def update_invoice_review_metadata(
+    session: AsyncSession,
+    invoice_id: int,
+    *,
+    approved_by_admin_id: int | None = None,
+    screenshot_file_id: str | None = None,
+    rejection_reason: str | None = None,
+) -> Invoice | None:
+    """Обновляет metadata ручной модерации инвойса."""
+    invoice = await session.get(Invoice, invoice_id, with_for_update=True)
+    if invoice is None:
+        return None
+
+    invoice.approved_by_admin_id = approved_by_admin_id
+    invoice.screenshot_file_id = screenshot_file_id
+    invoice.rejection_reason = rejection_reason
+    return invoice
+
+
+async def reset_invoice_for_retry(session: AsyncSession, invoice_id: int) -> Invoice | None:
+    """Возвращает manual invoice в состояние повторной отправки чека."""
+    invoice = await session.get(Invoice, invoice_id, with_for_update=True)
+    if invoice is None:
+        return None
+
+    invoice.status = "PENDING"
+    invoice.screenshot_file_id = None
+    invoice.approved_by_admin_id = None
     return invoice
 
 

@@ -42,7 +42,7 @@ class Settings(BaseSettings):
     
     # === 2. ПЛАТЕЖНАЯ СИСТЕМА (Billing & CryptoPay / Cryptomus) ===
     # Интеграция
-    CRYPTOPAY_TOKEN: str
+    CRYPTOPAY_TOKEN: str | None = None
     CRYPTOPAY_TESTNET: bool = False
     CRYPTOMUS_MERCHANT_ID: str | None = None
     CRYPTOMUS_PAYMENT_API_KEY: str | None = None
@@ -53,10 +53,13 @@ class Settings(BaseSettings):
     CRYPTOMUS_INVOICE_LIFETIME_SEC: int = 7200
     CRYPTOMUS_ACCURACY_PAYMENT_PERCENT: float = 0.0
     PAYMENT_TOLERANCE_USD: float = 0.5
+    PAYMENT_MANUAL_WALLET: str | None = None
+    ADMIN_PAYMENT_CHAT_ID: int | None = None
     
     # Бизнес-правила (Тарифы и деньги)
     # Тарифы подписки (дней: цена_usdt)
     TARIFFS: dict[int, float] = {
+        3: 1.0,
         7: 7.5,
         30: 25.0,
     }
@@ -180,6 +183,7 @@ class ImagePaths:
     WALLET = str(ASSETS_DIR / "4_wallet.png")
     AFFILIATE = str(ASSETS_DIR / "5_affiliate.png")
     PLACEHOLDER = str(ASSETS_DIR / "placeholder.png")
+    PAYMENT_QR = str(ASSETS_DIR / "payment_qr.jpg")
 
 
 def setup_logging() -> None:

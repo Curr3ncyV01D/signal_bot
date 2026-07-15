@@ -6,6 +6,7 @@ from aiogram import Bot
 from sqlalchemy import select
 
 from src.core.i18n_runtime import background_i18n
+from src.core.config import config
 from src.core.localization import normalize_locale_code
 from src.database.functions import get_utc_now
 from src.database.models import Invoice, User
@@ -15,12 +16,17 @@ from src.utils import format_datetime, format_smart_num
 
 logger = logging.getLogger(__name__)
 
+MANUAL_PAYMENT_PROVIDER = "MANUAL"
+MANUAL_PAYMENT_NETWORK = "TRC20"
+
 ABANDONED_CART_REMINDER_MINUTES = 30
 ABANDONED_CART_REMINDER_MAX_MINUTES = 120
 INVOICE_EXPIRE_MINUTES = 120
+MANUAL_INVOICE_EXPIRE_MINUTES = 1440
 FAST_POLL_UNTIL_MINUTES = 15
 FAST_POLL_INTERVAL_SECONDS = 30
 SLOW_POLL_INTERVAL_SECONDS = 180
+MANUAL_POLL_INTERVAL_SECONDS = 1800
 POLLING_CONCURRENCY = 5
 
 class PaymentManager:
@@ -54,11 +60,32 @@ async def _process_invoice(bot: Bot, invoice_id: int, semaphore: asyncio.Semapho
             invoice_user_id = int(inv.user_id)
             invoice_created_at = inv.created_at
             invoice_reminder_sent = bool(inv.is_reminder_sent)
+            invoice_provider = str(inv.provider or "")
+            invoice_screenshot_file_id = inv.screenshot_file_id
             user = await session.get(User, invoice_user_id)
             user_locale = normalize_locale_code(user.language_code if user else None)
 
             now = get_utc_now()
             age_minutes = (now - invoice_created_at).total_seconds() / 60
+
+            if invoice_provider.upper() == MANUAL_PAYMENT_PROVIDER:
+                if inv.status != "PENDING" or invoice_screenshot_file_id:
+                    PaymentManager.next_poll_at.pop(invoice_external_id, None)
+                    return
+
+                if age_minutes >= MANUAL_INVOICE_EXPIRE_MINUTES:
+                    inv.status = "EXPIRED"
+                    await session.commit()
+                    PaymentManager.next_poll_at.pop(invoice_external_id, None)
+                    logger.info(
+                        "Manual invoice #%s закрыт по таймауту без скриншота (%s мин)",
+                        invoice_external_id,
+                        MANUAL_INVOICE_EXPIRE_MINUTES,
+                    )
+                    return
+
+                PaymentManager.next_poll_at[invoice_external_id] = now + timedelta(seconds=MANUAL_POLL_INTERVAL_SECONDS)
+                return
 
             if age_minutes >= INVOICE_EXPIRE_MINUTES:
                 inv.status = "EXPIRED"
@@ -144,6 +171,8 @@ async def _process_invoice(bot: Bot, invoice_id: int, semaphore: asyncio.Semapho
                                 paid_amount=f"{format_smart_num(payment_result.amount_actual)} USDT",
                                 expected_amount=f"{format_smart_num(payment_result.amount_expected)} USDT",
                                 needed_amount=f"{format_smart_num(payment_result.needed_amount)} USDT",
+                                network=MANUAL_PAYMENT_NETWORK,
+                                wallet=config.PAYMENT_MANUAL_WALLET or "—",
                             ),
                             parse_mode="HTML"
                         )
@@ -163,7 +192,14 @@ async def payment_checker_worker(bot: Bot):
         PaymentManager.last_run = datetime.now(timezone.utc)
         try:
             async with async_session() as session:
-                query = select(Invoice.id, Invoice.external_id).where(Invoice.status.in_(("PENDING", "PARTIAL")))
+                query = select(Invoice.id, Invoice.external_id).where(
+                    ((Invoice.provider != MANUAL_PAYMENT_PROVIDER) & Invoice.status.in_(("PENDING", "PARTIAL")))
+                    | (
+                        (Invoice.provider == MANUAL_PAYMENT_PROVIDER)
+                        & (Invoice.status == "PENDING")
+                        & (Invoice.screenshot_file_id.is_(None))
+                    )
+                )
                 result = await session.execute(query)
                 pending_invoices = list(result.all())
 

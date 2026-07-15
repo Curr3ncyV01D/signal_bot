@@ -8,16 +8,14 @@ from aiogram.utils.markdown import hbold, hcode
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.config import config, ImagePaths
-from src.core.localization import FALLBACK_LOCALE, DEFAULT_LOCALE, normalize_locale_code
+from src.core.localization import normalize_locale_code
 from src.database.models import User
 from src.database.crud import user_service, billing_service
-from src.services.analyzer import invalidate_user_cache
 from src.services.logic.billing_processor import process_payment_update
 from src.utils import format_datetime, format_smart_num
 from src.bot.handlers.onboarding import render_onboarding_language_screen
 from src.bot.keyboards.billing_kb import (
     get_wallet_main_kb, 
-    get_payment_link_kb,
     get_payment_success_kb,
     get_wallet_back_kb,
     get_subscription_tariffs_kb,
@@ -27,13 +25,47 @@ logger = logging.getLogger(__name__)
 router = Router()
 
 
-def render_wallet_text(user: User, i18n: I18nContext) -> str:
+def render_wallet_text(
+    user: User,
+    i18n: I18nContext,
+    *,
+    pending_manual_invoice_external_id: str | None = None,
+) -> str:
     """Формирует карточку кошелька в стилистике главного меню."""
-    return i18n.get(
+    text = i18n.get(
         "wallet-main-screen",
         balance=hbold(f"{format_smart_num(user.balance)}"),
         monthly_price=config.SUB_MONTHLY_PRICE,
         user_id=hcode(user.id),
+    )
+    if pending_manual_invoice_external_id:
+        text += "\n\n" + i18n.get(
+            "wallet-pending-verification-info",
+            invoice_id=hcode(f"#{pending_manual_invoice_external_id}"),
+        )
+    return text
+
+
+async def _render_wallet_home(
+    event: types.Message | types.CallbackQuery,
+    session: AsyncSession,
+    user: User,
+    i18n: I18nContext,
+) -> None:
+    pending_manual_invoice = await billing_service.get_latest_pending_manual_invoice(session, user.id)
+    pending_manual_invoice_external_id = (
+        str(pending_manual_invoice.external_id) if pending_manual_invoice else None
+    )
+    renew_button_key = "kb-wallet-renew-pending-review" if pending_manual_invoice else "kb-wallet-renew"
+    await _render_wallet_screen(
+        event,
+        render_wallet_text(
+            user,
+            i18n,
+            pending_manual_invoice_external_id=pending_manual_invoice_external_id,
+        ),
+        get_wallet_main_kb(user, renew_button_key=renew_button_key),
+        image_path=ImagePaths.WALLET,
     )
 
 
@@ -117,7 +149,7 @@ async def cmd_wallet(message: types.Message, session: AsyncSession, i18n: I18nCo
     if not user.is_setup_completed:
         await render_onboarding_language_screen(message, i18n)
         return
-    await _render_wallet_screen(message, render_wallet_text(user, i18n), get_wallet_main_kb(user), image_path=ImagePaths.WALLET)
+    await _render_wallet_home(message, session, user, i18n)
 
 @router.callback_query(F.data == "wallet_main")
 async def callback_wallet_main(callback: types.CallbackQuery, session: AsyncSession, i18n: I18nContext):
@@ -136,31 +168,7 @@ async def callback_wallet_main(callback: types.CallbackQuery, session: AsyncSess
         await render_onboarding_language_screen(callback, i18n)
         await callback.answer()
         return
-    await _render_wallet_screen(callback, render_wallet_text(user, i18n), get_wallet_main_kb(user), image_path=ImagePaths.WALLET)
-
-@router.callback_query(F.data == "change_language")
-async def callback_change_language(callback: types.CallbackQuery, session: AsyncSession, i18n: I18nContext):
-    """Переключает язык интерфейса пользователя между RU и EN."""
-    user = await user_service.get_user_by_id(session, callback.from_user.id)
-    if not user:
-        return await callback.answer(i18n.get("settings-error-profile"), show_alert=True)
-
-    current_locale = normalize_locale_code(user.language_code)
-    new_locale = FALLBACK_LOCALE if current_locale == DEFAULT_LOCALE else DEFAULT_LOCALE
-
-    user.language_code = new_locale
-    await session.commit()
-    await session.refresh(user)
-    await invalidate_user_cache(user.id)
-
-    with i18n.use_locale(new_locale):
-        await _render_wallet_screen(
-            callback,
-            render_wallet_text(user, i18n),
-            get_wallet_main_kb(user),
-            image_path=ImagePaths.WALLET,
-        )
-        await callback.answer(i18n.get("wallet-language-changed"))
+    await _render_wallet_home(callback, session, user, i18n)
 
 @router.callback_query(F.data == "toggle_auto_renewal")
 async def process_toggle_auto_renewal(callback: types.CallbackQuery, session: AsyncSession, i18n: I18nContext):
@@ -173,7 +181,7 @@ async def process_toggle_auto_renewal(callback: types.CallbackQuery, session: As
     await session.commit()
     await session.refresh(user)
 
-    await _render_wallet_screen(callback, render_wallet_text(user, i18n), get_wallet_main_kb(user), image_path=ImagePaths.WALLET)
+    await _render_wallet_home(callback, session, user, i18n)
 
     status_text = (
         i18n.get("wallet-autorenew-enabled")
@@ -206,39 +214,21 @@ async def callback_tx_history(callback: types.CallbackQuery, session: AsyncSessi
             )
         text = i18n.get("wallet-history-title") + "\n\n" + "\n\n".join(blocks)
 
-    await _render_wallet_screen(callback, text, get_wallet_back_kb())
-    await callback.answer()
-
-@router.callback_query(F.data == "partner_cabinet")
-async def callback_partner_cabinet(callback: types.CallbackQuery, session: AsyncSession, i18n: I18nContext):
-    """Показывает данные партнерской программы пользователя."""
-    bot_info = await callback.bot.get_me()
-    referral_link = f"https://t.me/{bot_info.username}?start={callback.from_user.id}"
-
-    invited_count, total_rewards = await billing_service.get_partner_stats(session, callback.from_user.id)
-
-    text = i18n.get(
-        "wallet-partner-screen",
-        bonus_percent=config.REFERRAL_BONUS_PERCENT,
-        referral_link=hcode(referral_link),
-        invited_count=hbold(str(invited_count)),
-        total_rewards=hbold(f"{format_smart_num(total_rewards)} USDT"),
-    )
-    await _render_wallet_screen(callback, text, get_wallet_back_kb(), image_path=ImagePaths.AFFILIATE)
+    await _render_wallet_screen(callback, text, get_wallet_back_kb("wallet_main"))
     await callback.answer()
 
 @router.callback_query(F.data == "deposit")
 async def callback_deposit(callback: types.CallbackQuery, i18n: I18nContext):
     """Legacy redirect: ручное пополнение удалено, ведем пользователя к выбору тарифа."""
     await callback.answer(i18n.get("wallet-deposit-removed-toast"), show_alert=True)
-    await _render_wallet_screen(callback, i18n.get("shop-subscription-menu"), get_subscription_tariffs_kb())
+    await _render_wallet_screen(callback, i18n.get("shop-subscription-menu"), get_subscription_tariffs_kb("wallet_main"))
 
 
 @router.callback_query(F.data.startswith("deposit_"))
 async def callback_legacy_deposit_amount(callback: types.CallbackQuery, i18n: I18nContext):
     """Legacy redirect для старых пресетов пополнения."""
     await callback.answer(i18n.get("wallet-deposit-removed-toast"), show_alert=True)
-    await _render_wallet_screen(callback, i18n.get("shop-subscription-menu"), get_subscription_tariffs_kb())
+    await _render_wallet_screen(callback, i18n.get("shop-subscription-menu"), get_subscription_tariffs_kb("wallet_main"))
 
 @router.callback_query(F.data.startswith("check_pay_"))
 async def callback_check_payment(callback: types.CallbackQuery, session: AsyncSession, i18n: I18nContext):

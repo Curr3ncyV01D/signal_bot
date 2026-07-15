@@ -64,6 +64,7 @@ class PaymentUpdateDTO:
     new_balance: float
     new_end_date: datetime | None
     error: str | None
+    admin_name: str | None = None
     amount_actual: float = 0.0
     amount_expected: float = 0.0
     invoice_status: str = "PENDING"
