@@ -166,12 +166,35 @@ async def _fetch_audience_metrics(session: AsyncSession) -> dict:
 
     paid_from_trial_query = select(func.count(func.distinct(Transaction.user_id))).where(
         and_(Transaction.type == 'WITHDRAW',
+         Transaction.amount > 0,
          Transaction.user_id.in_(trial_user_ids_subquery))
     )
     paid_from_trial_count = (await session.execute(paid_from_trial_query)).scalar() or 0
     conversion = (paid_from_trial_count / res_counts.trial_used * 100) if res_counts.trial_used and res_counts.trial_used > 0 else 0.0
 
-    # 3. Топ-3 Реферера
+    # 3. Распределение языков интерфейса
+    normalized_language = case(
+        (func.lower(User.language_code) == 'en', 'en'),
+        else_='ru'
+    ).label("language_code")
+    language_stats_query = (
+        select(normalized_language, func.count(User.id).label("user_count"))
+        .group_by(normalized_language)
+    )
+    language_stats_res = (await session.execute(language_stats_query)).all()
+    language_counts = {row.language_code: row.user_count for row in language_stats_res}
+    total_users = res_counts.total or 0
+    en_users_count = language_counts.get('en', 0)
+    ru_users_count = language_counts.get('ru', 0)
+
+    if total_users > 0:
+        en_percent = round(en_users_count / total_users * 100)
+        ru_percent = 100 - en_percent
+    else:
+        ru_percent = 0
+        en_percent = 0
+
+    # 4. Топ-3 Реферера
     counts_subquery = (
         select(User.referrer_id, func.count(User.id).label('invite_count'))
         .where(User.referrer_id.isnot(None))
@@ -189,10 +212,16 @@ async def _fetch_audience_metrics(session: AsyncSession) -> dict:
     top_reffers = [{"name": r.username or f"ID: {r.id}", "count": r.invite_count} for r in top_referrers_res]
 
     return {
-        "total_users": res_counts.total or 0,
+        "total_users": total_users,
         "active_vip": res_counts.active_vip or 0,
         "trial_users_count": res_counts.trial_used or 0,
         "paid_from_trial_count": paid_from_trial_count,
         "conversion_rate": round(conversion, 1),
+        "language_stats": {
+            "ru_percent": ru_percent,
+            "en_percent": en_percent,
+            "ru_users_count": ru_users_count,
+            "en_users_count": en_users_count,
+        },
         "top_referrers": top_reffers
     }

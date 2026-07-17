@@ -40,6 +40,11 @@ class BIFormatter:
         else:
             top_refs = "  (пока пусто)\n"
 
+        language_stats = data.get('language_stats', {})
+        ru_percent = language_stats.get('ru_percent', 0)
+        en_percent = language_stats.get('en_percent', 0)
+        languages_text = f"{ru_percent}% Рус {en_percent}% Англ"
+
         return (
             f"👥 {hbold('Аналитика аудитории')}\n\n"
             f"📊 {hbold('Пользователи:')}\n"
@@ -49,7 +54,7 @@ class BIFormatter:
             f"  ├ Использовали пробный период: {data['trial_users_count']}\n"
             f"  └ Купили после: {data['paid_from_trial_count']}\n\n"
             f"🏆 {hbold('ТОП-3 Реферера:')}\n{top_refs}\n"
-            f"🌍 {hbold('Языки:')} 100% Русский\n\n"
+            f"🌍 {hbold('Языки:')} {languages_text}\n\n"
         )
 
     @classmethod
