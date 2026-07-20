@@ -30,7 +30,7 @@ class User(Base):
     threshold: Mapped[float] = mapped_column(Float, default=15000.0) 
     threshold_cascade: Mapped[float] = mapped_column(Float, default=25000.0) 
 
-    threshold_mode: Mapped[str] = mapped_column(String(20), default="PERCENT")
+    threshold_mode: Mapped[str] = mapped_column(String(20), default="USD")
     threshold_mcap_pct: Mapped[float] = mapped_column(Float, default=0.01)
     threshold_mcap_usd_min: Mapped[float] = mapped_column(Float, default=10000.0)
     threshold_cascade_mcap_pct: Mapped[float] = mapped_column(Float, default=0.015)
