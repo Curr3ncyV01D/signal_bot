@@ -461,7 +461,7 @@ async def callback_confirm_balance_purchase(callback: types.CallbackQuery, sessi
     if not success or not new_end:
         return await callback.answer(i18n.get("shop-insufficient-balance"), show_alert=True)
         
-    await invalidate_user_cache()
+    await invalidate_user_cache(user_id)
     purchaser = await user_service.get_user_by_id(session, user_id)
     referrer_id = purchaser.referrer_id if purchaser else None
     text = i18n.get(
