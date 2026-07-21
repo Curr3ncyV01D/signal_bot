@@ -25,15 +25,15 @@ onboarding-language-screen =
 onboarding-language-selected = Language saved
 
 community-bonus-screen =
-🎁 <b>Your Welcome Bonus: +{ $hours } hours of VIP Access!</b>
+    🎁 <b>Your Welcome Bonus: +{ $hours } hours of VIP Access!</b>
 
-We are building more than just a tool — it is an exclusive community of traders. Join our chat to:
+    We are building more than just a tool — it is an exclusive community of traders. Join our chat to:
 
-🔹 Discuss Bybit signals in real-time.
-🔹 Share winning strategies and setups.
-🔹 Get support from experienced members of "The Hive."
+    🔹 Discuss Bybit signals in real-time.
+    🔹 Share winning strategies and setups.
+    🔹 Get support from experienced members of "The Hive."
 
-<b>Join the group and click the button below to instantly claim your extra 2 days of subscription.</b>
+    <b>Join the group and click the button below to instantly claim your extra 2 days of subscription.</b>
 community-bonus-button-join = 🎁 Join the Chat
 community-bonus-button-verify = ✅ Claim Bonus
 community-bonus-button-later = Join Later
