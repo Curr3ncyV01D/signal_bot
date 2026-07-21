@@ -5,8 +5,11 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.config import config
+from src.core.i18n_runtime import background_i18n
+from src.core.localization import SUPPORTED_LOCALES
 from src.database.functions import get_utc_now
 from src.database.models import Invoice, Transaction, User
+from src.services.analyzer import invalidate_user_cache
 
 logger = logging.getLogger(__name__)
 
@@ -17,6 +20,132 @@ def _round_money(value: float | int | None) -> float:
     if value is None:
         return 0.0
     return round(float(value), 2)
+
+
+def _build_bonus_description(internal_description: str, hours: int, locale: str | None) -> str:
+    days: int | float = hours // 24 if hours % 24 == 0 else round(hours / 24, 2)
+    return background_i18n.get(
+        internal_description,
+        locale=locale,
+        hours=hours,
+        days=days,
+    )
+
+
+async def _issue_bonus_subscription_to_user(
+    session: AsyncSession,
+    user: User,
+    *,
+    hours: int,
+    internal_description: str,
+    locale: str | None,
+) -> datetime:
+    now = get_utc_now()
+    current_end = user.subscription_end if user.subscription_end and user.subscription_end > now else now
+    new_end = current_end + timedelta(hours=hours)
+    user.subscription_end = new_end
+
+    session.add(
+        Transaction(
+            user_id=user.id,
+            amount=0.0,
+            type="BONUS",
+            description=_build_bonus_description(internal_description, hours, locale),
+        )
+    )
+
+    await invalidate_user_cache(user.id)
+    return new_end
+
+
+async def issue_bonus_subscription(
+    session: AsyncSession,
+    user_id: int,
+    hours: int,
+    internal_description: str,
+    locale: str | None,
+) -> tuple[bool, datetime | None]:
+    """
+    Начисляет бонусный период и создает нулевую транзакцию в истории.
+    Не делает session.commit().
+    """
+    try:
+        user = await session.get(User, user_id, with_for_update=True)
+        if user is None:
+            logger.error("Пользователь %s не найден для бонусного начисления", user_id)
+            return False, None
+
+        new_end = await _issue_bonus_subscription_to_user(
+            session,
+            user,
+            hours=hours,
+            internal_description=internal_description,
+            locale=locale,
+        )
+        return True, new_end
+    except Exception as e:
+        logger.error("Ошибка в issue_bonus_subscription для %s: %s", user_id, e)
+        return False, None
+
+
+async def apply_community_bonus(
+    session: AsyncSession,
+    user_id: int,
+) -> tuple[bool, datetime | None]:
+    """
+    Начисляет бонус за вступление в сообщество один раз на пользователя.
+    Не делает session.commit().
+    """
+    try:
+        user = await session.get(User, user_id, with_for_update=True)
+        if user is None:
+            logger.error("Пользователь %s не найден для Community Bonus", user_id)
+            return False, None
+
+        if user.is_community_bonus_used:
+            logger.info("Community Bonus уже был использован пользователем %s", user_id)
+            return False, None
+
+        user.is_community_bonus_used = True
+        new_end = await _issue_bonus_subscription_to_user(
+            session,
+            user,
+            hours=config.COMMUNITY_BONUS_HOURS,
+            internal_description="billing-tx-community-bonus-description",
+            locale=user.language_code,
+        )
+        return True, new_end
+    except Exception as e:
+        logger.error("Ошибка в apply_community_bonus для %s: %s", user_id, e)
+        return False, None
+
+
+async def has_active_trial_bonus(session: AsyncSession, user: User) -> bool:
+    if not user.subscription_end or not user.is_trial_used:
+        return False
+
+    trial_hours = config.TRIAL_DURATION_DAYS * 24
+    trial_descriptions = tuple(
+        _build_bonus_description("billing-tx-trial-description", trial_hours, locale)
+        for locale in SUPPORTED_LOCALES
+    )
+    result = await session.execute(
+        select(Transaction)
+        .where(
+            Transaction.user_id == user.id,
+            Transaction.type == "BONUS",
+            Transaction.amount == 0,
+            Transaction.description.in_(trial_descriptions),
+        )
+        .order_by(Transaction.created_at.desc())
+        .limit(1)
+    )
+    trial_tx = result.scalar_one_or_none()
+    if trial_tx is None:
+        return False
+
+    expected_trial_end = trial_tx.created_at + timedelta(hours=trial_hours)
+    return abs((user.subscription_end - expected_trial_end).total_seconds()) <= 300
 
 async def create_invoice(
     session: AsyncSession,

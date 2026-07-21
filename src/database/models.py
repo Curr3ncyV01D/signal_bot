@@ -23,6 +23,7 @@ class User(Base):
     last_expiry_warning_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, default=None)
     auto_renewal: Mapped[bool] = mapped_column(Boolean, default=True)
     is_trial_used: Mapped[bool] = mapped_column(Boolean, default=False)
+    is_community_bonus_used: Mapped[bool] = mapped_column(Boolean, default=False)
     balance: Mapped[float] = mapped_column(Float, default=0.0)
     referrer_id: Mapped[int | None] = mapped_column(BigInteger, ForeignKey("users.id"), nullable=True)
 
@@ -92,7 +93,7 @@ class Transaction(Base):
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.id"), index=True, nullable=False)
     amount: Mapped[float] = mapped_column(Float, nullable=False)
-    type: Mapped[str] = mapped_column(String(20), nullable=False) # DEPOSIT, WITHDRAW, REWARD
+    type: Mapped[str] = mapped_column(String(20), nullable=False) # DEPOSIT, WITHDRAW, REWARD, BONUS
     description: Mapped[str | None] = mapped_column(String(255), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=get_utc_now, index=True, nullable=False)
 

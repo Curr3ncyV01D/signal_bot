@@ -24,6 +24,27 @@ onboarding-language-screen =
     Choose your interface language to complete setup.
 onboarding-language-selected = Language saved
 
+community-bonus-screen =
+🎁 <b>Your Welcome Bonus: +{ $hours } hours of VIP Access!</b>
+
+We are building more than just a tool — it is an exclusive community of traders. Join our chat to:
+
+🔹 Discuss Bybit signals in real-time.
+🔹 Share winning strategies and setups.
+🔹 Get support from experienced members of "The Hive."
+
+<b>Join the group and click the button below to instantly claim your extra 2 days of subscription.</b>
+community-bonus-button-join = 🎁 Join the Chat
+community-bonus-button-verify = ✅ Claim Bonus
+community-bonus-button-later = Join Later
+community-bonus-unavailable = The community bonus is currently unavailable.
+community-bonus-already-used = The community join bonus has already been claimed.
+community-bonus-verification-error = Failed to verify your community membership. Please try again later.
+community-bonus-join-required = Join the community first, then run the verification again.
+community-bonus-activation-failed = Failed to grant bonus access. Please try again later.
+community-bonus-granted-toast = +{ $hours }h of access granted
+community-bonus-later-toast = You can claim the bonus later from the main menu
+
 trial-unavailable-news-channel = Channel-based trial is unavailable: NEWS_CHANNEL_ID is not configured.
 trial-screen =
     🎁 <b>24-Hour Trial Access</b>
@@ -57,7 +78,8 @@ status-screen =
     🕒 Uptime: <b>{ $uptime }</b>
     🕒 Server time: { $server_time } UTC
 
-kb-main-trial = 🎁 Trial Period
+kb-main-trial = 🎁 Trial Period 
+kb-main-community-bonus = 🎁 Join the chat and get gift
 kb-main-renew = ⚡️ Extend Subscription
 kb-main-renew-left = ⚡️ Extend Subscription ({ $days ->
     [one] { $days } day left

@@ -12,7 +12,7 @@ from src.core.i18n_runtime import background_i18n
 from src.core.localization import normalize_locale_code
 from src.database.crud import billing_service
 from src.database.functions import get_utc_now
-from src.database.models import Transaction, User
+from src.database.models import User
 from src.database.session import async_session
 from src.services.analyzer import invalidate_user_cache
 
@@ -41,28 +41,6 @@ async def _safe_send_message(bot: Bot, user_id: int, text: str) -> bool:
         return False
 
 
-async def _has_active_trial_access(session: AsyncSession, user: User) -> bool:
-    if not user.subscription_end or not user.is_trial_used:
-        return False
-
-    result = await session.execute(
-        select(Transaction)
-        .where(
-            Transaction.user_id == user.id,
-            Transaction.type == "WITHDRAW",
-            Transaction.amount == 0,
-            Transaction.description == f"Trial {config.TRIAL_DURATION_DAYS}d",
-        )
-        .order_by(Transaction.created_at.desc())
-        .limit(1)
-    )
-    trial_tx = result.scalar_one_or_none()
-    if trial_tx is None:
-        return False
-
-    expected_trial_end = trial_tx.created_at + timedelta(days=config.TRIAL_DURATION_DAYS)
-    return abs((user.subscription_end - expected_trial_end).total_seconds()) <= 300
-
 async def _handle_expiry_warning(
     session: AsyncSession,
     bot: Bot,
@@ -74,7 +52,7 @@ async def _handle_expiry_warning(
 
     hours_left = (user.subscription_end - now).total_seconds() / 3600
     minutes_left = (user.subscription_end - now).total_seconds() / 60
-    is_active_trial = await _has_active_trial_access(session, user)
+    is_active_trial = await billing_service.has_active_trial_bonus(session, user)
     user_locale = normalize_locale_code(user.language_code)
     if is_active_trial:
         in_warning_window = TRIAL_EXPIRY_WARNING_MIN_MINUTES <= minutes_left <= TRIAL_EXPIRY_WARNING_MAX_MINUTES

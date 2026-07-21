@@ -64,11 +64,14 @@ class Settings(BaseSettings):
     }
     SUB_MONTHLY_PRICE: float = TARIFFS[30]
     TRIAL_DURATION_DAYS: int = 1
+    COMMUNITY_BONUS_HOURS: int = 48
     REFERRAL_BONUS_PERCENT: float = 15.0
 
     # === 3. ИНТЕРФЕЙС И UX (UI Logic) ===
     GUIDE_URL: str = "https://google.com"
     SUPPORT_URL: str = "https://t.me/Helper_CSL"
+    COMMUNITY_GROUP_ID: int | None = None
+    COMMUNITY_GROUP_LINK: str | None = None
     TRANSACTION_HISTORY_LIMIT: int = 10          # Количество последних транзакций отображаемых в истории
     MAX_SUB_DAYS: int = 3650                     # Максимальный срок подписки, что может задать админ(в днях)
     CASCADE_UI_DISPLAY_COUNT: int = 5            # С какой строки показывать каскад в тексте

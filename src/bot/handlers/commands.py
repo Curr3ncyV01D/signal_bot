@@ -210,19 +210,19 @@ async def process_confirm_trial(callback: types.CallbackQuery, session: AsyncSes
         await session.rollback()
         return await callback.answer(msg, show_alert=True)
 
-    activated, new_end = await billing_service.activate_subscription_logic(
+    activated, new_end = await billing_service.issue_bonus_subscription(
         session=session,
         user_id=callback.from_user.id,
-        days=config.TRIAL_DURATION_DAYS,
-        price=0,
-        description=f"Trial {config.TRIAL_DURATION_DAYS}d"
+        hours=config.TRIAL_DURATION_DAYS * 24,
+        internal_description="billing-tx-trial-description",
+        locale=user.language_code,
     )
     if not activated or not new_end:
         await session.rollback()
         return await callback.answer(i18n.get("trial-activation-failed"), show_alert=True)
 
     await session.commit()
-    await invalidate_user_cache()
+    await invalidate_user_cache(callback.from_user.id)
 
     success_text = i18n.get("trial-activated-screen")
     
