@@ -397,6 +397,13 @@ class MarketAggregator:
             }
 
         # 2. Расчет Market Cap и Cap Ratio
+        if multiplier <= 0:
+            logger.warning(
+                "Invalid symbol multiplier for %s in get_impact_metrics; fallback to 1",
+                symbol,
+            )
+            multiplier = 1
+
         live_mcap = (price * supply) / multiplier
         if live_mcap > 0:
             cap_ratio = (liq_value / live_mcap * 100)
