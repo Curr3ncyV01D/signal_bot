@@ -6,7 +6,7 @@ main-menu-status-inactive = ❌ Inactive
 main-menu =
     👋 Welcome, <b>{ $full_name }</b>!
 
-    I am a professional Bybit liquidation monitoring terminal.
+    I am a professional liquidation monitoring terminal.
     You will receive alerts when strong market moves begin.
 
     💎 Subscription: <b>{ $subscription_status }</b>
@@ -31,7 +31,7 @@ community-bonus-screen =
 
     🔹 Discuss Bybit signals in real-time.
     🔹 Share winning strategies and setups.
-    🔹 Get support from experienced members of "The Hive."
+    🔹 Get support from experienced members
 
     <b>Join the group and click the button below to instantly claim your extra 2 days of subscription.</b>
 community-bonus-button-join = 🎁 Join the Chat
@@ -89,5 +89,6 @@ kb-main-wallet = 💰 Wallet ({ $balance } USDT)
 kb-main-profile = 👤 Profile
 kb-main-settings = ⚙️ Settings and Filters
 kb-main-support = 👨‍💻 Technical Support
+kb-main-chat = 📥 Community Chat
 
 kb-status-refresh = 🔄 Refresh Status
