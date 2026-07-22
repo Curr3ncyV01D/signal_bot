@@ -37,6 +37,8 @@ wallet-balance-paid-success-screen =
 
     Ваш баланс пополнен. Текущий баланс: { $balance }
 wallet-success-toast = Успешно!
+billing-tx-trial-description = Пробный период { $days }д.
+billing-tx-community-bonus-description = Бонус за вступление в сообщество
 
 wallet-invoice-expired-screen = ❌ Срок действия счета истек.
 wallet-expired-toast = Истек

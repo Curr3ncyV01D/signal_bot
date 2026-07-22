@@ -28,7 +28,11 @@ def get_symbol_multiplier(symbol: str) -> int:
     Если префикса нет, возвращает 1.
     """
     match = SYMBOL_MULTIPLIER_REGEX.match(symbol)
-    return int(match.group(1)) if match else 1
+    if not match:
+        return 1
+
+    res = int(match.group(1))
+    return res if res > 0 else 1
 
 
 def format_datetime(dt: datetime | None) -> str:

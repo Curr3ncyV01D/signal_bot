@@ -41,7 +41,7 @@ async def toggle_threshold_mode_handler(callback: types.CallbackQuery, session: 
     if not user:
         return await callback.answer(i18n.get("settings-error-save"), show_alert=True)
     
-    await analyzer.invalidate_user_cache()
+    await analyzer.invalidate_user_cache(callback.from_user.id)
     await callback.message.edit_reply_markup(reply_markup=get_settings_kb(user))
     await callback.answer(i18n.get("settings-mode-changed", mode=user.threshold_mode))
 
@@ -95,7 +95,7 @@ async def process_mcap_parameter(message: types.Message, state: FSMContext, sess
     user = await update_user_settings(session, message.from_user.id, **update_data)
     
     if user:
-        await analyzer.invalidate_user_cache()
+        await analyzer.invalidate_user_cache(message.from_user.id)
         await state.clear()
         await message.answer(msg)
     else:
@@ -243,8 +243,7 @@ async def toggle_settings(callback: types.CallbackQuery, session: AsyncSession, 
     user = await update_user_settings(session, callback.from_user.id, **update_data)
     
     if user:
-        # Сбрасываем кэш анализатора для мгновенного применения
-        await analyzer.invalidate_user_cache()
+        await analyzer.invalidate_user_cache(callback.from_user.id)
         await callback.message.edit_reply_markup(reply_markup=get_settings_kb(user))
         await callback.answer(i18n.get("settings-saved"))
 
@@ -269,7 +268,7 @@ async def process_threshold(message: types.Message, state: FSMContext, session: 
     user = await update_user_settings(session, message.from_user.id, threshold=new_threshold)
     
     if user:
-        await analyzer.invalidate_user_cache()
+        await analyzer.invalidate_user_cache(message.from_user.id)
         await state.clear()
         await message.answer(
             i18n.get("settings-threshold-updated", value=format_smart_num(new_threshold)),
@@ -298,7 +297,7 @@ async def process_cascade_threshold(message: types.Message, state: FSMContext, s
     user = await update_user_settings(session, message.from_user.id, threshold_cascade=new_threshold)
     
     if user:
-        await analyzer.invalidate_user_cache()
+        await analyzer.invalidate_user_cache(message.from_user.id)
         await state.clear()
         await message.answer(
             i18n.get("settings-cascade-threshold-updated", value=format_smart_num(new_threshold)),
@@ -338,7 +337,7 @@ async def process_oi_thresholds(message: types.Message, state: FSMContext, sessi
     )
     
     if user:
-        await analyzer.invalidate_user_cache()
+        await analyzer.invalidate_user_cache(message.from_user.id)
         await state.clear()
         await message.answer(
             i18n.get(

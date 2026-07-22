@@ -37,6 +37,8 @@ wallet-balance-paid-success-screen =
 
     Your balance has been credited. Current balance: { $balance }
 wallet-success-toast = Success!
+billing-tx-trial-description = Trial period { $days }d.
+billing-tx-community-bonus-description = Bonus for joining the community
 
 wallet-invoice-expired-screen = ❌ Invoice has expired.
 wallet-expired-toast = Expired

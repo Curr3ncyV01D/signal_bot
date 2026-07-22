@@ -6,7 +6,7 @@ main-menu-status-inactive = ❌ Не активна
 main-menu =
     👋 Добро пожаловать, <b>{ $full_name }</b>!
 
-    Я профессиональный терминал для мониторинга ликвидаций на Bybit.
+    Я профессиональный терминал для мониторинга ликвидаций.
     Вы будете получать уведомления, когда на рынке начнутся сильные движения.
 
     💎 Подписка: <b>{ $subscription_status }</b>
@@ -23,6 +23,27 @@ onboarding-language-screen =
     Выберите язык интерфейса, чтобы завершить настройку.
     Choose your interface language to complete setup.
 onboarding-language-selected = Язык сохранен
+
+community-bonus-screen =
+    🎁 <b>Ваш приветственный бонус: + { $hours } часов VIP-доступа!</b>
+
+    Мы строим не просто инструмент, а закрытое сообщество трейдеров. Присоединяйтесь к нашему чату, чтобы:
+
+    🔹 Обсуждать сигналы Bybit в реальном времени.
+    🔹 Делиться рабочими стратегиями и настройками.
+    🔹 Получать помощь от опытных участников
+
+    <b>Вступите в группу и нажмите кнопку ниже, чтобы мгновенно забрать дополнительные 2 дня подписки</b>
+community-bonus-button-join = 🎁 Вступить в чат
+community-bonus-button-verify = ✅ Получить бонус
+community-bonus-button-later = Вступить позже
+community-bonus-unavailable = Бонус сообщества сейчас недоступен.
+community-bonus-already-used = Бонус за вступление в сообщество уже получен.
+community-bonus-verification-error = Не удалось проверить участие в сообществе. Попробуйте позже.
+community-bonus-join-required = Сначала вступите в сообщество, затем повторите проверку.
+community-bonus-activation-failed = Не удалось начислить бонусный доступ. Попробуйте позже.
+community-bonus-granted-toast = +{ $hours }ч. доступа начислено
+community-bonus-later-toast = Сможете активировать бонус позже из главного меню
 
 trial-unavailable-news-channel = Триал через канал недоступен: NEWS_CHANNEL_ID не задан.
 trial-screen =
@@ -58,6 +79,7 @@ status-screen =
     🕒 Время сервера: { $server_time } UTC
 
 kb-main-trial = 🎁 Пробный период
+kb-main-community-bonus = 🎁 Вступить в чат и получить подарок
 kb-main-renew = ⚡️ Продлить подписку
 kb-main-renew-left = ⚡️ Продлить подписку (осталось { $days ->
     [one] { $days } день
@@ -68,5 +90,6 @@ kb-main-wallet = 💰 Кошелек ({ $balance } USDT)
 kb-main-profile = 👤 Личный кабинет
 kb-main-settings = ⚙️ Настройки и фильтры
 kb-main-support = 👨‍💻 Тех. поддержка
+kb-main-chat = 📥 Чат сообщества
 
 kb-status-refresh = 🔄 Обновить статус

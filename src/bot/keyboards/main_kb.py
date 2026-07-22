@@ -30,6 +30,19 @@ def get_start_kb(user: User) -> InlineKeyboardMarkup:
     if not user.is_trial_used:
         builder.row(InlineKeyboardButton(text=LazyProxy("kb-main-trial"), callback_data="activate_trial"))
 
+    if (
+        not user.is_community_bonus_used
+        and user.is_trial_used
+        and config.COMMUNITY_GROUP_ID is not None
+        and config.COMMUNITY_GROUP_LINK
+    ):
+        builder.row(
+            InlineKeyboardButton(
+                text=LazyProxy("kb-main-community-bonus"),
+                callback_data="open_community_bonus",
+            )
+        )
+
     if not has_sub:
         builder.row(InlineKeyboardButton(text=LazyProxy("kb-main-renew"), callback_data="buy_subscription"))
     else:
@@ -49,6 +62,7 @@ def get_start_kb(user: User) -> InlineKeyboardMarkup:
     builder.row(InlineKeyboardButton(text=LazyProxy("kb-main-profile"), callback_data="profile_main"))
     builder.row(InlineKeyboardButton(text=LazyProxy("kb-main-settings"), callback_data="open_settings"))
     builder.row(InlineKeyboardButton(text=LazyProxy("kb-main-support"), url=config.SUPPORT_URL))
+    builder.row(InlineKeyboardButton(text=LazyProxy("kb-main-chat"), url=config.COMMUNITY_GROUP_LINK))
     return builder.as_markup()
 
 def get_back_button_kb(back_data: str) -> InlineKeyboardMarkup:
