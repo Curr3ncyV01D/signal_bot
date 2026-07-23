@@ -6,7 +6,7 @@ from aiogram.types import FSInputFile, InputMediaPhoto
 from aiogram.utils.markdown import hbold, hcode
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.bot.handlers.onboarding import render_onboarding_language_screen
+from src.bot.handlers.onboarding import render_pending_onboarding_screen
 from src.bot.keyboards.billing_kb import get_profile_main_kb, get_wallet_back_kb
 from src.core.config import ImagePaths, config
 from src.core.localization import DEFAULT_LOCALE, FALLBACK_LOCALE, normalize_locale_code
@@ -115,7 +115,7 @@ async def callback_profile_main(callback: types.CallbackQuery, session: AsyncSes
         return await callback.answer(i18n.get("settings-error-profile"), show_alert=True)
 
     if not user.is_setup_completed:
-        await render_onboarding_language_screen(callback, i18n)
+        await render_pending_onboarding_screen(callback, user, i18n)
         await callback.answer()
         return
 

@@ -7,15 +7,23 @@ from aiogram.types import FSInputFile, InputMediaPhoto
 from aiogram_i18n import I18nContext
 from sqlalchemy.ext.asyncio import AsyncSession
 from src.database.models import User
-from src.database.functions import get_utc_now
-from src.database.crud.user_service import update_user_settings
-from src.bot.keyboards import get_settings_kb, get_back_to_settings_kb, get_start_kb
+from src.database.crud.user_service import apply_user_setting_preset, update_user_settings
+from src.bot.keyboards import (
+    get_back_to_settings_kb,
+    get_preset_confirmation_kb,
+    get_presets_selection_kb,
+    get_settings_display_kb,
+    get_settings_filters_kb,
+    get_settings_kb,
+)
+from src.core.dto import SettingPresetId
 from src.utils import format_smart_num, parse_numeric_input
 from src.services import analyzer
 from src.core.config import ImagePaths, config
 
 logger = logging.getLogger(__name__)
 router = Router()
+PRESET_ORDER: tuple[SettingPresetId, ...] = ("SCALPER", "BALANCED", "CONSERVATIVE")
 
 class SettingsStates(StatesGroup):
     waiting_for_threshold = State()
@@ -25,6 +33,79 @@ class SettingsStates(StatesGroup):
     waiting_for_mcap_min_usd = State()
     waiting_for_mcap_cas_pct = State()
     waiting_for_mcap_cas_min_usd = State()
+
+
+def _format_preset_name(i18n: I18nContext, preset_id: SettingPresetId) -> str:
+    return i18n.get(f"settings-preset-name-{preset_id.lower()}")
+
+
+def _build_presets_catalog_caption(i18n: I18nContext) -> str:
+    scalper = config.SETTING_PRESETS["SCALPER"]
+    balanced = config.SETTING_PRESETS["BALANCED"]
+    conservative = config.SETTING_PRESETS["CONSERVATIVE"]
+    return i18n.get(
+        "settings-preset-catalog-screen",
+        scalper_mode=scalper.threshold_mode,
+        scalper_threshold=format_smart_num(scalper.threshold),
+        scalper_cascade=format_smart_num(scalper.threshold_cascade),
+        scalper_oi_percent=format_smart_num(scalper.threshold_oi_percent, is_percent=True, decimal_places=1),
+        scalper_oi_value=format_smart_num(scalper.threshold_oi_value),
+        balanced_mode=balanced.threshold_mode,
+        balanced_threshold=format_smart_num(balanced.threshold),
+        balanced_cascade=format_smart_num(balanced.threshold_cascade),
+        balanced_oi_percent=format_smart_num(balanced.threshold_oi_percent, is_percent=True, decimal_places=1),
+        balanced_oi_value=format_smart_num(balanced.threshold_oi_value),
+        conservative_mode=conservative.threshold_mode,
+        conservative_threshold=format_smart_num(conservative.threshold),
+        conservative_cascade=format_smart_num(conservative.threshold_cascade),
+        conservative_oi_percent=format_smart_num(conservative.threshold_oi_percent, is_percent=True, decimal_places=1),
+        conservative_oi_value=format_smart_num(conservative.threshold_oi_value),
+    )
+
+
+def _build_preset_confirmation_caption(i18n: I18nContext, preset_id: SettingPresetId) -> str:
+    preset = config.SETTING_PRESETS[preset_id]
+    return i18n.get(
+        "settings-preset-confirm-screen",
+        preset_name=_format_preset_name(i18n, preset_id),
+        recommended_mode=preset.threshold_mode,
+        threshold=format_smart_num(preset.threshold),
+        threshold_cascade=format_smart_num(preset.threshold_cascade),
+        threshold_mcap_pct=format_smart_num(preset.threshold_mcap_pct, is_percent=True, decimal_places=4),
+        threshold_mcap_usd_min=format_smart_num(preset.threshold_mcap_usd_min),
+        threshold_cascade_mcap_pct=format_smart_num(
+            preset.threshold_cascade_mcap_pct, is_percent=True, decimal_places=4
+        ),
+        threshold_cascade_mcap_usd_min=format_smart_num(preset.threshold_cascade_mcap_usd_min),
+        threshold_oi_percent=format_smart_num(preset.threshold_oi_percent, is_percent=True, decimal_places=1),
+        threshold_oi_value=format_smart_num(preset.threshold_oi_value),
+        preset_description=i18n.get(f"settings-preset-description-{preset_id.lower()}"),
+    )
+
+
+async def render_setting_presets_catalog(
+    event: types.Message | types.CallbackQuery,
+    i18n: I18nContext,
+) -> None:
+    await _render_settings_screen(
+        event,
+        _build_presets_catalog_caption(i18n),
+        get_presets_selection_kb(),
+        image_path=ImagePaths.SETTINGS,
+    )
+
+
+async def render_setting_preset_confirmation(
+    event: types.Message | types.CallbackQuery,
+    i18n: I18nContext,
+    preset_id: SettingPresetId,
+) -> None:
+    await _render_settings_screen(
+        event,
+        _build_preset_confirmation_caption(i18n, preset_id),
+        get_preset_confirmation_kb(preset_id),
+        image_path=ImagePaths.SETTINGS,
+    )
 
 
 @router.callback_query(F.data == "toggle_threshold_mode")
@@ -42,7 +123,7 @@ async def toggle_threshold_mode_handler(callback: types.CallbackQuery, session: 
         return await callback.answer(i18n.get("settings-error-save"), show_alert=True)
     
     await analyzer.invalidate_user_cache(callback.from_user.id)
-    await callback.message.edit_reply_markup(reply_markup=get_settings_kb(user))
+    await render_settings_filters_menu(callback, user, i18n)
     await callback.answer(i18n.get("settings-mode-changed", mode=user.threshold_mode))
 
 
@@ -161,9 +242,8 @@ async def _render_settings_screen(
             )
 
 
-async def render_settings_menu(event: types.Message | types.CallbackQuery, user: User, i18n: I18nContext):
-    """Единая функция для отрисовки меню настроек (из команды или кнопки 'Назад')"""
-    text = i18n.get(
+def _build_settings_summary_caption(user: User, i18n: I18nContext) -> str:
+    return i18n.get(
         "settings-title",
         threshold_mode=user.threshold_mode,
         threshold=format_smart_num(user.threshold),
@@ -176,7 +256,56 @@ async def render_settings_menu(event: types.Message | types.CallbackQuery, user:
         threshold_oi_value=format_smart_num(user.threshold_oi_value),
     )
 
-    await _render_settings_screen(event, text, get_settings_kb(user), image_path=ImagePaths.SETTINGS)
+
+def _build_settings_filters_caption(user: User, i18n: I18nContext) -> str:
+    return i18n.get(
+        "settings-filters-screen",
+        threshold_mode=user.threshold_mode,
+        threshold=format_smart_num(user.threshold),
+        threshold_cascade=format_smart_num(user.threshold_cascade),
+        threshold_mcap_pct=format_smart_num(user.threshold_mcap_pct, is_percent=True, decimal_places=4),
+        threshold_mcap_usd_min=format_smart_num(user.threshold_mcap_usd_min),
+        threshold_cascade_mcap_pct=format_smart_num(user.threshold_cascade_mcap_pct, is_percent=True, decimal_places=4),
+        threshold_cascade_mcap_usd_min=format_smart_num(user.threshold_cascade_mcap_usd_min),
+        threshold_oi_percent=format_smart_num(user.threshold_oi_percent, is_percent=True, decimal_places=1),
+        threshold_oi_value=format_smart_num(user.threshold_oi_value),
+    )
+
+
+def _build_settings_display_caption(user: User, i18n: I18nContext) -> str:
+    return i18n.get(
+        "settings-display-screen"
+    )
+
+
+async def render_settings_menu(event: types.Message | types.CallbackQuery, user: User, i18n: I18nContext):
+    """Корневой экран настроек."""
+    await _render_settings_screen(
+        event,
+        _build_settings_summary_caption(user, i18n),
+        get_settings_kb(user),
+        image_path=ImagePaths.SETTINGS,
+    )
+
+
+async def render_settings_filters_menu(event: types.Message | types.CallbackQuery, user: User, i18n: I18nContext):
+    """Подменю фильтров триггеров."""
+    await _render_settings_screen(
+        event,
+        _build_settings_filters_caption(user, i18n),
+        get_settings_filters_kb(user),
+        image_path=ImagePaths.SETTINGS,
+    )
+
+
+async def render_settings_display_menu(event: types.Message | types.CallbackQuery, user: User, i18n: I18nContext):
+    """Подменю отображения сообщения."""
+    await _render_settings_screen(
+        event,
+        _build_settings_display_caption(user, i18n),
+        get_settings_display_kb(user),
+        image_path=ImagePaths.SETTINGS,
+    )
 
 
 @router.message(Command("settings"))
@@ -207,17 +336,79 @@ async def back_to_settings(callback: types.CallbackQuery, session: AsyncSession,
     await callback.answer()
 
 
+@router.callback_query(F.data == "settings_filters")
+async def process_open_settings_filters(callback: types.CallbackQuery, session: AsyncSession, i18n: I18nContext):
+    user = await session.get(User, callback.from_user.id)
+    if not user:
+        return await callback.answer(i18n.get("settings-error-profile"), show_alert=True)
+    await render_settings_filters_menu(callback, user, i18n)
+    await callback.answer()
+
+
+@router.callback_query(F.data == "settings_display")
+async def process_open_settings_display(callback: types.CallbackQuery, session: AsyncSession, i18n: I18nContext):
+    user = await session.get(User, callback.from_user.id)
+    if not user:
+        return await callback.answer(i18n.get("settings-error-profile"), show_alert=True)
+    await render_settings_display_menu(callback, user, i18n)
+    await callback.answer()
+
+
+@router.callback_query(F.data == "open_setting_presets")
+async def process_open_setting_presets(callback: types.CallbackQuery, session: AsyncSession, i18n: I18nContext):
+    user = await session.get(User, callback.from_user.id)
+    if not user:
+        return await callback.answer(i18n.get("settings-error-profile"), show_alert=True)
+    await render_setting_presets_catalog(callback, i18n)
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("open_setting_preset_"))
+async def process_open_setting_preset_confirmation(
+    callback: types.CallbackQuery, session: AsyncSession, i18n: I18nContext
+):
+    user = await session.get(User, callback.from_user.id)
+    if not user:
+        return await callback.answer(i18n.get("settings-error-profile"), show_alert=True)
+
+    preset_id = callback.data.removeprefix("open_setting_preset_").upper()
+    if preset_id not in PRESET_ORDER:
+        return await callback.answer(i18n.get("settings-save-error"), show_alert=True)
+
+    await render_setting_preset_confirmation(callback, i18n, preset_id)
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("apply_setting_preset_"))
+async def process_apply_setting_preset(callback: types.CallbackQuery, session: AsyncSession, i18n: I18nContext):
+    preset_id = callback.data.removeprefix("apply_setting_preset_").upper()
+    if preset_id not in PRESET_ORDER:
+        return await callback.answer(i18n.get("settings-save-error"), show_alert=True)
+
+    user = await apply_user_setting_preset(session, callback.from_user.id, preset_id)
+    if not user:
+        return await callback.answer(i18n.get("settings-save-error"), show_alert=True)
+
+    await render_settings_menu(callback, user, i18n)
+    await callback.answer(
+        i18n.get(
+            "settings-preset-applied-toast",
+            preset_name=_format_preset_name(i18n, preset_id),
+        )
+    )
+
+
 @router.callback_query(F.data == "help_liq")
 async def show_help_liq(callback: types.CallbackQuery, i18n: I18nContext):
     text = i18n.get("help-liquidations")
-    await _render_settings_screen(callback, text, get_back_to_settings_kb())
+    await _render_settings_screen(callback, text, get_back_to_settings_kb("settings_filters"))
     await callback.answer()
 
 
 @router.callback_query(F.data == "help_analytics")
 async def show_help_analytics(callback: types.CallbackQuery, i18n: I18nContext):
     text = i18n.get("help-analytics")
-    await _render_settings_screen(callback, text, get_back_to_settings_kb())
+    await _render_settings_screen(callback, text, get_back_to_settings_kb("settings_display"))
     await callback.answer()
 
 
@@ -244,7 +435,10 @@ async def toggle_settings(callback: types.CallbackQuery, session: AsyncSession, 
     
     if user:
         await analyzer.invalidate_user_cache(callback.from_user.id)
-        await callback.message.edit_reply_markup(reply_markup=get_settings_kb(user))
+        if setting_type in {"cascade", "volume", "squeeze", "longs", "shorts"}:
+            await render_settings_filters_menu(callback, user, i18n)
+        else:
+            await render_settings_display_menu(callback, user, i18n)
         await callback.answer(i18n.get("settings-saved"))
 
 # === ЛИКВИДАЦИИ: НАСТРОЙКА ПОРОГОВ ===

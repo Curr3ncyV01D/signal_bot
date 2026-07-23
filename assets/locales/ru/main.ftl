@@ -24,6 +24,34 @@ onboarding-language-screen =
     Choose your interface language to complete setup.
 onboarding-language-selected = Язык сохранен
 
+onboarding-presets-screen =
+    🎯 <b>Выберите профиль стратегии</b>
+
+    Это быстрый старт для фильтров CSL. Один клик применит готовые настройки фильтров и включит все основные типы сигналов.
+
+    <b>⚡ Скальпинг</b>
+    Использует наши инструменты для поиска аномалий на альтах.
+    • Частота сигналов: <b>Высокая</b>
+    • Примерный объем ликвидаций: <b>{ $scalper_threshold }</b> $
+
+    <b>⚖️ Сбалансированный</b>
+    Гибридный профиль для повседневной торговли.
+    • Частота сигналов: <b>Средняя</b>
+    • Примерный объем ликвидаций: <b>{ $balanced_threshold }</b> $
+
+    <b>🛡 Консервативный</b>
+    Делает упор на крупные движения и высокий шум-фильтр.
+    • Частота сигналов: <b>Низкая</b>
+    • Примерный объем ликвидаций: <b>{ $conservative_threshold }</b> $
+onboarding-preset-button-scalper = ⚡ Скальпинг
+onboarding-preset-button-balanced = ⚖️ Сбалансированный
+onboarding-preset-button-conservative = 🛡 Консервативный
+onboarding-preset-button-skip = Пропустить
+onboarding-preset-applied-scalper = Профиль «Скальпинг» применен
+onboarding-preset-applied-balanced = Профиль «Сбалансированный» применен
+onboarding-preset-applied-conservative = Профиль «Консервативный» применен
+onboarding-preset-skipped = Онбординг завершен с дефолтными настройками
+
 community-bonus-screen =
     🎁 <b>Ваш приветственный бонус: + { $hours } часов VIP-доступа!</b>
 

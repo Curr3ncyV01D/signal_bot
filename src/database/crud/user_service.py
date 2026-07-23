@@ -1,9 +1,10 @@
 import logging
 from datetime import timedelta
-from sqlalchemy import String, and_, cast, func, or_, select
+from sqlalchemy import String, and_, cast, func, or_, select, update
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.core.config import config
 from src.core.localization import resolve_initial_locale
 from src.database.models import User
 from src.database.functions import get_utc_now
@@ -64,6 +65,7 @@ async def complete_user_setup(session: AsyncSession, user_id: int) -> User | Non
             return None
 
         user.is_setup_completed = True
+        user.onboarding_step = "COMPLETED"
         await session.commit()
         await session.refresh(user)
         return user
@@ -322,6 +324,68 @@ async def update_user_settings(session: AsyncSession, user_id: int, **kwargs) ->
     except Exception as e:
         await session.rollback()
         logger.error(f"Непредвиденная ошибка при обновлении настроек пользователя {user_id}: {e}")
+        return None
+
+
+async def apply_user_setting_preset(session: AsyncSession, user_id: int, preset_id: str) -> User | None:
+    """Атомарно применяет пресет настроек пользователя и инвалидирует кэш аналитики."""
+    try:
+        normalized_preset_id = preset_id.strip().upper()
+        preset = config.SETTING_PRESETS.get(normalized_preset_id)
+        if preset is None:
+            logger.warning("Неизвестный preset_id=%s для пользователя %s", preset_id, user_id)
+            return None
+
+        # Малые MCAP-значения вида 0.005 записываем как есть, без round(),
+        # чтобы не терять точность при подготовке UPDATE.
+        update_values = {
+            "threshold": float(preset.threshold),
+            "threshold_cascade": float(preset.threshold_cascade),
+            "threshold_oi_percent": float(preset.threshold_oi_percent),
+            "threshold_oi_value": float(preset.threshold_oi_value),
+            "threshold_mcap_pct": float(preset.threshold_mcap_pct),
+            "threshold_mcap_usd_min": float(preset.threshold_mcap_usd_min),
+            "threshold_cascade_mcap_pct": float(preset.threshold_cascade_mcap_pct),
+            "threshold_cascade_mcap_usd_min": float(preset.threshold_cascade_mcap_usd_min),
+            "alert_cascade": bool(preset.alert_cascade),
+            "alert_volume": bool(preset.alert_volume),
+            "alert_squeeze": bool(preset.alert_squeeze),
+            "alert_longs": bool(preset.alert_longs),
+            "alert_shorts": bool(preset.alert_shorts),
+            "alert_oi": bool(preset.alert_oi),
+            "alert_rsi": bool(preset.alert_rsi),
+            "alert_cvd": bool(preset.alert_cvd),
+            # threshold_mode добавляем последним на уровне приложения,
+            # чтобы сначала подготовить все числовые пороги пресета.
+            "threshold_mode": str(preset.threshold_mode).upper(),
+        }
+
+        result = await session.execute(
+            update(User)
+            .where(User.id == user_id)
+            .values(**update_values)
+            .execution_options(synchronize_session=False)
+        )
+        if result.rowcount == 0:
+            await session.rollback()
+            return None
+
+        await session.commit()
+        user = await session.get(User, user_id)
+        if user is None:
+            return None
+
+        from src.services.analyzer import invalidate_user_cache
+
+        await invalidate_user_cache(user.id)
+        return user
+    except SQLAlchemyError as e:
+        await session.rollback()
+        logger.error(f"Ошибка БД при применении пресета {preset_id} для {user_id}: {e}")
+        return None
+    except Exception as e:
+        await session.rollback()
+        logger.error(f"Непредвиденная ошибка при применении пресета {preset_id} для {user_id}: {e}")
         return None
 
 async def get_all_receiver_ids(session: AsyncSession) -> list[int]:

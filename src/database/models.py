@@ -13,6 +13,7 @@ class User(Base):
     username: Mapped[str] = mapped_column(String, nullable=True)
     language_code: Mapped[str] = mapped_column(String(2), default="ru")
     is_setup_completed: Mapped[bool] = mapped_column(Boolean, default=False)
+    onboarding_step: Mapped[str] = mapped_column(String(32), default="LANGUAGE")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=get_utc_now)
     is_admin: Mapped[bool] = mapped_column(Boolean, default=False)
     is_blocked: Mapped[bool] = mapped_column(Boolean, default=False)
