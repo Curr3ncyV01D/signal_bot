@@ -5,7 +5,9 @@ import sys
 from pathlib import Path
 from datetime import datetime
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from pydantic import field_validator, model_validator
+from pydantic import Field, field_validator, model_validator
+
+from src.core.dto import SettingPresetDTO
 
 class Settings(BaseSettings):
     # === 0. СИСТЕМНЫЕ МЕТРИКИ (Internal) ===
@@ -66,6 +68,67 @@ class Settings(BaseSettings):
     TRIAL_DURATION_DAYS: int = 1
     COMMUNITY_BONUS_HOURS: int = 48
     REFERRAL_BONUS_PERCENT: float = 15.0
+    SETTING_PRESETS: dict[str, SettingPresetDTO] = Field(
+        default_factory=lambda: {
+            "SCALPER": SettingPresetDTO(
+                threshold=8000.0,
+                threshold_cascade=5000.0,
+                threshold_mode="PERCENT",
+                threshold_oi_percent=5.0,
+                threshold_oi_value=100000.0,
+                threshold_mcap_pct=0.005,
+                threshold_mcap_usd_min=1000.0,
+                threshold_cascade_mcap_pct=0.008,
+                threshold_cascade_mcap_usd_min=1000.0,
+                alert_cascade=True,
+                alert_volume=True,
+                alert_squeeze=True,
+                alert_longs=True,
+                alert_shorts=True,
+                alert_oi=True,
+                alert_rsi=True,
+                alert_cvd=True,
+            ),
+            "BALANCED": SettingPresetDTO(
+                threshold=20000.0,
+                threshold_cascade=15000.0,
+                threshold_mode="PERCENT",
+                threshold_oi_percent=15.0,
+                threshold_oi_value=300000.0,
+                threshold_mcap_pct=0.01,
+                threshold_mcap_usd_min=5000.0,
+                threshold_cascade_mcap_pct=0.015,
+                threshold_cascade_mcap_usd_min=5000.0,
+                alert_cascade=True,
+                alert_volume=True,
+                alert_squeeze=True,
+                alert_longs=True,
+                alert_shorts=True,
+                alert_oi=True,
+                alert_rsi=True,
+                alert_cvd=True,
+            ),
+            "CONSERVATIVE": SettingPresetDTO(
+                threshold=100000.0,
+                threshold_cascade=80000.0,
+                threshold_mode="USD",
+                threshold_oi_percent=20.0,
+                threshold_oi_value=500000.0,
+                threshold_mcap_pct=0.05,
+                threshold_mcap_usd_min=20000.0,
+                threshold_cascade_mcap_pct=0.1,
+                threshold_cascade_mcap_usd_min=20000.0,
+                alert_cascade=True,
+                alert_volume=True,
+                alert_squeeze=True,
+                alert_longs=True,
+                alert_shorts=True,
+                alert_oi=True,
+                alert_rsi=True,
+                alert_cvd=True,
+            ),
+        }
+    )
 
     # === 3. ИНТЕРФЕЙС И UX (UI Logic) ===
     GUIDE_URL: str = "https://google.com"
@@ -171,7 +234,9 @@ class Settings(BaseSettings):
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
+
 config = Settings()
+SETTING_PRESETS: dict[str, SettingPresetDTO] = config.SETTING_PRESETS
 
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent

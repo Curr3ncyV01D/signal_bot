@@ -6,6 +6,8 @@ from typing import Literal, TypedDict
 type SignalSideLabel = Literal["LONG", "SHORT"]
 type SignalAlertType = Literal["CASCADE", "OI_PUMP", "SQUEEZE", "VOLUME"]
 type SignalOhlcRow = list[int | float]
+type SettingPresetId = Literal["SCALPER", "BALANCED", "CONSERVATIVE"]
+type UserOnboardingStep = Literal["LANGUAGE", "COMMUNITY_BONUS", "PRESET_SELECTION", "COMPLETED"]
 
 
 class SignalMarketData(TypedDict):
@@ -54,6 +56,27 @@ class SignalDTO(TypedDict):
     ohlc_history: list[SignalOhlcRow]
     chart_message_id: int | None
     timestamp: float
+
+
+@dataclass(slots=True, frozen=True)
+class SettingPresetDTO:
+    threshold: float
+    threshold_cascade: float
+    threshold_mode: Literal["USD", "PERCENT"]
+    threshold_oi_percent: float
+    threshold_oi_value: float
+    threshold_mcap_pct: float
+    threshold_mcap_usd_min: float
+    threshold_cascade_mcap_pct: float
+    threshold_cascade_mcap_usd_min: float
+    alert_cascade: bool
+    alert_volume: bool
+    alert_squeeze: bool
+    alert_longs: bool
+    alert_shorts: bool
+    alert_oi: bool
+    alert_rsi: bool
+    alert_cvd: bool
 
 
 @dataclass(slots=True)

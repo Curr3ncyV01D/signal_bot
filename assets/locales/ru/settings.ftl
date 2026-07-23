@@ -2,17 +2,45 @@
 
 settings-title =
     <b>📊 Фильтры ликвидаций (Режим: { $threshold_mode }):</b>
-    🔶 Порог объема: <b>${ $threshold }</b>
-    🔸 Порог каскада: <b>${ $threshold_cascade }</b>
-    🔷 Порог объема MCAP: <b>{ $threshold_mcap_pct }</b> (мин. <b>${ $threshold_mcap_usd_min }</b>)
-    🔹 Порог каскада MCAP: <b>{ $threshold_cascade_mcap_pct }</b> (мин. <b>${ $threshold_cascade_mcap_usd_min }</b>)
+    - Порог объема: ${ $threshold }
+    - Порог каскада: ${ $threshold_cascade }
 
-    <b>📊 Фильтры аналитики (OI):</b>
-    📈 Мин. рост OI: <b>{ $threshold_oi_percent }</b> и <b>${ $threshold_oi_value }</b>
+    - Порог объема MCAP: { $threshold_mcap_pct } (мин. ${ $threshold_mcap_usd_min })
+    - Порог каскада MCAP: { $threshold_cascade_mcap_pct } (мин. ${ $threshold_cascade_mcap_usd_min })
 
-    💡 <i>Подсказка: Отключайте неинтересующие индикаторы ниже, чтобы сделать уведомления компактнее.</i>
+    📈 Фильтры аналитики:
+    Мин. рост OI: { $threshold_oi_percent } и ${ $threshold_oi_value }
 
-    <i>Нажмите на кнопки '❓ Справка', чтобы узнать подробности.</i>
+settings-filters-screen =
+    <b>📊 Фильтры ликвидаций (Режим: { $threshold_mode }):</b>
+    - Порог объема: ${ $threshold }
+    - Порог каскада: ${ $threshold_cascade }
+
+    - Порог объема MCAP: { $threshold_mcap_pct } 
+    (минимум ${ $threshold_mcap_usd_min })
+    - Порог каскада MCAP: { $threshold_cascade_mcap_pct } 
+    (минимум ${ $threshold_cascade_mcap_usd_min })
+
+    📈 Фильтры аналитики:
+    Мин. рост OI: { $threshold_oi_percent } и ${ $threshold_oi_value }
+
+    Эти настройки влияют на то, какие события запускают отправку сигнала.
+    Ниже можно менять режим, пороги и состав триггеров.
+
+    <i>Нажмите на кнопку '❓ Справка', чтобы узнать подробности.</i>
+
+settings-display-screen =
+    <b>👁 Вид сообщений</b>
+
+    Эти настройки меняют только визуальный состав алертов.
+    Они включают или скрывают дополнительные блоки данных внутри текста сообщения.
+
+    <i>💡 Подсказка: Отключайте неинтересующие индикаторы ниже, чтобы сделать уведомления компактнее.</i>
+    
+    <i>Нажмите на кнопку '❓ Справка', чтобы узнать подробности.</i>
+    
+settings-display-state-on = Вкл
+settings-display-state-off = Выкл
 
 settings-profile-error = ❌ Ошибка при получении профиля. Нажмите /start
 settings-save-error = ❌ Ошибка при сохранении настроек.
@@ -84,6 +112,60 @@ settings-oi-thresholds-updated =
     Процент: <b>{ $percent }</b>
     Объем: <b>${ $value }</b>
 
+settings-preset-catalog-screen =
+    🎯 <b>Профили стратегии</b>
+
+    Пресет заменяет текущие фильтры целиком: USD-пороги, MCAP-пороги, OI и все тумблеры сигналов.
+
+    <b>⚡ Скальпинг</b>
+    Для активной торговли и частых алертов по альтам.
+
+    Режим по умолчанию: <b>{ $scalper_mode }</b>
+    Частота: <b>высокая</b>
+    
+    • Объем: <b>${ $scalper_threshold }</b> | Каскад: <b>${ $scalper_cascade }</b>
+    • OI: <b>{ $scalper_oi_percent }</b> / <b>${ $scalper_oi_value }</b>
+
+    <b>⚖️ Сбалансированный</b>
+    Для ежедневной торговли с умеренным количеством сигналов.
+
+    Режим по умолчанию: <b>{ $balanced_mode }</b>
+    Частота: <b>средняя</b>
+
+    • Объем: <b>${ $balanced_threshold }</b> | Каскад: <b>${ $balanced_cascade }</b>
+    • OI: <b>{ $balanced_oi_percent }</b> / <b>${ $balanced_oi_value }</b>
+
+    <b>🐋 Консервативный</b>
+    Для фокуса на крупных движениях и редких, но сильных событиях.
+
+    Режим по умолчанию: <b>{ $conservative_mode }</b>
+    Частота: <b>низкая</b>
+
+    • Объем: <b>${ $conservative_threshold }</b> | Каскад: <b>${ $conservative_cascade }</b>
+    • OI: <b>{ $conservative_oi_percent }</b> / <b>${ $conservative_oi_value }</b>
+
+settings-preset-confirm-screen =
+    ⚠️ <b>Это заменит ваши текущие фильтры. Вы уверены?</b>
+
+    <b>{ $preset_name }</b>
+    { $preset_description }
+
+    Режим по умолчанию: <b>{ $recommended_mode }</b>
+
+    <b>USD:</b> объем <b>${ $threshold }</b>, каскад <b>${ $threshold_cascade }</b>
+    <b>% MCAP:</b> объем <b>{ $threshold_mcap_pct }</b> (мин. <b>${ $threshold_mcap_usd_min }</b>)
+    <b>% MCAP Каскад:</b> <b>{ $threshold_cascade_mcap_pct }</b> (мин. <b>${ $threshold_cascade_mcap_usd_min }</b>)
+    <b>OI:</b> <b>{ $threshold_oi_percent }</b> и <b>${ $threshold_oi_value }</b>
+
+    После применения вы сможете вручную подстроить любой параметр.
+settings-preset-name-scalper = ⚡ Скальпинг
+settings-preset-name-balanced = ⚖️ Сбалансированный
+settings-preset-name-conservative = 🐋 Консервативный
+settings-preset-description-scalper = Ищет аномалии и быстрые импульсы на альтах. Подходит тем, кому нужен плотный поток сигналов.
+settings-preset-description-balanced = Универсальный профиль для большинства пользователей. Снижает шум, но оставляет хорошую чувствительность.
+settings-preset-description-conservative = Фильтрует рынок жестче остальных. Подходит тем, кто хочет видеть только наиболее значимые движения.
+settings-preset-applied-toast = Пресет { $preset_name } применен
+
 kb-settings-mode = ⚙️ Режим: { $mode ->
     [PERCENT] % MCAP 💎
    *[USD] USD 💵
@@ -105,6 +187,15 @@ kb-settings-toggle-oi = { $status } OI
 kb-settings-toggle-rsi = { $status } RSI
 kb-settings-toggle-cvd = { $status } CVD
 kb-settings-oi-thresholds = ⚙️ Пороги ОИ (% и $)
+kb-settings-preset-profiles = 🎯 Выбрать готовые стратегии
+kb-settings-preset-scalper = ⚡ Скальпинг
+kb-settings-preset-balanced = ⚖️ Сбалансированный
+kb-settings-preset-conservative = 🐋 Консервативный
+kb-settings-preset-confirm-apply = ✅ Применить профиль
+kb-settings-preset-confirm-cancel = ⬅️ Назад к профилям
+kb-settings-open-filters = 📊 Настроить фильтры триггеров
+kb-settings-open-display = 👁 Настроить вид сообщений
+kb-settings-back-root = ⬅️ Назад к общим настройкам
 kb-settings-back-main = ⬅️ Назад в меню
 kb-settings-ask-question = 💬 Задать вопрос
 kb-settings-back = ⬅️ Назад к настройкам
