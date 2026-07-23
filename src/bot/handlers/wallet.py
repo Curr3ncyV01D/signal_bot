@@ -13,7 +13,7 @@ from src.database.models import User
 from src.database.crud import user_service, billing_service
 from src.services.logic.billing_processor import process_payment_update
 from src.utils import format_datetime, format_smart_num
-from src.bot.handlers.onboarding import render_onboarding_language_screen
+from src.bot.handlers.onboarding import render_pending_onboarding_screen
 from src.bot.keyboards.billing_kb import (
     get_wallet_main_kb, 
     get_payment_success_kb,
@@ -147,7 +147,7 @@ async def cmd_wallet(message: types.Message, session: AsyncSession, i18n: I18nCo
         await message.answer(i18n.get("profile-not-found-start"))
         return
     if not user.is_setup_completed:
-        await render_onboarding_language_screen(message, i18n)
+        await render_pending_onboarding_screen(message, user, i18n)
         return
     await _render_wallet_home(message, session, user, i18n)
 
@@ -165,7 +165,7 @@ async def callback_wallet_main(callback: types.CallbackQuery, session: AsyncSess
     if user is None:
         return await callback.answer(i18n.get("settings-error-profile"), show_alert=True)
     if not user.is_setup_completed:
-        await render_onboarding_language_screen(callback, i18n)
+        await render_pending_onboarding_screen(callback, user, i18n)
         await callback.answer()
         return
     await _render_wallet_home(callback, session, user, i18n)

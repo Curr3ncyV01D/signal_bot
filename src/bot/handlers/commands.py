@@ -15,7 +15,7 @@ from src.database.crud import billing_service, user_service
 from src.database.crud.user_service import get_or_create_user
 from src.database.models import User
 from src.database.functions import get_utc_now
-from src.bot.handlers.onboarding import render_onboarding_language_screen
+from src.bot.handlers.onboarding import render_pending_onboarding_screen
 from src.bot.keyboards import get_start_kb, get_status_kb
 from src.services.analyzer import invalidate_user_cache
 from src.services.metrics_service import MetricsService
@@ -136,7 +136,7 @@ async def cmd_start(message: types.Message, session: AsyncSession, i18n: I18nCon
         return
 
     if not user.is_setup_completed:
-        await render_onboarding_language_screen(message, i18n)
+        await render_pending_onboarding_screen(message, user, i18n)
         return
 
     await render_main_menu(message, user, message.from_user.full_name, i18n)
@@ -149,7 +149,7 @@ async def process_back_to_main(callback: types.CallbackQuery, session: AsyncSess
         return await callback.answer(i18n.get("settings-error-profile"), show_alert=True)
 
     if not user.is_setup_completed:
-        await render_onboarding_language_screen(callback, i18n)
+        await render_pending_onboarding_screen(callback, user, i18n)
         await callback.answer()
         return
 
