@@ -101,21 +101,6 @@ def _format_rsi(value: float) -> int:
         return 0
 
 
-def _explain_rsi_profile(i18n: I18nContext, rsi_min: float, rsi_max: float) -> str:
-    """Возвращает текстовый интерпретацию пресета RSI-гейта."""
-    r_min = _format_rsi(rsi_min)
-    r_max = _format_rsi(rsi_max)
-    if r_min == 100 and r_max == 0:
-        return i18n.get("settings-rsi-gate-explain-disabled")
-    if r_min == 35 and r_max == 65:
-        return i18n.get("settings-rsi-gate-explain-scalper")
-    if r_min == 30 and r_max == 70:
-        return i18n.get("settings-rsi-gate-explain-balanced")
-    if r_min == 20 and r_max == 80:
-        return i18n.get("settings-rsi-gate-explain-conservative")
-    return i18n.get("settings-rsi-gate-explain-custom")
-
-
 async def render_setting_presets_catalog(
     event: types.Message | types.CallbackQuery,
     i18n: I18nContext,
@@ -641,7 +626,6 @@ async def apply_rsi_preset(
             "settings-rsi-thresholds-updated",
             rsi_min=str(_format_rsi(rsi_min)),
             rsi_max=str(_format_rsi(rsi_max)),
-            explain_text=_explain_rsi_profile(i18n, rsi_min, rsi_max),
         )
     await render_settings_filters_menu(callback, user, i18n)
     await callback.answer(toast, parse_mode="HTML")
@@ -698,6 +682,5 @@ async def process_rsi_thresholds(
             "settings-rsi-thresholds-updated",
             rsi_min=str(_format_rsi(r_min)),
             rsi_max=str(_format_rsi(r_max)),
-            explain_text=_explain_rsi_profile(i18n, r_min, r_max),
         )
     await message.answer(msg, parse_mode="HTML")

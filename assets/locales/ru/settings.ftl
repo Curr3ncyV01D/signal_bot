@@ -124,8 +124,7 @@ settings-rsi-thresholds-prompt =
 
     <i>Пример:</i> <code>30 70</code>
 settings-rsi-thresholds-updated =
-    ✅ RSI-фильтр установлен: <b>{ $rsi_min } / { $rsi_max }</b>
-    { $explain_text }
+    ✅ RSI-фильтр установлен: { $rsi_min } / { $rsi_max }
 settings-rsi-thresholds-disabled =
     ✅ RSI-фильтр <b>выключен</b> (100/0). Сигналы проходят без RSI-фильтрации.
 settings-rsi-gate-explain-disabled = Фильтр <b>выключен</b> — все сигналы проходят.
