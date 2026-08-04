@@ -69,6 +69,8 @@ class SettingPresetDTO:
     threshold_mcap_usd_min: float
     threshold_cascade_mcap_pct: float
     threshold_cascade_mcap_usd_min: float
+    rsi_min: float
+    rsi_max: float
     alert_cascade: bool
     alert_volume: bool
     alert_squeeze: bool

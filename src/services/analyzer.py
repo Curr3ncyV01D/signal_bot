@@ -41,6 +41,8 @@ class CachedAlertTarget(TypedDict):
     alert_shorts: bool
     alert_rsi: bool
     alert_cvd: bool
+    filter_rsi_min: float
+    filter_rsi_max: float
 
 
 class GlobalSignalHistoryEntry(TypedDict):
@@ -86,6 +88,8 @@ def _build_cached_target(source: Any, target_id: int) -> CachedAlertTarget:
         "alert_shorts": bool(source.alert_shorts),
         "alert_rsi": bool(source.alert_rsi),
         "alert_cvd": bool(source.alert_cvd),
+        "filter_rsi_min": float(getattr(source, "filter_rsi_min", 100.0)),
+        "filter_rsi_max": float(getattr(source, "filter_rsi_max", 0.0)),
     }
 
 
@@ -273,6 +277,7 @@ async def process_liquidation_item(
         return
 
     m_data = market_aggregator.get_market_data(symbol, window_minutes=5)
+    rsi_val = market_aggregator.get_cached_rsi(symbol, config.RSI_PERIOD)
     alert_type = evaluate_trigger_logic(
         sum_5m=sum_5m,
         sum_1h=sum_1h,
@@ -288,6 +293,9 @@ async def process_liquidation_item(
         volume_multiplier=config.VOLUME_MULTIPLIER,
         squeeze_ratio=config.SQUEEZE_RATIO,
         require_nonnegative_oi_pct=True,
+        current_rsi=rsi_val,
+        rsi_min=100.0,
+        rsi_max=0.0,
     )
     if alert_type is None:
         return
@@ -312,7 +320,6 @@ async def process_liquidation_item(
 
     _, _, delta_5m = trade_aggregator.get_cvd_metrics(symbol, minutes=5)
     _, _, delta_30m = trade_aggregator.get_cvd_metrics(symbol, minutes=30)
-    rsi_val = market_aggregator.get_cached_rsi(symbol, config.RSI_PERIOD)
     impact = market_aggregator.get_impact_metrics(symbol, sum_5m)
     render_requested = _should_render_chart(
         alert_type=alert_type,
