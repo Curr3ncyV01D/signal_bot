@@ -6,6 +6,7 @@ from .settings_kb import (
     get_preset_confirmation_kb,
     get_settings_filters_kb,
     get_settings_display_kb,
+    get_settings_rsi_kb,
 )
 from .admin_kb import (
     get_admin_main_kb,
@@ -26,6 +27,7 @@ __all__ = [
     "get_preset_confirmation_kb",
     "get_settings_filters_kb",
     "get_settings_display_kb",
+    "get_settings_rsi_kb",
     "get_admin_main_kb",
     "get_users_list_kb",
     "get_user_manage_kb",

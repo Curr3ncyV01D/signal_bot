@@ -50,6 +50,8 @@ class CachedAlertTarget(TypedDict):
     alert_shorts: bool
     alert_rsi: bool
     alert_cvd: bool
+    filter_rsi_min: float
+    filter_rsi_max: float
 
 
 class AlertHistoryEntry(TypedDict):
@@ -100,6 +102,8 @@ def _build_cached_target(source: Any, target_id: int) -> CachedAlertTarget:
         "alert_shorts": bool(source.alert_shorts),
         "alert_rsi": bool(source.alert_rsi),
         "alert_cvd": bool(source.alert_cvd),
+        "filter_rsi_min": float(getattr(source, "filter_rsi_min", 100.0)),
+        "filter_rsi_max": float(getattr(source, "filter_rsi_max", 0.0)),
     }
 
 
@@ -184,6 +188,9 @@ async def _check_triggers_from_dto(
         enable_oi=target["alert_oi"],
         enable_squeeze=target["alert_squeeze"],
         enable_volume=target["alert_volume"],
+        current_rsi=market_data.get("rsi"),
+        rsi_min=target["filter_rsi_min"],
+        rsi_max=target["filter_rsi_max"],
     )
     if alert_type is None:
         return None

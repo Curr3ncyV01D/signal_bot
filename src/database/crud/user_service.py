@@ -347,6 +347,8 @@ async def apply_user_setting_preset(session: AsyncSession, user_id: int, preset_
             "threshold_mcap_usd_min": float(preset.threshold_mcap_usd_min),
             "threshold_cascade_mcap_pct": float(preset.threshold_cascade_mcap_pct),
             "threshold_cascade_mcap_usd_min": float(preset.threshold_cascade_mcap_usd_min),
+            "filter_rsi_min": float(preset.rsi_min),
+            "filter_rsi_max": float(preset.rsi_max),
             "alert_cascade": bool(preset.alert_cascade),
             "alert_volume": bool(preset.alert_volume),
             "alert_squeeze": bool(preset.alert_squeeze),

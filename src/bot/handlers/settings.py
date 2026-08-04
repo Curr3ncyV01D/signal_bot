@@ -15,6 +15,7 @@ from src.bot.keyboards import (
     get_settings_display_kb,
     get_settings_filters_kb,
     get_settings_kb,
+    get_settings_rsi_kb,
 )
 from src.core.dto import SettingPresetId
 from src.utils import format_smart_num, parse_numeric_input
@@ -33,6 +34,7 @@ class SettingsStates(StatesGroup):
     waiting_for_mcap_min_usd = State()
     waiting_for_mcap_cas_pct = State()
     waiting_for_mcap_cas_min_usd = State()
+    waiting_for_rsi_thresholds = State()
 
 
 def _format_preset_name(i18n: I18nContext, preset_id: SettingPresetId) -> str:
@@ -50,16 +52,22 @@ def _build_presets_catalog_caption(i18n: I18nContext) -> str:
         scalper_cascade=format_smart_num(scalper.threshold_cascade),
         scalper_oi_percent=format_smart_num(scalper.threshold_oi_percent, is_percent=True, decimal_places=1),
         scalper_oi_value=format_smart_num(scalper.threshold_oi_value),
+        scalper_rsi_min=_format_rsi(scalper.rsi_min),
+        scalper_rsi_max=_format_rsi(scalper.rsi_max),
         balanced_mode=balanced.threshold_mode,
         balanced_threshold=format_smart_num(balanced.threshold),
         balanced_cascade=format_smart_num(balanced.threshold_cascade),
         balanced_oi_percent=format_smart_num(balanced.threshold_oi_percent, is_percent=True, decimal_places=1),
         balanced_oi_value=format_smart_num(balanced.threshold_oi_value),
+        balanced_rsi_min=_format_rsi(balanced.rsi_min),
+        balanced_rsi_max=_format_rsi(balanced.rsi_max),
         conservative_mode=conservative.threshold_mode,
         conservative_threshold=format_smart_num(conservative.threshold),
         conservative_cascade=format_smart_num(conservative.threshold_cascade),
         conservative_oi_percent=format_smart_num(conservative.threshold_oi_percent, is_percent=True, decimal_places=1),
         conservative_oi_value=format_smart_num(conservative.threshold_oi_value),
+        conservative_rsi_min=_format_rsi(conservative.rsi_min),
+        conservative_rsi_max=_format_rsi(conservative.rsi_max),
     )
 
 
@@ -79,8 +87,33 @@ def _build_preset_confirmation_caption(i18n: I18nContext, preset_id: SettingPres
         threshold_cascade_mcap_usd_min=format_smart_num(preset.threshold_cascade_mcap_usd_min),
         threshold_oi_percent=format_smart_num(preset.threshold_oi_percent, is_percent=True, decimal_places=1),
         threshold_oi_value=format_smart_num(preset.threshold_oi_value),
+        rsi_min=_format_rsi(preset.rsi_min),
+        rsi_max=_format_rsi(preset.rsi_max),
         preset_description=i18n.get(f"settings-preset-description-{preset_id.lower()}"),
     )
+
+
+def _format_rsi(value: float) -> int:
+    """Rounds RSI threshold to integer for display captions."""
+    try:
+        return int(round(float(value)))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _explain_rsi_profile(i18n: I18nContext, rsi_min: float, rsi_max: float) -> str:
+    """Возвращает текстовый интерпретацию пресета RSI-гейта."""
+    r_min = _format_rsi(rsi_min)
+    r_max = _format_rsi(rsi_max)
+    if r_min == 100 and r_max == 0:
+        return i18n.get("settings-rsi-gate-explain-disabled")
+    if r_min == 35 and r_max == 65:
+        return i18n.get("settings-rsi-gate-explain-scalper")
+    if r_min == 30 and r_max == 70:
+        return i18n.get("settings-rsi-gate-explain-balanced")
+    if r_min == 20 and r_max == 80:
+        return i18n.get("settings-rsi-gate-explain-conservative")
+    return i18n.get("settings-rsi-gate-explain-custom")
 
 
 async def render_setting_presets_catalog(
@@ -254,6 +287,8 @@ def _build_settings_summary_caption(user: User, i18n: I18nContext) -> str:
         threshold_cascade_mcap_usd_min=format_smart_num(user.threshold_cascade_mcap_usd_min),
         threshold_oi_percent=format_smart_num(user.threshold_oi_percent, is_percent=True, decimal_places=1),
         threshold_oi_value=format_smart_num(user.threshold_oi_value),
+        rsi_min=str(_format_rsi(user.filter_rsi_min)),
+        rsi_max=str(_format_rsi(user.filter_rsi_max)),
     )
 
 
@@ -269,6 +304,22 @@ def _build_settings_filters_caption(user: User, i18n: I18nContext) -> str:
         threshold_cascade_mcap_usd_min=format_smart_num(user.threshold_cascade_mcap_usd_min),
         threshold_oi_percent=format_smart_num(user.threshold_oi_percent, is_percent=True, decimal_places=1),
         threshold_oi_value=format_smart_num(user.threshold_oi_value),
+        rsi_min=str(_format_rsi(user.filter_rsi_min)),
+        rsi_max=str(_format_rsi(user.filter_rsi_max)),
+    )
+
+
+def _build_settings_rsi_caption(i18n: I18nContext) -> str:
+    return i18n.get("settings-rsi-thresholds-prompt")
+
+
+async def render_settings_rsi_menu(event: types.Message | types.CallbackQuery, i18n: I18nContext):
+    """Подменю настройки RSI-гейта."""
+    await _render_settings_screen(
+        event,
+        _build_settings_rsi_caption(i18n),
+        get_settings_rsi_kb(),
+        image_path=ImagePaths.SETTINGS,
     )
 
 
@@ -543,3 +594,110 @@ async def process_oi_thresholds(message: types.Message, state: FSMContext, sessi
         )
     else:
         await message.answer(i18n.get("settings-save-error"))
+
+
+# ====== RSI-ГЕЙТ: НАСТРОЙКА ======
+
+_RSI_PRESET_BAND_MAP = {
+    "CONSERVATIVE": (20.0, 80.0),
+    "BALANCED": (30.0, 70.0),
+    "SCALPER": (35.0, 65.0),
+    "DISABLED": (100.0, 0.0),
+}
+
+
+@router.callback_query(F.data == "menu_rsi_thresholds")
+async def start_rsi_menu(
+    callback: types.CallbackQuery, session: AsyncSession, i18n: I18nContext
+):
+    user = await session.get(User, callback.from_user.id)
+    if not user:
+        return await callback.answer(i18n.get("settings-error-profile"), show_alert=True)
+    await render_settings_rsi_menu(callback, i18n)
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("set_rsi_preset_"))
+async def apply_rsi_preset(
+    callback: types.CallbackQuery, session: AsyncSession, i18n: I18nContext
+):
+    preset_id = callback.data.removeprefix("set_rsi_preset_").upper()
+    if preset_id not in _RSI_PRESET_BAND_MAP:
+        return await callback.answer(i18n.get("settings-save-error"), show_alert=True)
+
+    rsi_min, rsi_max = _RSI_PRESET_BAND_MAP[preset_id]
+    user = await update_user_settings(
+        session, callback.from_user.id, filter_rsi_min=rsi_min, filter_rsi_max=rsi_max
+    )
+    if not user:
+        return await callback.answer(i18n.get("settings-save-error"), show_alert=True)
+
+    await analyzer.invalidate_user_cache(callback.from_user.id)
+
+    if rsi_min == 100.0 and rsi_max == 0.0:
+        toast = i18n.get("settings-rsi-thresholds-disabled")
+    else:
+        toast = i18n.get(
+            "settings-rsi-thresholds-updated",
+            rsi_min=str(_format_rsi(rsi_min)),
+            rsi_max=str(_format_rsi(rsi_max)),
+            explain_text=_explain_rsi_profile(i18n, rsi_min, rsi_max),
+        )
+    await render_settings_filters_menu(callback, user, i18n)
+    await callback.answer(toast, parse_mode="HTML")
+
+
+@router.callback_query(F.data == "set_rsi_manual_start")
+async def start_rsi_manual_input(
+    callback: types.CallbackQuery, state: FSMContext, i18n: I18nContext
+):
+    await state.set_state(SettingsStates.waiting_for_rsi_thresholds)
+    await callback.message.answer(
+        i18n.get("settings-rsi-thresholds-prompt"), parse_mode="HTML"
+    )
+    await callback.answer()
+
+
+@router.message(SettingsStates.waiting_for_rsi_thresholds)
+async def process_rsi_thresholds(
+    message: types.Message, state: FSMContext, session: AsyncSession
+):
+    i18n = I18nContext.get_current(no_error=False)
+    parts = message.text.replace(",", " ").replace("/", " ").split()
+
+    try:
+        if len(parts) != 2:
+            raise ValueError
+        new_min = parse_numeric_input(parts[0])
+        new_max = parse_numeric_input(parts[1])
+        if new_min is None or new_max is None:
+            raise ValueError
+        if new_min < 0 or new_min > 100 or new_max < 0 or new_max > 100:
+            raise ValueError
+    except ValueError:
+        return await message.answer(
+            i18n.get("settings-rsi-thresholds-invalid"), parse_mode="HTML"
+        )
+
+    user = await update_user_settings(
+        session, message.from_user.id, filter_rsi_min=float(new_min), filter_rsi_max=float(new_max)
+    )
+    if not user:
+        await state.clear()
+        return await message.answer(i18n.get("settings-save-error"))
+
+    await analyzer.invalidate_user_cache(message.from_user.id)
+    await state.clear()
+
+    r_min = float(new_min)
+    r_max = float(new_max)
+    if r_min == 100.0 and r_max == 0.0:
+        msg = i18n.get("settings-rsi-thresholds-disabled")
+    else:
+        msg = i18n.get(
+            "settings-rsi-thresholds-updated",
+            rsi_min=str(_format_rsi(r_min)),
+            rsi_max=str(_format_rsi(r_max)),
+            explain_text=_explain_rsi_profile(i18n, r_min, r_max),
+        )
+    await message.answer(msg, parse_mode="HTML")
