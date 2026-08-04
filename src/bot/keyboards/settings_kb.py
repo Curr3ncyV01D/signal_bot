@@ -113,6 +113,16 @@ def get_settings_filters_kb(user: User) -> InlineKeyboardMarkup:
     )
     builder.row(
         InlineKeyboardButton(
+            text=LazyProxy(
+                "kb-settings-rsi-thresholds",
+                rsi_min=str(_format_rsi(user.filter_rsi_min)),
+                rsi_max=str(_format_rsi(user.filter_rsi_max)),
+            ),
+            callback_data="menu_rsi_thresholds",
+        )
+    )
+    builder.row(
+        InlineKeyboardButton(
             text=LazyProxy("kb-settings-back-root"),
             callback_data="back_to_settings",
         )
@@ -207,6 +217,51 @@ def get_preset_confirmation_kb(preset_id: str) -> InlineKeyboardMarkup:
         InlineKeyboardButton(
             text=LazyProxy("kb-settings-preset-confirm-cancel"),
             callback_data="open_setting_presets",
+        )
+    )
+    return builder.as_markup()
+
+
+def _format_rsi(value: float) -> int:
+    """Округляет RSI-порог до целого для показа в клавиатуре."""
+    try:
+        return int(round(float(value)))
+    except (TypeError, ValueError):
+        return 0
+
+
+def get_settings_rsi_kb() -> InlineKeyboardMarkup:
+    """Подменю настройки RSI-гейта."""
+    builder = InlineKeyboardBuilder()
+
+    builder.row(
+        InlineKeyboardButton(
+            text=LazyProxy("kb-settings-rsi-preset-conservative"),
+            callback_data="set_rsi_preset_CONSERVATIVE",
+        ),
+        InlineKeyboardButton(
+            text=LazyProxy("kb-settings-rsi-preset-balanced"),
+            callback_data="set_rsi_preset_BALANCED",
+        ),
+        InlineKeyboardButton(
+            text=LazyProxy("kb-settings-rsi-preset-scalper"),
+            callback_data="set_rsi_preset_SCALPER",
+        ),
+    )
+    builder.row(
+        InlineKeyboardButton(
+            text=LazyProxy("kb-settings-rsi-disable"),
+            callback_data="set_rsi_preset_DISABLED",
+        ),
+        InlineKeyboardButton(
+            text=LazyProxy("kb-settings-rsi-manual"),
+            callback_data="set_rsi_manual_start",
+        )
+    )
+    builder.row(
+        InlineKeyboardButton(
+            text=LazyProxy("kb-settings-rsi-back"),
+            callback_data="settings_filters",
         )
     )
     return builder.as_markup()

@@ -52,6 +52,8 @@ class User(Base):
     # CVD и RSI
     alert_cvd: Mapped[bool] = mapped_column(Boolean, default=True)
     alert_rsi: Mapped[bool] = mapped_column(Boolean, default=True)
+    filter_rsi_min: Mapped[float] = mapped_column(Float, default=100.0)
+    filter_rsi_max: Mapped[float] = mapped_column(Float, default=0.0)
     
     # Отношения
     transactions: Mapped[list["Transaction"]] = relationship(back_populates="user")

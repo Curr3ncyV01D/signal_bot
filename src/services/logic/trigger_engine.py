@@ -35,7 +35,17 @@ def evaluate_trigger_logic(
     enable_squeeze: bool = True,
     enable_volume: bool = True,
     require_nonnegative_oi_pct: bool = False,
+    current_rsi: float | None = None,
+    rsi_min: float = 100.0,
+    rsi_max: float = 0.0,
 ) -> SignalAlertType | None:
+    rsi_filter_active = not (rsi_min == 100.0 and rsi_max == 0.0)
+    if rsi_filter_active:
+        if current_rsi is None:
+            return None
+        if not (current_rsi <= rsi_min or current_rsi >= rsi_max):
+            return None
+
     has_cascade = (
         cascade_count >= cascade_trigger_count
         and sum_cascade >= cascade_threshold

@@ -10,6 +10,7 @@ settings-title =
 
     📈 Analytics filters:
     Min. OI growth: { $threshold_oi_percent } and ${ $threshold_oi_value }
+    RSI-gate: { $rsi_min } / { $rsi_max }
 
 settings-filters-screen =
     <b>📊 Liquidation filters (Mode: { $threshold_mode }):</b>
@@ -23,6 +24,7 @@ settings-filters-screen =
 
     📈 Analytics filters:
     Min. OI growth: { $threshold_oi_percent } and ${ $threshold_oi_value }
+    RSI-gate: { $rsi_min } / { $rsi_max }
 
     These settings affect which events trigger an alert.
     You can change the mode, thresholds, and trigger composition below.
@@ -90,6 +92,9 @@ help-analytics =
     ⚠️ <b>RSI (5m):</b> An indicator of an overheated asset.
     <i>How to use:</i> RSI > 70 = asset is overbought. Combined with short liquidations, it becomes a strong bearish reversal signal.
 
+    🚦 <b>RSI-Gate (extremes filter):</b> Extra gate a signal must pass through. Set it to 100/0 to disable. 30/70 is classic. 20/80 is strict.
+    <i>How to use:</i> A signal is only sent if the current RSI ≤ lower bound (oversold) OR ≥ upper bound (overbought). If RSI data is not ready yet, the signal is blocked.
+
     <i>Still have questions about how the algorithms work? Contact our specialist.</i>
 
 settings-enter-threshold = Enter a new volume threshold in USD (for example: 5000):
@@ -111,10 +116,33 @@ settings-oi-thresholds-updated =
     Percentage: <b>{ $percent }</b>
     Value: <b>${ $value }</b>
 
+settings-rsi-thresholds-prompt =
+    ⚠️ <b>Configure RSI Gate</b>
+
+    Enter 2 numbers separated by a space:
+    1. <b>Lower bound (oversold)</b> — e.g. 30
+    2. <b>Upper bound (overbought)</b> — e.g. 70
+
+    Or select a preset below. Set to 100/0 to disable the filter.
+    Values must be in the 0–100 range.
+
+    <i>Example:</i> <code>30 70</code>
+settings-rsi-thresholds-updated =
+    ✅ RSI Gate set: <b>{ $rsi_min } / { $rsi_max }</b>
+    { $explain_text }
+settings-rsi-thresholds-disabled =
+    ✅ RSI filter <b>disabled</b> (100/0). All signals pass without RSI restrictions.
+settings-rsi-gate-explain-disabled = Filter <b>disabled</b> — all signals pass.
+settings-rsi-gate-explain-conservative = <i>Strict filter</i> — only clear extremes.
+settings-rsi-gate-explain-balanced = <i>Classic bands</i> — the usual 30/70 setup.
+settings-rsi-gate-explain-scalper = <i>Narrow band</i> — alert on any volatility peak.
+settings-rsi-gate-explain-custom = <i>Custom profile</i>.
+settings-rsi-thresholds-invalid = ❌ Enter 2 numbers between 0 and 100 separated by a space (example: <code>30 70</code>).
+
 settings-preset-catalog-screen =
     🎯 <b>Strategy Profiles</b>
 
-    A preset fully replaces your current filters: USD thresholds, MCAP thresholds, OI and all signal toggles.
+    A preset fully replaces your current filters: USD thresholds, MCAP thresholds, OI, RSI-Gate and all signal toggles.
 
     <b>⚡ Scalping</b>
     For active trading and frequent altcoin alerts.
@@ -124,6 +152,7 @@ settings-preset-catalog-screen =
     
     • Volume: <b>${ $scalper_threshold }</b> | Cascade: <b>${ $scalper_cascade }</b>
     • OI: <b>{ $scalper_oi_percent }</b> / <b>${ $scalper_oi_value }</b>
+    • RSI-gate: <b>{ $scalper_rsi_min } / { $scalper_rsi_max }</b>
 
     <b>⚖️ Balanced</b>
     For day-to-day trading with a moderate alert flow.
@@ -133,6 +162,7 @@ settings-preset-catalog-screen =
 
     • Volume: <b>${ $balanced_threshold }</b> | Cascade: <b>${ $balanced_cascade }</b>
     • OI: <b>{ $balanced_oi_percent }</b> / <b>${ $balanced_oi_value }</b>
+    • RSI-gate: <b>{ $balanced_rsi_min } / { $balanced_rsi_max }</b>
 
     <b>🐋 Conservative</b>
     For focusing on larger moves and rarer but stronger events.
@@ -142,6 +172,7 @@ settings-preset-catalog-screen =
 
     • Volume: <b>${ $conservative_threshold }</b> | Cascade: <b>${ $conservative_cascade }</b>
     • OI: <b>{ $conservative_oi_percent }</b> / <b>${ $conservative_oi_value }</b>
+    • RSI-gate: <b>{ $conservative_rsi_min } / { $conservative_rsi_max }</b>
 
 settings-preset-confirm-screen =
     ⚠️ <b>This will replace your current filters. Are you sure?</b>
@@ -155,6 +186,7 @@ settings-preset-confirm-screen =
     <b>% MCAP:</b> volume <b>{ $threshold_mcap_pct }</b> (min. <b>${ $threshold_mcap_usd_min }</b>)
     <b>% MCAP Cascade:</b> <b>{ $threshold_cascade_mcap_pct }</b> (min. <b>${ $threshold_cascade_mcap_usd_min }</b>)
     <b>OI:</b> <b>{ $threshold_oi_percent }</b> and <b>${ $threshold_oi_value }</b>
+    <b>RSI-gate:</b> <b>{ $rsi_min } / { $rsi_max }</b>
 
     You can fine-tune any parameter manually after applying it.
 settings-preset-name-scalper = ⚡ Scalping
@@ -186,6 +218,14 @@ kb-settings-toggle-oi = { $status } OI
 kb-settings-toggle-rsi = { $status } RSI
 kb-settings-toggle-cvd = { $status } CVD
 kb-settings-oi-thresholds = ⚙️ OI Thresholds (% and $)
+kb-settings-rsi-thresholds = ⚙️ RSI Bounds: { $rsi_min } / { $rsi_max }
+kb-settings-rsi-menu = -- 🚦 RSI-Gate: setup --
+kb-settings-rsi-preset-conservative = [ 20 / 80 ] 🐋
+kb-settings-rsi-preset-balanced = [ 30 / 70 ] ⚖️
+kb-settings-rsi-preset-scalper = [ 35 / 65 ] ⚡️
+kb-settings-rsi-disable = [ 🔓 Disable (100/0) ]
+kb-settings-rsi-manual = ✏️ Enter manually
+kb-settings-rsi-back = ⬅️ Back to filters
 kb-settings-preset-profiles = 🎯 Choose Strategy Profile
 kb-settings-preset-scalper = ⚡ Scalping
 kb-settings-preset-balanced = ⚖️ Balanced
