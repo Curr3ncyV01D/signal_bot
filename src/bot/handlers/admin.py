@@ -71,7 +71,10 @@ class AdminUserListStates(StatesGroup):
 @router.message(Command("admin"))
 async def cmd_admin(message: types.Message):
     """Вход в админ-панель"""
-    await message.delete()
+    try:
+        await message.delete()
+    except Exception:
+        pass
     text = (
         "👑 <b>Панель администратора</b>\n\n"
         "Добро пожаловать! Здесь вы можете управлять пользователями, "
@@ -88,7 +91,10 @@ async def cmd_access(message: types.Message):
             chat_id=message.chat.id,
             protect_content=False,
         )
-        await message.delete()
+        try:
+            await message.delete()
+        except Exception:
+            pass
     except TelegramBadRequest as exc:
         logger.warning(
             "Не удалось снять protect_content через /access для chat_id=%s: %s",

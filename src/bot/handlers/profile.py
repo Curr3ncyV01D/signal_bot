@@ -75,7 +75,10 @@ async def _render_profile_screen(
         except Exception:
             pass
 
-    await event.message.delete()
+    try:
+        await event.message.delete()
+    except Exception:
+        pass
     if image_path:
         await event.message.answer_photo(
             photo=FSInputFile(image_path),

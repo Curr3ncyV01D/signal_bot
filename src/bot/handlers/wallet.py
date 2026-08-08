@@ -116,7 +116,10 @@ async def _render_wallet_screen(
         except Exception as e:
             pass
 
-    await event.message.delete()
+    try:
+        await event.message.delete()
+    except Exception:
+        pass
     if image_path:
         await event.message.answer_photo(
             photo=FSInputFile(image_path),

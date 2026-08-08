@@ -62,7 +62,10 @@ async def render_onboarding_language_screen(
         )
     except Exception as exc:
         logger.warning(f"Не удалось показать onboarding через edit_media: {exc}")
-        await event.message.delete()
+        try:
+            await event.message.delete()
+        except Exception:
+            pass
         await event.message.answer_photo(
             photo=FSInputFile(ImagePaths.WELCOME),
             caption=caption,
@@ -153,7 +156,10 @@ async def render_presets_selection_screen(
         )
     except Exception as exc:
         logger.warning(f"Не удалось показать выбор пресетов через edit_media: {exc}")
-        await event.message.delete()
+        try:
+            await event.message.delete()
+        except Exception:
+            pass
         await event.message.answer_photo(
             photo=FSInputFile(ImagePaths.SETTINGS),
             caption=caption,
@@ -249,7 +255,10 @@ async def render_community_bonus_screen(
         )
     except Exception as exc:
         logger.warning(f"Не удалось показать community bonus через edit_media: {exc}")
-        await event.message.delete()
+        try:
+            await event.message.delete()
+        except Exception:
+            pass
         await event.message.answer_photo(
             photo=FSInputFile(ImagePaths.WELCOME),
             caption=caption,

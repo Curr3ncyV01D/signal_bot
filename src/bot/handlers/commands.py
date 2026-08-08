@@ -56,7 +56,10 @@ async def render_main_menu(
         )
     except Exception as e:
         logger.warning(f"Не удалось обновить главное меню через edit_media: {e}")
-        await event.message.delete()
+        try:
+            await event.message.delete()
+        except Exception:
+            pass
         await event.message.answer_photo(
             photo=FSInputFile(ImagePaths.WELCOME),
             caption=text,
@@ -180,7 +183,10 @@ async def process_activate_trial(callback: types.CallbackQuery, i18n: I18nContex
         )
     except Exception as e:
         logger.warning(f"Не удалось обновить экран условий триала через edit_media: {e}")
-        await callback.message.delete()
+        try:
+            await callback.message.delete()
+        except Exception:
+            pass
         await callback.message.answer_photo(
             photo=photo,
             caption=text,
@@ -252,7 +258,10 @@ async def process_confirm_trial(callback: types.CallbackQuery, session: AsyncSes
         )
     except Exception as e:
         logger.warning(f"Не удалось показать экран успеха триала через edit_media: {e}")
-        await callback.message.delete()
+        try:
+            await callback.message.delete()
+        except Exception:
+            pass
         await callback.message.answer_photo(
             photo=photo,
             caption=success_text,
@@ -296,7 +305,10 @@ async def generate_status_text(listener, liq_aggregator, data_queue: asyncio.Que
 @router.message(Command("status"))
 async def cmd_status(message: types.Message, listener, liq_aggregator, data_queue: asyncio.Queue, i18n: I18nContext):
     """Вызов статуса через команду"""
-    await message.delete()
+    try:
+        await message.delete()
+    except Exception:
+        pass
     text = await generate_status_text(listener, liq_aggregator, data_queue, i18n)
     await message.answer(text, reply_markup=get_status_kb(), parse_mode="HTML")
 

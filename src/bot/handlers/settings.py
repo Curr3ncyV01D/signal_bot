@@ -229,7 +229,10 @@ async def _render_settings_screen(
             )
             return
         except Exception as e:
-            await event.message.delete()
+            try:
+                await event.message.delete()
+            except Exception:
+                pass
             await event.message.answer_photo(
                 photo=photo,
                 caption=caption,
@@ -252,7 +255,10 @@ async def _render_settings_screen(
                 parse_mode="HTML"
             )
         except Exception as e:
-            await event.message.delete()
+            try:
+                await event.message.delete()
+            except Exception:
+                pass
             await event.message.answer(
                 caption,
                 reply_markup=reply_markup,
@@ -346,7 +352,10 @@ async def render_settings_display_menu(event: types.Message | types.CallbackQuer
 
 @router.message(Command("settings"))
 async def cmd_settings(message: types.Message, session: AsyncSession, i18n: I18nContext):
-    await message.delete()
+    try:
+        await message.delete()
+    except Exception:
+        pass
     user = await session.get(User, message.from_user.id)
     if not user:
         return await message.answer(i18n.get("settings-profile-error"))
