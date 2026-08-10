@@ -81,6 +81,14 @@ class SettingPresetDTO:
     alert_cvd: bool
 
 
+@dataclass(slots=True, frozen=True)
+class TariffDTO:
+    days: int
+    price_usd: float
+    price_rub: float
+    data_extra: str = ""
+
+
 @dataclass(slots=True)
 class PaymentUpdateDTO:
     is_paid: bool

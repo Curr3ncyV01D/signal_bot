@@ -18,6 +18,7 @@ logger = logging.getLogger(__name__)
 
 MANUAL_PAYMENT_PROVIDER = "MANUAL"
 MANUAL_PAYMENT_NETWORK = "TRC20"
+CACTUS_PROVIDER = "CACTUS"
 
 ABANDONED_CART_REMINDER_MINUTES = 30
 ABANDONED_CART_REMINDER_MAX_MINUTES = 120
@@ -62,13 +63,15 @@ async def _process_invoice(bot: Bot, invoice_id: int, semaphore: asyncio.Semapho
             invoice_reminder_sent = bool(inv.is_reminder_sent)
             invoice_provider = str(inv.provider or "")
             invoice_screenshot_file_id = inv.screenshot_file_id
+            invoice_expires_at = inv.expires_at
             user = await session.get(User, invoice_user_id)
             user_locale = normalize_locale_code(user.language_code if user else None)
 
             now = get_utc_now()
             age_minutes = (now - invoice_created_at).total_seconds() / 60
+            provider_upper = invoice_provider.upper()
 
-            if invoice_provider.upper() == MANUAL_PAYMENT_PROVIDER:
+            if provider_upper == MANUAL_PAYMENT_PROVIDER:
                 if inv.status != "PENDING" or invoice_screenshot_file_id:
                     PaymentManager.next_poll_at.pop(invoice_external_id, None)
                     return
@@ -87,14 +90,33 @@ async def _process_invoice(bot: Bot, invoice_id: int, semaphore: asyncio.Semapho
                 PaymentManager.next_poll_at[invoice_external_id] = now + timedelta(seconds=MANUAL_POLL_INTERVAL_SECONDS)
                 return
 
-            if age_minutes >= INVOICE_EXPIRE_MINUTES:
-                inv.status = "EXPIRED"
-                await session.commit()
-                PaymentManager.next_poll_at.pop(invoice_external_id, None)
-                logger.info("Инвойс #%s закрыт по таймауту (%s мин)", invoice_external_id, INVOICE_EXPIRE_MINUTES)
-                return
+            # CactusPay (H2H-карты / СБП): главный источник истины по сроку — поле `expires_at`.
+            # Игнорируем общий INVOICE_EXPIRE_MINUTES=120, так как P2P-реквизиты живут ~8 минут.
+            if provider_upper == CACTUS_PROVIDER:
+                normalized_expires_at = invoice_expires_at
+                if normalized_expires_at is not None and normalized_expires_at.tzinfo is not None:
+                    normalized_expires_at = normalized_expires_at.astimezone(tz=timezone.utc).replace(tzinfo=None)
+                if normalized_expires_at is not None and now >= normalized_expires_at:
+                    inv.status = "EXPIRED"
+                    await session.commit()
+                    PaymentManager.next_poll_at.pop(invoice_external_id, None)
+                    logger.info(
+                        "Cactus invoice #%s закрыт по истечении expires_at (%s)",
+                        invoice_external_id,
+                        normalized_expires_at.isoformat(),
+                    )
+                    return
 
-            PaymentManager.next_poll_at[invoice_external_id] = now + timedelta(seconds=_resolve_poll_interval_seconds(age_minutes))
+                PaymentManager.next_poll_at[invoice_external_id] = now + timedelta(seconds=_resolve_poll_interval_seconds(age_minutes))
+            else:
+                if age_minutes >= INVOICE_EXPIRE_MINUTES:
+                    inv.status = "EXPIRED"
+                    await session.commit()
+                    PaymentManager.next_poll_at.pop(invoice_external_id, None)
+                    logger.info("Инвойс #%s закрыт по таймауту (%s мин)", invoice_external_id, INVOICE_EXPIRE_MINUTES)
+                    return
+
+                PaymentManager.next_poll_at[invoice_external_id] = now + timedelta(seconds=_resolve_poll_interval_seconds(age_minutes))
 
             if (
                 age_minutes >= ABANDONED_CART_REMINDER_MINUTES

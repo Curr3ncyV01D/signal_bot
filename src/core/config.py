@@ -7,7 +7,7 @@ from datetime import datetime
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import Field, field_validator, model_validator
 
-from src.core.dto import SettingPresetDTO
+from src.core.dto import SettingPresetDTO, TariffDTO
 
 class Settings(BaseSettings):
     # === 0. СИСТЕМНЫЕ МЕТРИКИ (Internal) ===
@@ -57,14 +57,24 @@ class Settings(BaseSettings):
     PAYMENT_TOLERANCE_USD: float = 0.5
     PAYMENT_MANUAL_WALLET: str | None = None
     ADMIN_PAYMENT_CHAT_ID: int | None = None
+
+    # CactusPay (H2H: Карты РФ / СБП)
+    CACTUS_MERCHANT_ID: str | None = None
+    CACTUS_SECRET_KEY: str | None = None
+    CACTUS_API_URL: str = "https://lk.cactuspay.pro/api"
+    CACTUS_INVOICE_LIFETIME_SEC: int = 480
+    CACTUS_H2H_METHOD: str = "card"
+    CACTUS_REQUEST_TIMEOUT_SEC: int = 15
     
     # Бизнес-правила (Тарифы и деньги)
-    # Тарифы подписки (дней: цена_usdt)
-    TARIFFS: dict[int, float] = {
-        7: 7.5,
-        30: 25.0,
-    }
-    SUB_MONTHLY_PRICE: float = TARIFFS[30]
+    # Тарифы подписки (дней: TariffDTO с ценами в USD и RUB)
+    TARIFFS: dict[int, TariffDTO] = Field(
+        default_factory=lambda: {
+            7: TariffDTO(days=7, price_usd=7.5, price_rub=1000.0),
+            30: TariffDTO(days=30, price_usd=12.5, price_rub=1500.0, data_extra="🏷️ -50%"),
+        }
+    )
+    SUB_MONTHLY_PRICE: float = Field(default_factory=lambda: 25.0)
     TRIAL_DURATION_DAYS: int = 1
     COMMUNITY_BONUS_HOURS: int = 48
     REFERRAL_BONUS_PERCENT: float = 15.0
@@ -243,6 +253,7 @@ class Settings(BaseSettings):
 
 config = Settings()
 SETTING_PRESETS: dict[str, SettingPresetDTO] = config.SETTING_PRESETS
+TARIFFS: dict[int, TariffDTO] = config.TARIFFS
 
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent

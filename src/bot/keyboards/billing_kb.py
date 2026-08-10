@@ -70,9 +70,9 @@ def get_profile_main_kb(user: User) -> InlineKeyboardMarkup:
 def get_subscription_tariffs_kb(back_callback: str = "wallet_main") -> InlineKeyboardMarkup:
     """Список тарифов для покупки"""
     builder = InlineKeyboardBuilder()
-    for days, price in config.TARIFFS.items():
+    for days, tariff in config.TARIFFS.items():
         builder.row(InlineKeyboardButton(
-            text=LazyProxy("kb-wallet-plan-price", days=days, price=price), 
+            text=LazyProxy("kb-wallet-plan-price", days=days, price=tariff.price_usd, price_rub=tariff.price_rub, extra=tariff.data_extra), 
             callback_data=f"buy_plan_{days}"
         ))
     
@@ -90,4 +90,66 @@ def get_balance_purchase_confirm_kb(days: int) -> InlineKeyboardMarkup:
         )
     )
     builder.row(InlineKeyboardButton(text=LazyProxy("kb-wallet-cancel"), callback_data="cancel_balance_purchase"))
+    return builder.as_markup()
+
+
+def get_payment_method_selection_kb(
+    days: int,
+    *,
+    show_cactus: bool = True,
+    show_manual: bool = True,
+    show_manual_balance_support: bool = False,
+) -> InlineKeyboardMarkup:
+    """Клавиатура выбора способа оплаты: CactusPay (Hosted Checkout) или Криптовалюта (MANUAL)."""
+    builder = InlineKeyboardBuilder()
+    if show_cactus:
+        builder.row(InlineKeyboardButton(
+            text=LazyProxy("shop-cactus-method-hosted"),
+            callback_data=f"pay_cactus_{days}",
+        ))
+    if show_manual:
+        builder.row(InlineKeyboardButton(
+            text=LazyProxy("kb-shop-method-crypto-manual"),
+            callback_data=f"pay_manual_{days}",
+        ))
+    if show_manual_balance_support:
+        builder.row(InlineKeyboardButton(text=LazyProxy("kb-main-support"), url=config.SUPPORT_URL))
+    builder.row(InlineKeyboardButton(text=LazyProxy("kb-common-back"), callback_data="buy_subscription"))
+    return builder.as_markup()
+
+
+def get_cactus_payment_kb(external_id: str) -> InlineKeyboardMarkup:
+    """Клавиатура H2H-экрана оплаты через Cactus (реквизиты карты/SBP)."""
+    builder = InlineKeyboardBuilder()
+    builder.row(InlineKeyboardButton(
+        text=LazyProxy("kb-shop-cactus-check-payment"),
+        callback_data=f"cactus_check_{external_id}",
+    ))
+    builder.row(InlineKeyboardButton(text=LazyProxy("kb-common-back"), callback_data="buy_subscription"))
+    return builder.as_markup()
+
+
+def get_cactus_hosted_payment_kb(
+    external_id: str,
+    payment_url: str | None,
+) -> InlineKeyboardMarkup:
+    """
+    Клавиатура Hosted Checkout (CactusPay).
+
+    Row 1: Кнопка-ссылка «Перейти к оплате» (url=payment_url).
+           Если URL отсутствует — кнопка пропускается.
+    Row 2: «✅ Я оплатил. Проверить статус» (ручной trigger process_payment_update).
+    Row 3: «Назад» → экран выбора тарифов/метода.
+    """
+    builder = InlineKeyboardBuilder()
+    if isinstance(payment_url, str) and payment_url.strip().startswith(("http://", "https://")):
+        builder.row(InlineKeyboardButton(
+            text=LazyProxy("kb-shop-cactus-go-hosted"),
+            url=payment_url.strip(),
+        ))
+    builder.row(InlineKeyboardButton(
+        text=LazyProxy("kb-shop-cactus-check-payment"),
+        callback_data=f"cactus_check_{external_id}",
+    ))
+    builder.row(InlineKeyboardButton(text=LazyProxy("kb-common-back"), callback_data="buy_subscription"))
     return builder.as_markup()

@@ -14,7 +14,7 @@ kb-wallet-plan-price = { $days ->
     [90] 3 months
     [150] 5 months
    *[other] { $days } days
-} — { $price } USDT
+} — { $price } USDT { $extra }
 kb-wallet-confirm-debit = ✅ Confirm Debit
 kb-wallet-send-screenshot = 📸 Send Screenshot
 kb-wallet-send-topup-screenshot = 📸 Send Additional Payment Screenshot
@@ -94,3 +94,102 @@ shop-purchase-success =
     💰 Deducted from balance: { $price }
 shop-subscription-extended = Subscription extended
 shop-purchase-cancelled = Purchase cancelled
+
+# ---- CactusPay H2H (Payment via RU Cards / SBP) ----
+kb-shop-method-cactus-card = 💳 Pay with RU Card (CactusPay)
+kb-shop-method-cactus-sbp = ⚡ Pay via SBP (CactusPay)
+kb-shop-method-crypto-manual = ₿ Pay with Crypto (USDT TRC20)
+kb-shop-cactus-check-payment = ✅ I have paid. Check status
+kb-shop-cactus-go-hosted = 🔗 Go to payment page
+
+shop-no-payment-methods = ❌ No payment methods are currently configured. Please contact Support.
+shop-cactus-unavailable = ❌ Card payment is temporarily unavailable. Please use another method or contact Support.
+shop-cactus-requisite-error = ❌ Failed to fetch payment details. Please try again later or choose a different payment method.
+shop-cactus-expired = ❌ The payment details have expired. Please create a new payment.
+shop-cactus-wait-processing = ⏳ The transaction is being processed by the payment system. Please wait 1-2 minutes and check the status again.
+shop-cactus-method-hosted = 🔗 Pay with CactusPay (RU Card / SBP / QR)
+shop-cactus-description = CSL Subscription — { $days } days
+
+shop-cactus-pay-hosted-screen =
+    💎 <b>Payment for { $plan_label }</b>
+
+    📌 To activate your subscription, go to the secure payment page via the button below.
+    On the payment page you can choose any of these methods:
+      • 💳 RU Card (Visa / MasterCard / MIR)
+      • ⚡ SBP (Fast Payment System)
+      • 📱 QR code
+
+    🧾 Amount to pay: { $amount_rub }
+    🪙 Tariff equivalent: { $amount_usd }
+    💳 Your balance: { $balance }
+
+    ⏳ This invoice is valid for { $lifetime_minutes } minutes.
+    ⏱️ Time left: <b>{ $countdown }</b>
+
+    ✅ After successful payment, come back here and tap «I have paid» for instant activation.
+
+shop-payment-method-selection =
+    💎 <b>Select a payment method: { $plan_label }</b>
+
+    🧾 Full plan price: { $price_usd }
+    💳 Your balance: { $balance }
+
+    💰 Amount due: { $amount_to_pay_usd }
+    🏷️ RUB equivalent: { $price_rub }
+
+    <i>We recommend paying via RU Card or SBP — instant crediting, no screenshots required.</i>
+
+shop-cactus-pay-screen-card =
+    💎 <b>Payment via RU Card: { $plan_label }</b>
+
+    📄 Invoice: { $invoice_id }
+
+    🧾 Plan price: { $price_usd }
+    💳 Your balance: { $balance }
+
+    💰 To be credited on balance: { $amount_to_pay_usd }
+    🏷️ <b>Transfer exactly</b>: { $amount_to_pay_rub }
+
+    💳 <b>Recipient card number</b> (tap to copy):
+    { $card_number }
+
+    👤 <b>Recipient</b>: { $receiver_name }
+    🏦 <b>Bank</b>: { $receiver_bank }
+
+    ⏳ <b>Requisites valid for</b>: { $countdown } (min:sec)
+
+    <b>🔐 Important:</b>
+    • Transfer the exact RUB amount specified above (kopeck-to-kopeck).
+    • After the transfer, tap «I have paid» — the status will update within 30 seconds.
+    • If SBP is faster for you, go back and select the «SBP» payment method.
+
+shop-cactus-pay-screen-sbp =
+    💎 <b>Payment via SBP: { $plan_label }</b>
+
+    📄 Invoice: { $invoice_id }
+
+    🧾 Plan price: { $price_usd }
+    💳 Your balance: { $balance }
+
+    💰 To be credited on balance: { $amount_to_pay_usd }
+    🏷️ <b>Transfer exactly via SBP</b>: { $amount_to_pay_rub }
+
+    📱 <b>SBP phone number</b> (tap to copy):
+    { $receiver_phone }
+
+    🏦 <b>SBP Bank</b>: { $receiver_bank }
+
+    ⏳ <b>Requisites valid for</b>: { $countdown } (min:sec)
+
+    <b>🔐 Important:</b>
+    • Transfer the exact RUB amount specified above through SBP in your banking app.
+    • After the transfer, tap «I have paid» — the status will update within 30 seconds.
+
+shop-balance-credited-but-auto-activation-skipped =
+    ✅ <b>Funds credited successfully!</b>
+
+    Your balance: { $balance }
+    Unfortunately, the plan price has changed since the invoice was created, so auto-activation was skipped.
+
+    Remaining amount needed to purchase the plan: { $needed }
+    Tap «Renew subscription» in your Wallet to activate the subscription at the new price.

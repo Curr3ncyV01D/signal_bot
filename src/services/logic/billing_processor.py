@@ -12,6 +12,7 @@ from src.core.redis_bus import LockResult, redis_bus
 from src.database.crud import billing_service
 from src.database.models import Invoice, Transaction, UserEvent
 from src.services.analyzer import invalidate_user_cache
+from src.services.cactus_client import CactusAPIError, cactus_client
 from src.services.cryptomus import CryptomusAPIError, cryptomus_client
 from src.services.cryptopay import cryptopay
 
@@ -21,6 +22,8 @@ EXPIRED_PROVIDER_STATUSES = {"expired", "cancel", "cancelled", "deleted", "fail"
 PAYMENT_LOCK_TTL_SEC = 15
 LEGACY_SUB_PAYLOAD_RE = re.compile(r"sub_(\d+)")
 MANUAL_PAYMENT_PROVIDER = "MANUAL"
+CACTUS_PROVIDER = "CACTUS"
+CACTUS_SUCCESS_STATUS = "ACCEPT"
 
 
 def _round_money(value: float | int | None) -> float:
@@ -65,6 +68,35 @@ def _parse_invoice_intent(payload: str | None) -> tuple[str | None, int | None]:
     return None, None
 
 
+def _extract_price_at_creation_usd(payload: str | None) -> float | None:
+    """
+    Safety: Возвращает цену тарифа в USDT, зафиксированную в момент создания инвойса.
+    Используется для CactusPay, чтобы избежать drift'a цены в `config.TARIFFS` между созданием
+    инвойса и подтверждением платежа. Поле в payload: `u` (цена в USDT на момент создания).
+    """
+    if not payload:
+        return None
+    raw_payload = payload.strip()
+    if not raw_payload:
+        return None
+    try:
+        loaded = orjson.loads(raw_payload)
+    except orjson.JSONDecodeError:
+        try:
+            loaded = json.loads(raw_payload)
+        except json.JSONDecodeError:
+            return None
+    if not isinstance(loaded, dict):
+        return None
+    price_raw = loaded.get("u")
+    if price_raw is None:
+        return None
+    try:
+        return _round_money(price_raw)
+    except (TypeError, ValueError):
+        return None
+
+
 def _resolve_invoice_status(provider_status: str, amount_actual: float, amount_expected: float) -> str:
     normalized_status = (provider_status or "").strip().lower()
     if normalized_status in EXPIRED_PROVIDER_STATUSES and amount_actual <= 0:
@@ -76,11 +108,21 @@ def _resolve_invoice_status(provider_status: str, amount_actual: float, amount_e
     return "PENDING"
 
 
-async def _get_provider_payment_snapshot(invoice: Invoice) -> tuple[str, float]:
+async def _get_provider_payment_snapshot(invoice: Invoice) -> tuple[str, float, float]:
+    """
+    Возвращает `(provider_status_normalized, credited_amount_usdt, actual_native_amount)`.
+
+    Для CRYPTOMUS/CRYPTOPAY `credited_amount_usdt` == фактической сумме в USDT от провайдера.
+    Для CACTUS (RUB → USDT): `credited_amount_usdt` фиксируется из `payload['u']`
+    (цена тарифа на момент создания инвойса), а `actual_native_amount` — сколько реально
+    пришло RUB (нужен только для отображения в журнале).
+    """
     provider = (invoice.provider or "CRYPTOMUS").upper()
+
     if provider == "CRYPTOMUS":
         response = await cryptomus_client.get_status(uuid=invoice.external_id)
-        return (response.status or response.payment_status or "unknown").lower(), _round_money(response.payment_amount)
+        native = _round_money(response.payment_amount)
+        return (response.status or response.payment_status or "unknown").lower(), native, native
 
     if provider == "CRYPTOPAY":
         status = await cryptopay.check_invoice_status(int(invoice.external_id))
@@ -88,7 +130,26 @@ async def _get_provider_payment_snapshot(invoice: Invoice) -> tuple[str, float]:
         amount_actual = invoice.amount_actual
         if normalized_status == "paid":
             amount_actual = invoice.amount_expected
-        return normalized_status, _round_money(amount_actual)
+        native = _round_money(amount_actual)
+        return normalized_status, native, native
+
+    if provider == CACTUS_PROVIDER:
+        response = await cactus_client.get_status(order_id=invoice.external_id)
+        provider_status = str(response.status or "WAIT").lower()
+
+        if provider_status == CACTUS_SUCCESS_STATUS.lower():
+            price_at_creation_usd = _extract_price_at_creation_usd(invoice.payload)
+            if price_at_creation_usd is None or price_at_creation_usd <= 0:
+                _, intent_days = _parse_invoice_intent(invoice.payload)
+                tariff = config.TARIFFS.get(intent_days) if intent_days else None
+                fallback = _round_money(tariff.price_usd if tariff else None)
+                target_usdt = fallback if fallback > 0 else _round_money(invoice.amount_expected)
+            else:
+                target_usdt = price_at_creation_usd
+            actual_native_rub = _round_money(response.total_amount)
+            return "paid", target_usdt, actual_native_rub
+
+        return provider_status, 0.0, 0.0
 
     raise ValueError(f"Unsupported payment provider: {provider}")
 
@@ -348,7 +409,8 @@ async def process_manual_approval(
                     dto.sub_activated = True
                     dto.new_end_date = user.subscription_end
                 else:
-                    subscription_price = _round_money(config.TARIFFS.get(intent_days))
+                    tariff = config.TARIFFS.get(intent_days)
+                    subscription_price = _round_money(tariff.price_usd if tariff else None)
                     if subscription_price <= 0:
                         dto.error = "subscription_price_not_found"
                     elif dto.new_balance < subscription_price:
@@ -441,8 +503,8 @@ async def process_payment_update(session: AsyncSession, ext_id: str) -> PaymentU
     snapshot_status = str(invoice_snapshot.status)
 
     try:
-        provider_status, api_amount = await _get_provider_payment_snapshot(invoice_snapshot)
-    except (CryptomusAPIError, ValueError, RuntimeError) as exc:
+        provider_status, api_amount, actual_native = await _get_provider_payment_snapshot(invoice_snapshot)
+    except (CryptomusAPIError, CactusAPIError, ValueError, RuntimeError) as exc:
         logger.error("Ошибка провайдера при проверке ext_id=%s: %s", ext_id, exc)
         return PaymentUpdateDTO(
             is_paid=False,
@@ -515,11 +577,20 @@ async def process_payment_update(session: AsyncSession, ext_id: str) -> PaymentU
             original_status = invoice.status
             original_amount_actual = _round_money(invoice.amount_actual)
             amount_expected = _round_money(invoice.amount_expected)
-            resolved_amount_actual = max(_round_money(api_amount), original_amount_actual)
-            effective_paid_amount = _resolve_effective_paid_amount(
-                provider_amount=resolved_amount_actual,
-                amount_expected=amount_expected,
-            )
+            provider_name = (invoice.provider or "CRYPTOMUS").upper()
+
+            if provider_name == CACTUS_PROVIDER:
+                # Binary Success: Данные из API допускаются в систему ТОЛЬКО при status=ACCEPT.
+                # При WAIT/EXPIRED snapshot уже вернул api_amount=0, actual_native=0 → записи в БД нет.
+                effective_paid_amount = _round_money(api_amount)
+                resolved_amount_actual = effective_paid_amount
+            else:
+                resolved_amount_actual = max(_round_money(api_amount), original_amount_actual)
+                effective_paid_amount = _resolve_effective_paid_amount(
+                    provider_amount=resolved_amount_actual,
+                    amount_expected=amount_expected,
+                )
+
             credited_total = await _get_invoice_credited_total(
                 session=session,
                 user_id=user.id,
@@ -537,6 +608,15 @@ async def process_payment_update(session: AsyncSession, ext_id: str) -> PaymentU
             dto.needed_amount = max(_round_money(amount_expected - effective_paid_amount), 0.0)
             dto.new_balance = _round_money(user.balance)
 
+            update_invoice_kwargs: dict = {
+                "session": session,
+                "invoice_id": invoice.id,
+                "amount_actual": resolved_amount_actual,
+                "status": target_status,
+            }
+            if provider_name == CACTUS_PROVIDER and actual_native is not None:
+                update_invoice_kwargs["amount_actual_native"] = actual_native
+
             if delta > 0:
                 new_balance = await billing_service.adjust_user_balance(
                     session=session,
@@ -552,12 +632,7 @@ async def process_payment_update(session: AsyncSession, ext_id: str) -> PaymentU
                 dto.new_balance = new_balance
                 cache_invalidation_needed = True
 
-            updated_invoice = await billing_service.update_invoice_record(
-                session=session,
-                invoice_id=invoice.id,
-                amount_actual=resolved_amount_actual,
-                status=target_status,
-            )
+            updated_invoice = await billing_service.update_invoice_record(**update_invoice_kwargs)
             if updated_invoice is None:
                 dto.error = "invoice_not_found"
                 dto.invoice_status = "NOT_FOUND"
@@ -573,7 +648,8 @@ async def process_payment_update(session: AsyncSession, ext_id: str) -> PaymentU
                     dto.sub_activated = True
                     dto.new_end_date = user.subscription_end
                 else:
-                    subscription_price = _round_money(config.TARIFFS.get(intent_days))
+                    tariff = config.TARIFFS.get(intent_days)
+                    subscription_price = _round_money(tariff.price_usd if tariff else None)
                     if subscription_price <= 0:
                         dto.error = "subscription_price_not_found"
                     elif dto.new_balance < subscription_price:

@@ -1,8 +1,10 @@
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from sqlalchemy import desc, func, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
+
+import orjson
 
 from src.core.config import config
 from src.core.i18n_runtime import background_i18n
@@ -158,6 +160,10 @@ async def create_invoice(
     address: str | None = None,
     network: str | None = None,
     amount_actual: float = 0.0,
+    currency: str = "USD",
+    amount_expected_native: float = 0.0,
+    amount_actual_native: float = 0.0,
+    expires_at: datetime | None = None,
 ) -> Invoice | None:
     """
     Создает новый инвойс для оплаты.
@@ -165,13 +171,26 @@ async def create_invoice(
     :param session: Асинхронная сессия SQLAlchemy
     :param user_id: ID пользователя
     :param external_id: Внешний ID провайдера
-    :param amount_expected: Ожидаемая сумма инвойса
-    :param payload: Дополнительная информация (например, 'sub_30')
+    :param amount_expected: Ожидаемая сумма инвойса в USDT (целевой тариф)
+    :param payload: Дополнительная информация (например, 'sub_30' или JSON с ценой создания)
+    :param currency: Код валюты native-полей (USD / RUB)
+    :param amount_expected_native: Ожидаемая сумма в валюте провайдера (например, 2500 RUB)
+    :param amount_actual_native: Фактически оплаченная сумма в native
+    :param expires_at: Время истечения реквизитов (H2H-карты)
     :return: Объект Invoice или None при ошибке
     """
     try:
         rounded_amount_expected = round(float(amount_expected), 2)
-        rounded_amount_actual = round(float(amount_actual), 2)
+        # Safety: при создании инвойса фактическая оплата ВСЕГДА равна 0.
+        # Игнорируем любые значения, переданные извне (defense-in-depth).
+        rounded_amount_actual = 0.0
+        rounded_amount_expected_native = round(float(amount_expected_native), 2)
+        rounded_amount_actual_native = 0.0
+        # Defense-in-depth: колонка expires_at в БД — TIMESTAMP WITHOUT TIME ZONE (naive UTC).
+        # Если передан offset-aware datetime — снимаем tzinfo, предполагая UTC.
+        normalized_expires_at = expires_at
+        if normalized_expires_at is not None and normalized_expires_at.tzinfo is not None:
+            normalized_expires_at = normalized_expires_at.astimezone(tz=timezone.utc).replace(tzinfo=None)
         invoice = Invoice(
             user_id=user_id,
             external_id=str(external_id),
@@ -181,16 +200,22 @@ async def create_invoice(
             amount_expected=rounded_amount_expected,
             amount_actual=rounded_amount_actual,
             status='PENDING',
-            payload=payload
+            payload=payload,
+            currency=str(currency or "USD"),
+            amount_expected_native=rounded_amount_expected_native,
+            amount_actual_native=rounded_amount_actual_native,
+            expires_at=normalized_expires_at,
         )
         session.add(invoice)
         await session.commit()
         logger.info(
-            "Создан инвойс %s provider=%s для пользователя %s на сумму %s (payload=%s)",
+            "Создан инвойс %s provider=%s currency=%s для пользователя %s: target=%s USDT native_expected=%s (payload=%s)",
             external_id,
             provider,
+            invoice.currency,
             user_id,
             rounded_amount_expected,
+            rounded_amount_expected_native,
             payload,
         )
         return invoice
@@ -217,6 +242,104 @@ async def get_invoice_by_external_id(session: AsyncSession, ext_id: str) -> Invo
         return None
     except Exception as e:
         logger.error("Непредвиденная ошибка в get_invoice_by_external_id %s: %s", ext_id, e)
+        return None
+
+
+async def find_active_cactus_invoice(
+    session: AsyncSession,
+    user_id: int,
+    *,
+    days: int,
+    amount_to_pay_usd: float,
+) -> Invoice | None:
+    """
+    Ищет активный (неистёкший, PENDING) Cactus-инвойс для переиспользования,
+    чтобы не создавать новый платёж в API на ту же сумму/тариф.
+
+    Условия совпадения:
+      - provider == 'CACTUS'
+      - status == 'PENDING'
+      - expires_at is not None AND expires_at > get_utc_now()
+      - payload is valid JSON with:
+          "a" == "sub" (intent = subscription)
+          "d" == days (тот же тариф, дней)
+          "u" == round(amount_to_pay_usd, 2)  (Price-At-Creation Safety, та же цена)
+
+    Возвращает самый свежий подходящий инвойс (ORDER BY created_at DESC).
+    Если ни одного не найдено — None (нужно создавать новый).
+    """
+    expected_amount_u = round(float(amount_to_pay_usd), 2)
+    try:
+        stmt = (
+            select(Invoice)
+            .where(
+                Invoice.user_id == int(user_id),
+                (Invoice.provider == "CACTUS") | (Invoice.provider == "cactus"),
+                Invoice.status == "PENDING",
+                Invoice.expires_at.is_not(None),
+            )
+            .order_by(desc(Invoice.created_at))
+            .limit(20)
+        )
+        result = await session.execute(stmt)
+        candidates = result.scalars().all()
+
+        now = get_utc_now()
+        for inv in candidates:
+            # expires_at in DB = naive UTC (per column TIMESTAMP WITHOUT TIME ZONE)
+            exp = inv.expires_at
+            if exp is None:
+                continue
+            if exp.tzinfo is not None:
+                exp = exp.astimezone(tz=timezone.utc).replace(tzinfo=None)
+            if exp <= now:
+                continue
+
+            # parse payload JSON → must match days and amount_to_pay_usd
+            if not inv.payload:
+                continue
+            try:
+                p = orjson.loads(inv.payload)
+            except Exception:
+                logger.warning(
+                    "find_active_cactus_invoice: skip invoice #%s (invalid payload: %r)",
+                    inv.id, inv.payload[:80] if isinstance(inv.payload, str) else type(inv.payload).__name__,
+                )
+                continue
+
+            if not isinstance(p, dict):
+                continue
+            if str(p.get("a")) != "sub":
+                continue
+            p_days = p.get("d")
+            if not isinstance(p_days, int) or int(p_days) != int(days):
+                continue
+            p_u = p.get("u")
+            try:
+                inv_amount_u = round(float(p_u), 2)
+            except Exception:
+                continue
+            if inv_amount_u != expected_amount_u:
+                continue
+
+            # All conditions match → reuse this invoice
+            logger.info(
+                "find_active_cactus_invoice: REUSE invoice id=%s ext_id=%s user=%s days=%s u=%.2f USD expires_at=%s",
+                inv.id, inv.external_id, user_id, days, expected_amount_u, exp.isoformat(),
+            )
+            return inv
+
+        logger.info(
+            "find_active_cactus_invoice: NO MATCH user=%s days=%s u=%.2f USD candidates_checked=%d",
+            user_id, days, expected_amount_u, len(candidates),
+        )
+        return None
+
+    except SQLAlchemyError as e:
+        logger.error("Ошибка БД в find_active_cactus_invoice user=%s days=%s: %s", user_id, days, e)
+        return None
+    except Exception as e:
+        logger.error("Непредвиденная ошибка в find_active_cactus_invoice user=%s days=%s: %s", user_id, days, e)
         return None
 
 
@@ -265,14 +388,18 @@ async def update_invoice_record(
     invoice_id: int,
     amount_actual: float,
     status: str,
+    *,
+    amount_actual_native: float | None = None,
 ) -> Invoice | None:
-    """Обновляет `amount_actual` и `status` у инвойса."""
+    """Обновляет `amount_actual`, (опционально) `amount_actual_native` и `status` у инвойса."""
     invoice = await session.get(Invoice, invoice_id, with_for_update=True)
     if invoice is None:
         return None
 
     invoice.amount_actual = _round_money(amount_actual)
     invoice.status = status
+    if amount_actual_native is not None:
+        invoice.amount_actual_native = _round_money(amount_actual_native)
     return invoice
 
 
