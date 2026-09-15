@@ -1,6 +1,6 @@
 import asyncio
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from aiogram import Router, types, F
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, FSInputFile, InputMediaPhoto
 from aiogram.utils.keyboard import InlineKeyboardBuilder
@@ -11,11 +11,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.config import config
 from src.core.config import ImagePaths
+from src.core.redis_bus import redis_bus
 from src.database.crud import billing_service, user_service
-from src.database.crud.user_service import get_or_create_user
+from src.database.crud.user_service import get_or_create_user, is_user_vip
 from src.database.models import User
 from src.database.functions import get_utc_now
-from src.bot.handlers.onboarding import render_pending_onboarding_screen
+from src.bot.handlers.onboarding import (
+    render_pending_onboarding_screen,
+    _verify_gate_resources_membership,
+)
 from src.bot.keyboards import get_start_kb, get_status_kb
 from src.services.analyzer import invalidate_user_cache
 from src.services.metrics_service import MetricsService
@@ -24,6 +28,91 @@ from src.utils import format_datetime, format_smart_num
 logger = logging.getLogger(__name__)
 router = Router()
 
+# ===== Clean State Model Constants =====
+STATE_TRIAL_AVAILABLE: str = "STATE_TRIAL_AVAILABLE"
+STATE_VIP_ACTIVE: str = "STATE_VIP_ACTIVE"
+STATE_FREE_ACTIVE: str = "STATE_FREE_ACTIVE"
+STATE_FREE_PAUSED: str = "STATE_FREE_PAUSED"
+
+VIP_RENEW_DAYS_THRESHOLD: int = 5
+
+
+async def _get_user_gate_status(user_id: int) -> bool | None:
+    """Возвращает gate-статус пользователя из Redis (True=допуск, False=заморозка, None=cache miss)."""
+    try:
+        return await redis_bus.get_gate_status(user_id)
+    except Exception as exc:
+        logger.warning("Не удалось получить gate статус для %s: %s", user_id, exc)
+        return None
+
+
+def resolve_user_menu_state(
+    user: User,
+    is_gate_allowed: bool | None,
+) -> str:
+    """
+    Порядок проверок важен (is_vip / is_trial_used имеют приоритет над is_gate_allowed):
+      1. 🟢 STATE_TRIAL_AVAILABLE — новичок, триал ещё не активирован + не VIP
+      2. 💎 STATE_VIP_ACTIVE     — is_user_vip(user)
+      3. 🟡 STATE_FREE_ACTIVE    — не VIP + gate_allowed is True (доставка разрешена)
+      4. 🔴 STATE_FREE_PAUSED    — не VIP + gate_allowed is False/None (доставка приостановлена/неизвестно)
+    """
+    if not user.is_trial_used and not is_user_vip(user):
+        return STATE_TRIAL_AVAILABLE
+    if is_user_vip(user):
+        return STATE_VIP_ACTIVE
+    if is_gate_allowed is True:
+        return STATE_FREE_ACTIVE
+    return STATE_FREE_PAUSED
+
+
+async def _get_news_channel_url(bot) -> str | None:
+    if config.NEWS_CHANNEL_ID is None:
+        return None
+    if config.NEWS_CHANNEL_URL:
+        return config.NEWS_CHANNEL_URL
+    try:
+        chat = await bot.get_chat(config.NEWS_CHANNEL_ID)
+        if getattr(chat, "username", None):
+            return f"https://t.me/{chat.username}"
+    except Exception as e:
+        logger.error(f"Не удалось получить URL новостного канала: {e}")
+    return None
+
+
+def get_main_menu_text(
+    user: User,
+    full_name: str,
+    i18n: I18nContext,
+    is_gate_allowed: bool | None = None,
+    **_,
+) -> str:
+    """
+    Clean State Model: единый генератор текста главного меню.
+
+    Текст рендерится по статусу из resolve_user_menu_state.
+    """
+    state = resolve_user_menu_state(user, is_gate_allowed)
+
+    if state == STATE_VIP_ACTIVE:
+        status_text = i18n.get(
+            "main-menu-status-vip-active",
+            subscription_end=format_datetime(user.subscription_end),
+        )
+    elif state == STATE_FREE_ACTIVE:
+        status_text = i18n.get("main-menu-status-free-active")
+    elif state == STATE_FREE_PAUSED:
+        status_text = i18n.get("main-menu-status-free-paused")
+    else:  # STATE_TRIAL_AVAILABLE
+        status_text = i18n.get("main-menu-status-trial-available")
+
+    return i18n.get(
+        "main-menu",
+        full_name=full_name,
+        subscription_status=status_text,
+        balance=format_smart_num(user.balance),
+    )
+
 
 async def render_main_menu(
     event: types.Message | types.CallbackQuery,
@@ -31,9 +120,23 @@ async def render_main_menu(
     full_name: str,
     i18n: I18nContext,
 ) -> None:
-    """Умный рендеринг главного меню с баннером WELCOME."""
-    text = get_main_menu_text(user, full_name, i18n)
-    markup = get_start_kb(user)
+    """
+    Clean State Model — рендер главного меню.
+
+    Для Free пользователей запрашивает gate-status из Redis.
+    Сборка клавиатуры полностью инкапсулирована в get_start_kb.
+    """
+    is_gate_allowed: bool | None = None
+    if not is_user_vip(user):
+        is_gate_allowed = await _get_user_gate_status(user.id)
+
+    try:
+        text = get_main_menu_text(user, full_name, i18n, is_gate_allowed)
+    except TypeError:
+        text = get_main_menu_text(user, full_name, i18n)
+        is_gate_allowed = None
+
+    markup = get_start_kb(user, is_gate_allowed)
     photo = FSInputFile(ImagePaths.WELCOME)
 
     if isinstance(event, types.Message):
@@ -67,18 +170,6 @@ async def render_main_menu(
             parse_mode="HTML"
         )
 
-async def _get_news_channel_url(bot) -> str | None:
-    if config.NEWS_CHANNEL_ID is None:
-        return None
-    if config.NEWS_CHANNEL_URL:
-        return config.NEWS_CHANNEL_URL
-    try:
-        chat = await bot.get_chat(config.NEWS_CHANNEL_ID)
-        if getattr(chat, "username", None):
-            return f"https://t.me/{chat.username}"
-    except Exception as e:
-        logger.error(f"Не удалось получить URL новостного канала: {e}")
-    return None
 
 async def _build_trial_subscription_kb(bot, i18n: I18nContext) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
@@ -95,23 +186,81 @@ async def _build_trial_subscription_kb(bot, i18n: I18nContext) -> InlineKeyboard
     )
     return builder.as_markup()
 
-def get_main_menu_text(user: User, full_name: str, i18n: I18nContext) -> str:
-    """Текст главного меню."""
-    now = get_utc_now()
-    has_sub = user.subscription_end and user.subscription_end > now
-    
-    status_text = (
-        i18n.get("main-menu-status-active", subscription_end=format_datetime(user.subscription_end))
-        if has_sub
-        else i18n.get("main-menu-status-inactive")
+
+# ===== Gate Unlock Screen =====
+async def render_gate_unlock_screen(
+    event: types.Message | types.CallbackQuery,
+    i18n: I18nContext,
+) -> None:
+    """
+    Отдельный подэкран разблокировки бесплатных сигналов.
+
+    Композиция: WELCOME баннер → текст с 2 пунктами (канал + чат) → 4 ряда кнопок.
+    """
+    bot = getattr(event, "bot", None)
+    news_channel_url = await _get_news_channel_url(bot) if bot is not None else None
+
+    builder = InlineKeyboardBuilder()
+    if news_channel_url:
+        builder.row(
+            InlineKeyboardButton(
+                text=i18n.get("gate-button-channel"),
+                url=news_channel_url,
+            )
+        )
+    if config.COMMUNITY_GROUP_LINK:
+        builder.row(
+            InlineKeyboardButton(
+                text=i18n.get("gate-button-chat"),
+                url=config.COMMUNITY_GROUP_LINK,
+            )
+        )
+    builder.row(
+        InlineKeyboardButton(
+            text=i18n.get("gate-button-verify-action"),
+            callback_data="verify_gate_sub",
+        )
     )
-    
-    return i18n.get(
-        "main-menu",
-        full_name=full_name,
-        subscription_status=status_text,
-        balance=format_smart_num(user.balance),
+    builder.row(
+        InlineKeyboardButton(
+            text=i18n.get("main-button-home"),
+            callback_data="back_to_main",
+        )
     )
+    markup = builder.as_markup()
+    text = i18n.get("gate-unlock-screen")
+    photo = FSInputFile(ImagePaths.WELCOME)
+
+    if isinstance(event, types.Message):
+        await event.answer_photo(
+            photo=photo,
+            caption=text,
+            reply_markup=markup,
+            parse_mode="HTML",
+        )
+        return
+
+    try:
+        await event.message.edit_media(
+            media=InputMediaPhoto(
+                media=photo,
+                caption=text,
+                parse_mode="HTML",
+            ),
+            reply_markup=markup,
+        )
+    except Exception as e:
+        logger.warning(f"Не удалось обновить gate экран через edit_media: {e}")
+        try:
+            await event.message.delete()
+        except Exception:
+            pass
+        await event.message.answer_photo(
+            photo=photo,
+            caption=text,
+            reply_markup=markup,
+            parse_mode="HTML",
+        )
 
 
 @router.message(Command("start"))
@@ -158,6 +307,17 @@ async def process_back_to_main(callback: types.CallbackQuery, session: AsyncSess
 
     await render_main_menu(callback, user, callback.from_user.full_name, i18n)
     await callback.answer()
+
+
+@router.callback_query(F.data == "open_gate_unlock_screen")
+async def process_open_gate_unlock_screen(
+    callback: types.CallbackQuery,
+    i18n: I18nContext,
+) -> None:
+    """Открывает экран разблокировки бесплатных сигналов (Gate Screen)."""
+    await render_gate_unlock_screen(callback, i18n)
+    await callback.answer()
+
 
 @router.callback_query(F.data == "activate_trial")
 async def process_activate_trial(callback: types.CallbackQuery, i18n: I18nContext):

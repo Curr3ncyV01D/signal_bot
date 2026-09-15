@@ -79,7 +79,11 @@ async def complete_user_setup(session: AsyncSession, user_id: int) -> User | Non
         return None
 
 async def get_active_users(session: AsyncSession, force_refresh: bool = False) -> list[User]:
-    """Получает пользователей с АКТИВНОЙ подпиской для рассылки алертов (с кешированием)."""
+    """
+    Получает всех незаблокированных пользователей для рассылки алертов (с кешированием).
+    Включает как VIP (subscription_end > now), так и FREE (subscription_end is None) пользователей.
+    Gatekeeper-фильтрация по членству в каналах выполняется отдельно в messenger_worker.
+    """
     global _active_users_cache, _last_cache_update
     
     now = get_utc_now()
@@ -89,13 +93,7 @@ async def get_active_users(session: AsyncSession, force_refresh: bool = False) -
         return _active_users_cache
 
     try:
-        query = select(User).where(
-            and_(
-                User.subscription_end.is_not(None),
-                User.subscription_end > now,
-                User.is_blocked == False
-            )
-        )
+        query = select(User).where(User.is_blocked == False)
         result = await session.execute(query)
         users = list(result.scalars().all())
         
@@ -164,6 +162,68 @@ async def clear_expired_subscription(session: AsyncSession, user_id: int) -> Non
     except Exception as e:
         await session.rollback()
         logger.error(f"Непредвиденная ошибка при обнулении подписки {user_id}: {e}")
+
+
+def is_user_vip(user: User) -> bool:
+    """Проверяет, есть ли у пользователя активная VIP-подписка и он не заблокирован."""
+    return (
+        user.subscription_end is not None
+        and user.subscription_end > get_utc_now()
+        and not user.is_blocked
+    )
+
+
+async def degrade_user_to_free_tier(session: AsyncSession, user_id: int) -> User | None:
+    """
+    Атомарно деградирует пользователя на бесплатный тариф:
+      - with_for_update блокировка строки
+      - сброс subscription_end = None
+      - принудительное применение пресета FREE_NOISE ко всем полям настроек
+      - commit + refresh
+
+    Возвращает обновленного пользователя или None, если пользователь не найден.
+    """
+    try:
+        user = await session.get(User, user_id, with_for_update=True)
+        if user is None:
+            return None
+
+        preset = config.SETTING_PRESETS["FREE_NOISE"]
+
+        user.subscription_end = None
+        user.last_expiry_warning_at = None
+
+        user.threshold_mode = str(preset.threshold_mode).upper()
+        user.threshold = float(preset.threshold)
+        user.threshold_cascade = float(preset.threshold_cascade)
+        user.threshold_oi_percent = float(preset.threshold_oi_percent)
+        user.threshold_oi_value = float(preset.threshold_oi_value)
+        user.threshold_mcap_pct = float(preset.threshold_mcap_pct)
+        user.threshold_mcap_usd_min = float(preset.threshold_mcap_usd_min)
+        user.threshold_cascade_mcap_pct = float(preset.threshold_cascade_mcap_pct)
+        user.threshold_cascade_mcap_usd_min = float(preset.threshold_cascade_mcap_usd_min)
+        user.filter_rsi_min = float(preset.filter_rsi_min)
+        user.filter_rsi_max = float(preset.filter_rsi_max)
+        user.alert_cascade = bool(preset.alert_cascade)
+        user.alert_volume = bool(preset.alert_volume)
+        user.alert_squeeze = bool(preset.alert_squeeze)
+        user.alert_longs = bool(preset.alert_longs)
+        user.alert_shorts = bool(preset.alert_shorts)
+        user.alert_oi = bool(preset.alert_oi)
+        user.alert_rsi = bool(preset.alert_rsi)
+        user.alert_cvd = bool(preset.alert_cvd)
+
+        await session.commit()
+        await session.refresh(user)
+        return user
+    except SQLAlchemyError as e:
+        await session.rollback()
+        logger.error(f"Ошибка БД при деградации пользователя {user_id} до FREE_NOISE: {e}")
+        return None
+    except Exception as e:
+        await session.rollback()
+        logger.error(f"Непредвиденная ошибка при деградации пользователя {user_id} до FREE_NOISE: {e}")
+        return None
 
 async def get_users_count(session: AsyncSession) -> int:
     """Возвращает общее количество пользователей в БД (для расчета страниц)."""
@@ -347,8 +407,8 @@ async def apply_user_setting_preset(session: AsyncSession, user_id: int, preset_
             "threshold_mcap_usd_min": float(preset.threshold_mcap_usd_min),
             "threshold_cascade_mcap_pct": float(preset.threshold_cascade_mcap_pct),
             "threshold_cascade_mcap_usd_min": float(preset.threshold_cascade_mcap_usd_min),
-            "filter_rsi_min": float(preset.rsi_min),
-            "filter_rsi_max": float(preset.rsi_max),
+            "filter_rsi_min": float(preset.filter_rsi_min),
+            "filter_rsi_max": float(preset.filter_rsi_max),
             "alert_cascade": bool(preset.alert_cascade),
             "alert_volume": bool(preset.alert_volume),
             "alert_squeeze": bool(preset.alert_squeeze),

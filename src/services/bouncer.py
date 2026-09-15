@@ -3,14 +3,17 @@ import logging
 from datetime import datetime, timedelta, timezone
 
 from aiogram import Bot
-from aiogram.exceptions import TelegramForbiddenError
+from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.config import config
 from src.core.i18n_runtime import background_i18n
 from src.core.localization import normalize_locale_code
+from src.core.redis_bus import redis_bus
 from src.database.crud import billing_service
+from src.database.crud.user_service import degrade_user_to_free_tier
 from src.database.functions import get_utc_now
 from src.database.models import User
 from src.database.session import async_session
@@ -29,9 +32,14 @@ TRIAL_EXPIRY_WARNING_MAX_MINUTES = 75
 class BouncerManager:
     last_run: datetime | None = None
 
-async def _safe_send_message(bot: Bot, user_id: int, text: str) -> bool:
+async def _safe_send_message(
+    bot: Bot,
+    user_id: int,
+    text: str,
+    reply_markup: InlineKeyboardMarkup | None = None,
+) -> bool:
     try:
-        await bot.send_message(user_id, text, parse_mode="HTML")
+        await bot.send_message(user_id, text, parse_mode="HTML", reply_markup=reply_markup)
         return True
     except TelegramForbiddenError:
         logger.warning(f"Не удалось отправить сообщение {user_id}: пользователь недоступен боту.")
@@ -134,18 +142,117 @@ async def _handle_auto_renewal(
 
     return False
 
+_ALLOWED_MEMBER_STATUSES = {"member", "administrator", "creator", "restricted"}
+
+
+async def _check_media_resources_membership(bot: Bot, user_id: int) -> bool:
+    """
+    Проверяет членство пользователя в Новостном канале и Чате сообщества.
+    Оба ресурса требуются одновременно (AND).
+    Если какой-то ID ресурса не задан в конфиге — считаем его выполненным.
+    При любой ошибке доступа — возвращаем False (fail-closed, conservative).
+    """
+    if not config.NEWS_CHANNEL_ID and not config.COMMUNITY_GROUP_ID:
+        return True
+
+    checks: list[tuple[int | str | None, str]] = [
+        (config.NEWS_CHANNEL_ID, "NEWS_CHANNEL_ID"),
+        (config.COMMUNITY_GROUP_ID, "COMMUNITY_GROUP_ID"),
+    ]
+
+    for resource_id, _name in checks:
+        if resource_id is None:
+            continue
+        if isinstance(resource_id, str) and not resource_id.strip():
+            continue
+        try:
+            member = await bot.get_chat_member(resource_id, user_id)
+            status = getattr(member, "status", None)
+            if status not in _ALLOWED_MEMBER_STATUSES:
+                return False
+        except TelegramBadRequest:
+            logger.warning(
+                "_check_media_resources_membership: TelegramBadRequest для user_id=%s, resource=%s",
+                user_id, _name,
+            )
+            return False
+        except TelegramForbiddenError:
+            logger.warning(
+                "_check_media_resources_membership: TelegramForbiddenError для user_id=%s, resource=%s",
+                user_id, _name,
+            )
+            return False
+        except Exception as e:
+            logger.error(
+                "_check_media_resources_membership: unhandled error для user_id=%s, resource=%s: %s",
+                user_id, _name, e,
+            )
+            return False
+
+    return True
+
+
+def _build_gate_verify_keyboard(user_locale: str) -> InlineKeyboardMarkup | None:
+    """
+    Собирает inline-клавиатуру Gatekeeper: ссылки на ресурсы + кнопка проверки.
+    Если ссылки на ресурсы не заданы — возвращает None (отправка без клавиатуры).
+    """
+    buttons: list[InlineKeyboardButton] = []
+
+    news_channel_url = (config.NEWS_CHANNEL_URL or "").strip()
+    if news_channel_url:
+        buttons.append(
+            InlineKeyboardButton(
+                text=background_i18n.get("gate-button-channel", locale=user_locale),
+                url=news_channel_url,
+            )
+        )
+
+    community_group_link = (config.COMMUNITY_GROUP_LINK or "").strip()
+    if community_group_link:
+        buttons.append(
+            InlineKeyboardButton(
+                text=background_i18n.get("gate-button-chat", locale=user_locale),
+                url=community_group_link,
+            )
+        )
+
+    if not buttons:
+        return None
+
+    builder_buttons: list[list[InlineKeyboardButton]] = [[b] for b in buttons]
+    builder_buttons.append(
+        [
+            InlineKeyboardButton(
+                text=background_i18n.get("gate-button-verify", locale=user_locale),
+                callback_data="verify_community_join",
+            )
+        ]
+    )
+    return InlineKeyboardMarkup(inline_keyboard=builder_buttons)
+
+
 async def _handle_subscription_expiry(session: AsyncSession, bot: Bot, user: User) -> None:
     user_locale = normalize_locale_code(user.language_code)
-    await _safe_send_message(
-        bot,
-        user.id,
-        background_i18n.get("bouncer-subscription-expired", locale=user_locale)
-    )
 
-    user.subscription_end = None
-    user.last_expiry_warning_at = None
-    await session.commit()
-    await invalidate_user_cache(user.id)
+    updated_user = await degrade_user_to_free_tier(session, user.id)
+    if updated_user is None:
+        logger.warning(f"degrade_user_to_free_tier вернул None для пользователя {user.id}")
+        return
+
+    target_user_id = updated_user.id
+    await invalidate_user_cache(target_user_id)
+
+    is_member = await _check_media_resources_membership(bot, target_user_id)
+    await redis_bus.set_gate_status(target_user_id, is_member, ttl=config.GATE_CACHE_TTL_SEC)
+
+    if is_member:
+        text = background_i18n.get("bouncer-degraded-to-free-notification", locale=user_locale)
+        await _safe_send_message(bot, target_user_id, text)
+    else:
+        text = background_i18n.get("bouncer-expired-unsubscribed-notification", locale=user_locale)
+        keyboard = _build_gate_verify_keyboard(user_locale)
+        await _safe_send_message(bot, target_user_id, text, reply_markup=keyboard)
 
 async def bouncer_worker(bot: Bot, interval_minutes: int = 15):
     """

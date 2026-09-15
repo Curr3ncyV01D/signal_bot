@@ -6,7 +6,7 @@ from typing import Literal, TypedDict
 type SignalSideLabel = Literal["LONG", "SHORT"]
 type SignalAlertType = Literal["CASCADE", "OI_PUMP", "SQUEEZE", "VOLUME"]
 type SignalOhlcRow = list[int | float]
-type SettingPresetId = Literal["SCALPER", "BALANCED", "CONSERVATIVE"]
+type SettingPresetId = Literal["SCALPER", "BALANCED", "CONSERVATIVE", "FREE_NOISE"]
 type UserOnboardingStep = Literal["LANGUAGE", "COMMUNITY_BONUS", "PRESET_SELECTION", "COMPLETED"]
 
 
@@ -69,8 +69,8 @@ class SettingPresetDTO:
     threshold_mcap_usd_min: float
     threshold_cascade_mcap_pct: float
     threshold_cascade_mcap_usd_min: float
-    rsi_min: float
-    rsi_max: float
+    filter_rsi_min: float
+    filter_rsi_max: float
     alert_cascade: bool
     alert_volume: bool
     alert_squeeze: bool
