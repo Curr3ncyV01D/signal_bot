@@ -507,6 +507,29 @@ async def show_help_analytics(callback: types.CallbackQuery, i18n: I18nContext):
     await callback.answer()
 
 
+@router.callback_query(F.data == "toggle_global_signals")
+async def toggle_global_signals(callback: types.CallbackQuery, session: AsyncSession, i18n: I18nContext):
+    user = await session.get(User, callback.from_user.id)
+    if not user:
+        return await callback.answer(i18n.get("settings-error-profile"), show_alert=True)
+
+    new_state = not user.is_signals_enabled
+    updated_user = await update_user_settings(
+        session, callback.from_user.id, is_signals_enabled=new_state
+    )
+    if not updated_user:
+        return await callback.answer(i18n.get("settings-error-save"), show_alert=True)
+
+    await analyzer.invalidate_user_cache(callback.from_user.id)
+
+    await callback.message.edit_reply_markup(
+        reply_markup=get_settings_kb(updated_user)
+    )
+
+    toast_key = "settings-signals-enabled-toast" if new_state else "settings-signals-disabled-toast"
+    await callback.answer(i18n.get(toast_key))
+
+
 @router.callback_query(F.data.startswith("toggle_"))
 async def toggle_settings(callback: types.CallbackQuery, session: AsyncSession, i18n: I18nContext):
     setting_type = callback.data.replace("toggle_", "")

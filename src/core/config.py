@@ -71,7 +71,8 @@ class Settings(BaseSettings):
     TARIFFS: dict[int, TariffDTO] = Field(
         default_factory=lambda: {
             7: TariffDTO(days=7, price_usd=7.5, price_rub=1000.0),
-            30: TariffDTO(days=30, price_usd=12.5, price_rub=1500.0, data_extra="🏷️ -50%"),
+            30: TariffDTO(days=30, price_usd=25, price_rub=3000),
+            #30: TariffDTO(days=30, price_usd=12.5, price_rub=1500.0, data_extra="🏷️ -50%"),
         }
     )
     SUB_MONTHLY_PRICE: float = Field(default_factory=lambda: 25.0)

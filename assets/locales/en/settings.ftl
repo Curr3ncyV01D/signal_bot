@@ -239,6 +239,11 @@ kb-settings-back-main = ⬅️ Back to Menu
 kb-settings-ask-question = 💬 Ask a Question
 kb-settings-back = ⬅️ Back to Settings
 
+kb-settings-signals-on = 🔔 Signal Stream: ON
+kb-settings-signals-off = 🔕 Signal Stream: OFF
+settings-signals-enabled-toast = 🔔 Signal stream enabled
+settings-signals-disabled-toast = 🔕 Signal stream paused
+
 # ===== Paywall (Phase 4) =====
 paywall-settings-locked-alert = 💎 Customizing filters and presets is available only with a VIP subscription.
 

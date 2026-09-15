@@ -26,6 +26,14 @@ def _append_vip_unlock_button(builder: InlineKeyboardBuilder, user: User | None)
 def get_settings_kb(user: User) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
 
+    signals_key = "kb-settings-signals-on" if user.is_signals_enabled else "kb-settings-signals-off"
+    builder.row(
+        InlineKeyboardButton(
+            text=LazyProxy(signals_key),
+            callback_data="toggle_global_signals",
+        )
+    )
+
     builder.row(
         InlineKeyboardButton(
             text=LazyProxy("kb-settings-preset-profiles"),

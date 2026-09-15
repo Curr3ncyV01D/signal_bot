@@ -237,6 +237,11 @@ kb-settings-back-main = ⬅️ Назад в меню
 kb-settings-ask-question = 💬 Задать вопрос
 kb-settings-back = ⬅️ Назад к настройкам
 
+kb-settings-signals-on = 🔔 Получение сигналов: ВКЛ
+kb-settings-signals-off = 🔕 Получение сигналов: ВЫКЛ
+settings-signals-enabled-toast = 🔔 Рассылка сигналов включена
+settings-signals-disabled-toast = 🔕 Рассылка сигналов приостановлена
+
 # ===== Paywall (Фаза 4) =====
 paywall-settings-locked-alert = 💎 Настройка фильтров и пресетов доступна только в VIP-тарифе.
 

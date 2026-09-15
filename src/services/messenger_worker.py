@@ -34,6 +34,7 @@ class CachedAlertTarget(TypedDict):
     id: int
     language_code: str
     is_vip: bool
+    is_signals_enabled: bool
     threshold: float
     threshold_cascade: float
     threshold_mode: str
@@ -94,6 +95,7 @@ def _build_cached_target(source: Any, target_id: int) -> CachedAlertTarget:
         "id": target_id,
         "language_code": normalize_locale_code(getattr(source, "language_code", None)),
         "is_vip": is_vip,
+        "is_signals_enabled": bool(getattr(source, "is_signals_enabled", True)),
         "threshold": float(source.threshold),
         "threshold_cascade": float(source.threshold_cascade),
         "threshold_mode": str(source.threshold_mode),
@@ -550,6 +552,9 @@ class MessengerWorker:
         prepared_free_alerts: list[tuple[int, dict[str, Any]]] = []
 
         for target in targets:
+            if not target.get("is_signals_enabled", True):
+                continue
+
             try:
                 trigger_result = await _check_triggers_from_dto(target, dto)
             except Exception:

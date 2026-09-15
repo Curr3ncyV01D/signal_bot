@@ -26,6 +26,7 @@ class CachedAlertTarget(TypedDict):
     id: int
     language_code: str
     is_vip: bool
+    is_signals_enabled: bool
     threshold: float
     threshold_cascade: float
     threshold_mode: str
@@ -81,6 +82,7 @@ def _build_cached_target(source: Any, target_id: int) -> CachedAlertTarget:
         "id": target_id,
         "language_code": normalize_locale_code(getattr(source, "language_code", None)),
         "is_vip": is_vip,
+        "is_signals_enabled": bool(getattr(source, "is_signals_enabled", True)),
         "threshold": float(source.threshold),
         "threshold_cascade": float(source.threshold_cascade),
         "threshold_mode": str(source.threshold_mode),
@@ -115,8 +117,9 @@ async def _update_cache_logic() -> None:
         for user in active_users:
             target = _build_cached_target(user, user.id)
             cached_targets.append(target)
-            min_threshold = min(min_threshold, target["threshold"])
-            min_cascade = min(min_cascade, target["threshold_cascade"])
+            if target.get("is_signals_enabled", True):
+                min_threshold = min(min_threshold, target["threshold"])
+                min_cascade = min(min_cascade, target["threshold_cascade"])
 
         _cached_users = cached_targets
         _min_system_threshold = (
