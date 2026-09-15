@@ -3,12 +3,27 @@ from aiogram_i18n import LazyProxy
 from aiogram_i18n.types import InlineKeyboardButton, InlineKeyboardMarkup
 from src.core.config import config
 from src.database.models import User
+from src.database.crud.user_service import is_user_vip
 from src.bot.utils.kb_helper import Kb_Helper
+
 
 toggle = Kb_Helper.toggle_icon
 
+
+def _append_vip_unlock_button(builder: InlineKeyboardBuilder, user: User | None) -> None:
+    if user is None:
+        return
+    if is_user_vip(user):
+        return
+    builder.row(
+        InlineKeyboardButton(
+            text=LazyProxy("kb-settings-buy-vip"),
+            callback_data="buy_subscription",
+        )
+    )
+
+
 def get_settings_kb(user: User) -> InlineKeyboardMarkup:
-    """Корневая клавиатура настроек."""
     builder = InlineKeyboardBuilder()
 
     builder.row(
@@ -29,12 +44,12 @@ def get_settings_kb(user: User) -> InlineKeyboardMarkup:
             callback_data="settings_display",
         )
     )
+    _append_vip_unlock_button(builder, user)
     builder.row(InlineKeyboardButton(text=LazyProxy("kb-settings-back-main"), callback_data="back_to_main"))
     return builder.as_markup()
 
 
 def get_settings_filters_kb(user: User) -> InlineKeyboardMarkup:
-    """Клавиатура подменю триггеров."""
     builder = InlineKeyboardBuilder()
     builder.row(
         InlineKeyboardButton(
@@ -121,6 +136,7 @@ def get_settings_filters_kb(user: User) -> InlineKeyboardMarkup:
             callback_data="menu_rsi_thresholds",
         )
     )
+    _append_vip_unlock_button(builder, user)
     builder.row(
         InlineKeyboardButton(
             text=LazyProxy("kb-settings-back-root"),
@@ -131,7 +147,6 @@ def get_settings_filters_kb(user: User) -> InlineKeyboardMarkup:
 
 
 def get_settings_display_kb(user: User) -> InlineKeyboardMarkup:
-    """Клавиатура подменю отображения сообщения."""
     builder = InlineKeyboardBuilder()
     builder.row(
         InlineKeyboardButton(
@@ -153,6 +168,7 @@ def get_settings_display_kb(user: User) -> InlineKeyboardMarkup:
             callback_data="toggle_cvd",
         )
     )
+    _append_vip_unlock_button(builder, user)
     builder.row(
         InlineKeyboardButton(
             text=LazyProxy("kb-settings-back-root"),
@@ -161,8 +177,8 @@ def get_settings_display_kb(user: User) -> InlineKeyboardMarkup:
     )
     return builder.as_markup()
 
+
 def get_back_to_settings_kb(back_callback_data: str = "back_to_settings") -> InlineKeyboardMarkup:
-    """Клавиатура для возврата из справки в нужное подменю настроек."""
     builder = InlineKeyboardBuilder()
     builder.row(InlineKeyboardButton(text=LazyProxy("kb-settings-ask-question"), url=config.SUPPORT_URL))
     builder.row(
@@ -174,8 +190,7 @@ def get_back_to_settings_kb(back_callback_data: str = "back_to_settings") -> Inl
     return builder.as_markup()
 
 
-def get_presets_selection_kb() -> InlineKeyboardMarkup:
-    """Клавиатура выбора пресета из меню настроек."""
+def get_presets_selection_kb(user: User | None = None) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     builder.row(
         InlineKeyboardButton(
@@ -195,6 +210,7 @@ def get_presets_selection_kb() -> InlineKeyboardMarkup:
             callback_data="open_setting_preset_CONSERVATIVE",
         )
     )
+    _append_vip_unlock_button(builder, user)
     builder.row(
         InlineKeyboardButton(
             text=LazyProxy("kb-settings-back"),
@@ -204,8 +220,7 @@ def get_presets_selection_kb() -> InlineKeyboardMarkup:
     return builder.as_markup()
 
 
-def get_preset_confirmation_kb(preset_id: str) -> InlineKeyboardMarkup:
-    """Клавиатура подтверждения применения пресета."""
+def get_preset_confirmation_kb(preset_id: str, user: User | None = None) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     builder.row(
         InlineKeyboardButton(
@@ -219,19 +234,18 @@ def get_preset_confirmation_kb(preset_id: str) -> InlineKeyboardMarkup:
             callback_data="open_setting_presets",
         )
     )
+    _append_vip_unlock_button(builder, user)
     return builder.as_markup()
 
 
 def _format_rsi(value: float) -> int:
-    """Округляет RSI-порог до целого для показа в клавиатуре."""
     try:
         return int(round(float(value)))
     except (TypeError, ValueError):
         return 0
 
 
-def get_settings_rsi_kb() -> InlineKeyboardMarkup:
-    """Подменю настройки RSI-гейта."""
+def get_settings_rsi_kb(user: User | None = None) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
 
     builder.row(
@@ -258,6 +272,7 @@ def get_settings_rsi_kb() -> InlineKeyboardMarkup:
             callback_data="set_rsi_manual_start",
         )
     )
+    _append_vip_unlock_button(builder, user)
     builder.row(
         InlineKeyboardButton(
             text=LazyProxy("kb-settings-rsi-back"),

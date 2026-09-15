@@ -121,3 +121,28 @@ kb-main-support = 👨‍💻 Technical Support
 kb-main-chat = 📥 Community Chat
 
 kb-status-refresh = 🔄 Refresh Status
+
+gate-subscription-verified = ✅ Subscription confirmed! Free signal stream has been resumed.
+gate-subscription-not-found = ❌ You have not yet joined our channel and chat. Please join both resources and try again.
+gate-unsubscribed-warning = ⚠️ Signal delivery is paused. Subscribe to our channel and chat to receive signals.
+gate-verify-button = 🔄 Verify Subscription
+
+# ===== Clean State Model (Main Menu 4-state / Gate Screen) =====
+main-menu-status-vip-active = 💎 Subscription: ✅ Active until { $subscription_end }. You receive a clean personal signal stream.
+main-menu-status-free-active = 💎 Subscription: 🆓 Free tier (noisy stream). Delivery is active.
+main-menu-status-free-paused = 💎 Subscription: ❌ Not active.
+
+⚠️ Signal delivery is paused. Press the unlock button below to start receiving signals.
+main-menu-status-trial-available = 💎 Subscription: ❌ Not active.
+
+🎁 You have a free 3-day VIP trial available.
+kb-main-unlock-signals = 🔓 Enable Free Signals
+kb-main-upgrade-vip = 💎 Upgrade to VIP (Remove Noise)
+gate-unlock-screen = ⚠️ Activate Free Signal Stream
+
+To receive the free Bybit liquidation stream in real time:
+1. Subscribe to our News Channel
+2. Join the Community Chat
+
+After joining, press the confirmation button below:
+gate-button-verify-action = ✅ Verify and Enable Signals

@@ -7,7 +7,7 @@ from typing import Any, TypedDict, cast
 import orjson
 
 from aiogram import Bot
-from aiogram.exceptions import TelegramBadRequest, TelegramRetryAfter
+from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError, TelegramRetryAfter
 
 from src.bot.notifier import build_alert_payload, send_liquidation_alert
 from src.core.config import config, setup_logging
@@ -33,6 +33,7 @@ logger = logging.getLogger(__name__)
 class CachedAlertTarget(TypedDict):
     id: int
     language_code: str
+    is_vip: bool
     threshold: float
     threshold_cascade: float
     threshold_mode: str
@@ -82,9 +83,17 @@ def _decode_redis_payload(payload: bytes | str | None) -> bytes | None:
 
 
 def _build_cached_target(source: Any, target_id: int) -> CachedAlertTarget:
+    subscription_end = getattr(source, "subscription_end", None)
+    is_blocked = bool(getattr(source, "is_blocked", False))
+    is_vip = bool(
+        subscription_end is not None
+        and subscription_end > get_utc_now()
+        and not is_blocked
+    )
     return {
         "id": target_id,
         "language_code": normalize_locale_code(getattr(source, "language_code", None)),
+        "is_vip": is_vip,
         "threshold": float(source.threshold),
         "threshold_cascade": float(source.threshold_cascade),
         "threshold_mode": str(source.threshold_mode),
@@ -108,13 +117,63 @@ def _build_cached_target(source: Any, target_id: int) -> CachedAlertTarget:
 
 
 def _is_user_active(user: Any) -> bool:
-    subscription_end = getattr(user, "subscription_end", None)
+    """
+    Пользователь считается активным (получает сигналы / в кэше), если он незаблокирован.
+    VIP/FREE-статус определяется полем is_vip в CachedAlertTarget и отдельно Gatekeeper'ом.
+    """
     return (
         user is not None
         and not bool(getattr(user, "is_blocked", False))
-        and subscription_end is not None
-        and subscription_end > get_utc_now()
     )
+
+
+_ALLOWED_MEMBER_STATUSES = {"member", "administrator", "creator", "restricted"}
+
+
+async def check_user_channel_membership(bot: Bot, user_id: int) -> bool:
+    """
+    Проверяет членство пользователя в Новостном канале и Чате сообщества (AND).
+    Если ресурсы не заданы в конфиге — считаем проверку пройденной.
+    Ошибки доступа → False (fail-closed).
+    """
+    if not config.NEWS_CHANNEL_ID and not config.COMMUNITY_GROUP_ID:
+        return True
+
+    checks: list[tuple[int | str | None, str]] = [
+        (config.NEWS_CHANNEL_ID, "NEWS_CHANNEL_ID"),
+        (config.COMMUNITY_GROUP_ID, "COMMUNITY_GROUP_ID"),
+    ]
+
+    for resource_id, _name in checks:
+        if resource_id is None:
+            continue
+        if isinstance(resource_id, str) and not resource_id.strip():
+            continue
+        try:
+            member = await bot.get_chat_member(resource_id, user_id)
+            status = getattr(member, "status", None)
+            if status not in _ALLOWED_MEMBER_STATUSES:
+                return False
+        except TelegramBadRequest:
+            logger.warning(
+                "check_user_channel_membership: TelegramBadRequest user_id=%s resource=%s",
+                user_id, _name,
+            )
+            return False
+        except TelegramForbiddenError:
+            logger.warning(
+                "check_user_channel_membership: TelegramForbiddenError user_id=%s resource=%s",
+                user_id, _name,
+            )
+            return False
+        except Exception as e:
+            logger.error(
+                "check_user_channel_membership: unhandled error user_id=%s resource=%s: %s",
+                user_id, _name, e,
+            )
+            return False
+
+    return True
 
 
 async def _check_triggers_from_dto(
@@ -482,11 +541,13 @@ class MessengerWorker:
         if target_msg_id is None:
             target_msg_id = await self._load_placeholder_message_id()
 
-        photo_file_id = None
+        photo_file_id_vip: str | None = None
         if target_msg_id is not None:
-            photo_file_id = await self._resolve_media_to_file_id(target_msg_id)
+            photo_file_id_vip = await self._resolve_media_to_file_id(target_msg_id)
+
         targets = await self._get_targets_snapshot()
-        prepared_alerts: list[tuple[int, dict[str, Any]]] = []
+        prepared_vip_alerts: list[tuple[int, dict[str, Any]]] = []
+        prepared_free_alerts: list[tuple[int, dict[str, Any]]] = []
 
         for target in targets:
             try:
@@ -511,20 +572,57 @@ class MessengerWorker:
                 alert_type=trigger_result["alert_type"],
                 alert_title=trigger_result["alert_title"],
             )
-            prepared_alerts.append((recipient_id, payload))
 
-        if not prepared_alerts:
+            if bool(target.get("is_vip", False)):
+                prepared_vip_alerts.append((recipient_id, payload))
+                continue
+
+            # FREE сегмент: Gatekeeper + no-chart
+            try:
+                gate_status = await redis_bus.get_gate_status(recipient_id)
+                if gate_status is None:
+                    is_allowed = await check_user_channel_membership(self.bot, recipient_id)
+                    await redis_bus.set_gate_status(
+                        recipient_id,
+                        is_allowed,
+                        ttl=config.GATE_CACHE_TTL_SEC,
+                    )
+                    gate_status = is_allowed
+            except Exception:
+                logger.exception("Gatekeeper error during send for user_id=%s", recipient_id)
+                gate_status = False
+
+            if not gate_status:
+                continue
+
+            prepared_free_alerts.append((recipient_id, payload))
+
+        if not prepared_vip_alerts and not prepared_free_alerts:
             return
 
-        await self._dispatch_batches([
+        alert_tasks: list[Any] = []
+
+        alert_tasks.extend([
             send_liquidation_alert(
                 self.bot,
                 recipient_id,
-                photo_file_id=photo_file_id,
+                photo_file_id=photo_file_id_vip,
                 **payload,
             )
-            for recipient_id, payload in prepared_alerts
+            for recipient_id, payload in prepared_vip_alerts
         ])
+
+        alert_tasks.extend([
+            send_liquidation_alert(
+                self.bot,
+                recipient_id,
+                photo_file_id=None,
+                **payload,
+            )
+            for recipient_id, payload in prepared_free_alerts
+        ])
+
+        await self._dispatch_batches(alert_tasks)
 
     async def run(self) -> None:
         self.bot = await self._create_bot()

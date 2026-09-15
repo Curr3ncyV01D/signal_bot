@@ -7,7 +7,11 @@ from aiogram.types import FSInputFile, InputMediaPhoto
 from aiogram_i18n import I18nContext
 from sqlalchemy.ext.asyncio import AsyncSession
 from src.database.models import User
-from src.database.crud.user_service import apply_user_setting_preset, update_user_settings
+from src.database.crud.user_service import (
+    apply_user_setting_preset,
+    is_user_vip,
+    update_user_settings,
+)
 from src.bot.keyboards import (
     get_back_to_settings_kb,
     get_preset_confirmation_kb,
@@ -52,22 +56,22 @@ def _build_presets_catalog_caption(i18n: I18nContext) -> str:
         scalper_cascade=format_smart_num(scalper.threshold_cascade),
         scalper_oi_percent=format_smart_num(scalper.threshold_oi_percent, is_percent=True, decimal_places=1),
         scalper_oi_value=format_smart_num(scalper.threshold_oi_value),
-        scalper_rsi_min=_format_rsi(scalper.rsi_min),
-        scalper_rsi_max=_format_rsi(scalper.rsi_max),
+        scalper_rsi_min=_format_rsi(scalper.filter_rsi_min),
+        scalper_rsi_max=_format_rsi(scalper.filter_rsi_max),
         balanced_mode=balanced.threshold_mode,
         balanced_threshold=format_smart_num(balanced.threshold),
         balanced_cascade=format_smart_num(balanced.threshold_cascade),
         balanced_oi_percent=format_smart_num(balanced.threshold_oi_percent, is_percent=True, decimal_places=1),
         balanced_oi_value=format_smart_num(balanced.threshold_oi_value),
-        balanced_rsi_min=_format_rsi(balanced.rsi_min),
-        balanced_rsi_max=_format_rsi(balanced.rsi_max),
+        balanced_rsi_min=_format_rsi(balanced.filter_rsi_min),
+        balanced_rsi_max=_format_rsi(balanced.filter_rsi_max),
         conservative_mode=conservative.threshold_mode,
         conservative_threshold=format_smart_num(conservative.threshold),
         conservative_cascade=format_smart_num(conservative.threshold_cascade),
         conservative_oi_percent=format_smart_num(conservative.threshold_oi_percent, is_percent=True, decimal_places=1),
         conservative_oi_value=format_smart_num(conservative.threshold_oi_value),
-        conservative_rsi_min=_format_rsi(conservative.rsi_min),
-        conservative_rsi_max=_format_rsi(conservative.rsi_max),
+        conservative_rsi_min=_format_rsi(conservative.filter_rsi_min),
+        conservative_rsi_max=_format_rsi(conservative.filter_rsi_max),
     )
 
 
@@ -87,8 +91,8 @@ def _build_preset_confirmation_caption(i18n: I18nContext, preset_id: SettingPres
         threshold_cascade_mcap_usd_min=format_smart_num(preset.threshold_cascade_mcap_usd_min),
         threshold_oi_percent=format_smart_num(preset.threshold_oi_percent, is_percent=True, decimal_places=1),
         threshold_oi_value=format_smart_num(preset.threshold_oi_value),
-        rsi_min=_format_rsi(preset.rsi_min),
-        rsi_max=_format_rsi(preset.rsi_max),
+        rsi_min=_format_rsi(preset.filter_rsi_min),
+        rsi_max=_format_rsi(preset.filter_rsi_max),
         preset_description=i18n.get(f"settings-preset-description-{preset_id.lower()}"),
     )
 
@@ -103,50 +107,79 @@ def _format_rsi(value: float) -> int:
 
 async def render_setting_presets_catalog(
     event: types.Message | types.CallbackQuery,
+    session: AsyncSession,
     i18n: I18nContext,
 ) -> None:
+    user = None
+    if isinstance(event, types.CallbackQuery):
+        user = await session.get(User, event.from_user.id)
+    elif isinstance(event, types.Message):
+        user = await session.get(User, event.from_user.id)
+
     await _render_settings_screen(
         event,
         _build_presets_catalog_caption(i18n),
-        get_presets_selection_kb(),
+        get_presets_selection_kb(user),
         image_path=ImagePaths.SETTINGS,
     )
 
 
 async def render_setting_preset_confirmation(
     event: types.Message | types.CallbackQuery,
+    session: AsyncSession,
     i18n: I18nContext,
     preset_id: SettingPresetId,
 ) -> None:
+    user = None
+    if isinstance(event, types.CallbackQuery):
+        user = await session.get(User, event.from_user.id)
+    elif isinstance(event, types.Message):
+        user = await session.get(User, event.from_user.id)
+
     await _render_settings_screen(
         event,
         _build_preset_confirmation_caption(i18n, preset_id),
-        get_preset_confirmation_kb(preset_id),
+        get_preset_confirmation_kb(preset_id, user),
         image_path=ImagePaths.SETTINGS,
     )
 
 
 @router.callback_query(F.data == "toggle_threshold_mode")
 async def toggle_threshold_mode_handler(callback: types.CallbackQuery, session: AsyncSession, i18n: I18nContext):
-    # Получаем текущего пользователя для инверсии режима
     user_obj = await session.get(User, callback.from_user.id)
     if not user_obj:
         return await callback.answer(i18n.get("settings-error-profile"), show_alert=True)
-        
+
+    # === PAYWALL: VIP-only ===
+    if not is_user_vip(user_obj):
+        return await callback.answer(i18n.get("paywall-settings-locked-alert"), show_alert=True)
+
     new_mode = "PERCENT" if user_obj.threshold_mode == "USD" else "USD"
-    
-    # Обновляем через универсальный метод (pattern: ChannelService.update_settings)
+
     user = await update_user_settings(session, callback.from_user.id, threshold_mode=new_mode)
     if not user:
         return await callback.answer(i18n.get("settings-error-save"), show_alert=True)
-    
+
     await analyzer.invalidate_user_cache(callback.from_user.id)
     await render_settings_filters_menu(callback, user, i18n)
     await callback.answer(i18n.get("settings-mode-changed", mode=user.threshold_mode))
 
 
 @router.callback_query(F.data.in_(["set_mcap_pct", "set_mcap_min_usd", "set_mcap_cas_pct", "set_mcap_cas_min_usd"]))
-async def set_mcap_parameter_start(callback: types.CallbackQuery, state: FSMContext, i18n: I18nContext):
+async def set_mcap_parameter_start(
+    callback: types.CallbackQuery,
+    state: FSMContext,
+    i18n: I18nContext,
+    session: AsyncSession,
+):
+    user = await session.get(User, callback.from_user.id)
+    if not user:
+        return await callback.answer(i18n.get("settings-error-profile"), show_alert=True)
+
+    # === PAYWALL: VIP-only ===
+    if not is_user_vip(user):
+        return await callback.answer(i18n.get("paywall-settings-locked-alert"), show_alert=True)
+
     data = callback.data
     if data == "set_mcap_pct":
         await state.set_state(SettingsStates.waiting_for_mcap_pct)
@@ -304,12 +337,22 @@ def _build_settings_rsi_caption(i18n: I18nContext) -> str:
     return i18n.get("settings-rsi-thresholds-prompt")
 
 
-async def render_settings_rsi_menu(event: types.Message | types.CallbackQuery, i18n: I18nContext):
+async def render_settings_rsi_menu(
+    event: types.Message | types.CallbackQuery,
+    session: AsyncSession,
+    i18n: I18nContext,
+):
     """Подменю настройки RSI-гейта."""
+    user = None
+    if isinstance(event, types.CallbackQuery):
+        user = await session.get(User, event.from_user.id)
+    elif isinstance(event, types.Message):
+        user = await session.get(User, event.from_user.id)
+
     await _render_settings_screen(
         event,
         _build_settings_rsi_caption(i18n),
-        get_settings_rsi_kb(),
+        get_settings_rsi_kb(user),
         image_path=ImagePaths.SETTINGS,
     )
 
@@ -404,7 +447,7 @@ async def process_open_setting_presets(callback: types.CallbackQuery, session: A
     user = await session.get(User, callback.from_user.id)
     if not user:
         return await callback.answer(i18n.get("settings-error-profile"), show_alert=True)
-    await render_setting_presets_catalog(callback, i18n)
+    await render_setting_presets_catalog(callback, session, i18n)
     await callback.answer()
 
 
@@ -420,7 +463,7 @@ async def process_open_setting_preset_confirmation(
     if preset_id not in PRESET_ORDER:
         return await callback.answer(i18n.get("settings-save-error"), show_alert=True)
 
-    await render_setting_preset_confirmation(callback, i18n, preset_id)
+    await render_setting_preset_confirmation(callback, session, i18n, preset_id)
     await callback.answer()
 
 
@@ -429,6 +472,13 @@ async def process_apply_setting_preset(callback: types.CallbackQuery, session: A
     preset_id = callback.data.removeprefix("apply_setting_preset_").upper()
     if preset_id not in PRESET_ORDER:
         return await callback.answer(i18n.get("settings-save-error"), show_alert=True)
+
+    # === PAYWALL: VIP-only ===
+    user = await session.get(User, callback.from_user.id)
+    if not user:
+        return await callback.answer(i18n.get("settings-error-profile"), show_alert=True)
+    if not is_user_vip(user):
+        return await callback.answer(i18n.get("paywall-settings-locked-alert"), show_alert=True)
 
     user = await apply_user_setting_preset(session, callback.from_user.id, preset_id)
     if not user:
@@ -459,12 +509,15 @@ async def show_help_analytics(callback: types.CallbackQuery, i18n: I18nContext):
 
 @router.callback_query(F.data.startswith("toggle_"))
 async def toggle_settings(callback: types.CallbackQuery, session: AsyncSession, i18n: I18nContext):
-    setting_type = callback.data.replace("toggle_", "") 
-    
-    # Получаем текущего пользователя для инверсии настройки
+    setting_type = callback.data.replace("toggle_", "")
+
     user_obj = await session.get(User, callback.from_user.id)
     if not user_obj: return
-    
+
+    # === PAYWALL: VIP-only ===
+    if not is_user_vip(user_obj):
+        return await callback.answer(i18n.get("paywall-settings-locked-alert"), show_alert=True)
+
     update_data = {}
     if setting_type == "cascade": update_data["alert_cascade"] = not user_obj.alert_cascade
     elif setting_type == "volume": update_data["alert_volume"] = not user_obj.alert_volume
@@ -474,10 +527,9 @@ async def toggle_settings(callback: types.CallbackQuery, session: AsyncSession, 
     elif setting_type == "cvd": update_data["alert_cvd"] = not user_obj.alert_cvd
     elif setting_type == "longs": update_data["alert_longs"] = not user_obj.alert_longs
     elif setting_type == "shorts": update_data["alert_shorts"] = not user_obj.alert_shorts
-        
-    # Обновляем через универсальный метод (pattern: ChannelService.update_settings)
+
     user = await update_user_settings(session, callback.from_user.id, **update_data)
-    
+
     if user:
         await analyzer.invalidate_user_cache(callback.from_user.id)
         if setting_type in {"cascade", "volume", "squeeze", "longs", "shorts"}:
@@ -488,7 +540,20 @@ async def toggle_settings(callback: types.CallbackQuery, session: AsyncSession, 
 
 # === ЛИКВИДАЦИИ: НАСТРОЙКА ПОРОГОВ ===
 @router.callback_query(F.data == "set_threshold")
-async def start_set_threshold(callback: types.CallbackQuery, state: FSMContext, i18n: I18nContext):
+async def start_set_threshold(
+    callback: types.CallbackQuery,
+    state: FSMContext,
+    i18n: I18nContext,
+    session: AsyncSession,
+):
+    user = await session.get(User, callback.from_user.id)
+    if not user:
+        return await callback.answer(i18n.get("settings-error-profile"), show_alert=True)
+
+    # === PAYWALL: VIP-only ===
+    if not is_user_vip(user):
+        return await callback.answer(i18n.get("paywall-settings-locked-alert"), show_alert=True)
+
     await callback.message.answer(i18n.get("settings-enter-threshold"))
     await state.set_state(SettingsStates.waiting_for_threshold)
     await callback.answer()
@@ -517,7 +582,20 @@ async def process_threshold(message: types.Message, state: FSMContext, session: 
         await message.answer(i18n.get("settings-save-error"))
 
 @router.callback_query(F.data == "set_cascade_threshold")
-async def start_set_cascade_threshold(callback: types.CallbackQuery, state: FSMContext, i18n: I18nContext):
+async def start_set_cascade_threshold(
+    callback: types.CallbackQuery,
+    state: FSMContext,
+    i18n: I18nContext,
+    session: AsyncSession,
+):
+    user = await session.get(User, callback.from_user.id)
+    if not user:
+        return await callback.answer(i18n.get("settings-error-profile"), show_alert=True)
+
+    # === PAYWALL: VIP-only ===
+    if not is_user_vip(user):
+        return await callback.answer(i18n.get("paywall-settings-locked-alert"), show_alert=True)
+
     await callback.message.answer(i18n.get("settings-enter-cascade-threshold"))
     await state.set_state(SettingsStates.waiting_for_cascade_threshold)
     await callback.answer()
@@ -548,7 +626,20 @@ async def process_cascade_threshold(message: types.Message, state: FSMContext, s
 
 # === АНАЛИТИКА: НАСТРОЙКА ПОРОГОВ ОИ ===
 @router.callback_query(F.data == "menu_oi_thresholds")
-async def start_set_oi_thresholds(callback: types.CallbackQuery, state: FSMContext, i18n: I18nContext):
+async def start_set_oi_thresholds(
+    callback: types.CallbackQuery,
+    state: FSMContext,
+    i18n: I18nContext,
+    session: AsyncSession,
+):
+    user = await session.get(User, callback.from_user.id)
+    if not user:
+        return await callback.answer(i18n.get("settings-error-profile"), show_alert=True)
+
+    # === PAYWALL: VIP-only ===
+    if not is_user_vip(user):
+        return await callback.answer(i18n.get("paywall-settings-locked-alert"), show_alert=True)
+
     await callback.message.answer(i18n.get("settings-oi-thresholds-prompt"), parse_mode="HTML")
     await state.set_state(SettingsStates.waiting_for_oi_thresholds)
     await callback.answer()
@@ -607,7 +698,7 @@ async def start_rsi_menu(
     user = await session.get(User, callback.from_user.id)
     if not user:
         return await callback.answer(i18n.get("settings-error-profile"), show_alert=True)
-    await render_settings_rsi_menu(callback, i18n)
+    await render_settings_rsi_menu(callback, session, i18n)
     await callback.answer()
 
 
@@ -618,6 +709,13 @@ async def apply_rsi_preset(
     preset_id = callback.data.removeprefix("set_rsi_preset_").upper()
     if preset_id not in _RSI_PRESET_BAND_MAP:
         return await callback.answer(i18n.get("settings-save-error"), show_alert=True)
+
+    # === PAYWALL: VIP-only ===
+    user = await session.get(User, callback.from_user.id)
+    if not user:
+        return await callback.answer(i18n.get("settings-error-profile"), show_alert=True)
+    if not is_user_vip(user):
+        return await callback.answer(i18n.get("paywall-settings-locked-alert"), show_alert=True)
 
     rsi_min, rsi_max = _RSI_PRESET_BAND_MAP[preset_id]
     user = await update_user_settings(
@@ -642,8 +740,19 @@ async def apply_rsi_preset(
 
 @router.callback_query(F.data == "set_rsi_manual_start")
 async def start_rsi_manual_input(
-    callback: types.CallbackQuery, state: FSMContext, i18n: I18nContext
+    callback: types.CallbackQuery,
+    state: FSMContext,
+    i18n: I18nContext,
+    session: AsyncSession,
 ):
+    user = await session.get(User, callback.from_user.id)
+    if not user:
+        return await callback.answer(i18n.get("settings-error-profile"), show_alert=True)
+
+    # === PAYWALL: VIP-only ===
+    if not is_user_vip(user):
+        return await callback.answer(i18n.get("paywall-settings-locked-alert"), show_alert=True)
+
     await state.set_state(SettingsStates.waiting_for_rsi_thresholds)
     await callback.message.answer(
         i18n.get("settings-rsi-thresholds-prompt"), parse_mode="HTML"
