@@ -312,5 +312,52 @@ end
             await cls._handle_redis_error("Не удалось отправить cache invalidation в Redis Pub/Sub.")
             return 0
 
+    @staticmethod
+    def _gate_key(user_id: int) -> str:
+        return f"csl:gate:{user_id}"
+
+    @classmethod
+    async def set_gate_status(
+        cls,
+        user_id: int,
+        is_allowed: bool,
+        ttl: int | None = None,
+    ) -> bool:
+        """
+        Записывает статус допуска к сигналам Gatekeeper.
+        Ключ: csl:gate:{user_id}, значение "1" или "0".
+        TTL по умолчанию берётся из config.GATE_CACHE_TTL_SEC.
+        """
+        resolved_ttl = config.GATE_CACHE_TTL_SEC if ttl is None else int(ttl)
+        value = "1" if bool(is_allowed) else "0"
+        return await cls.set_key(
+            key=cls._gate_key(user_id),
+            value=value,
+            expire_seconds=resolved_ttl,
+        )
+
+    @classmethod
+    async def get_gate_status(cls, user_id: int) -> bool | None:
+        """
+        Читает статус допуска к сигналам Gatekeeper.
+        Возвращает True для "1", False для "0", None если ключ отсутствует
+        или Redis недоступен.
+        """
+        raw = await cls.get_key(cls._gate_key(user_id))
+        if raw is None:
+            return None
+
+        if isinstance(raw, bytes):
+            decoded = raw.decode("utf-8")
+        else:
+            decoded = str(raw)
+
+        normalized = decoded.strip()
+        if normalized == "1":
+            return True
+        if normalized == "0":
+            return False
+        return None
+
 
 redis_bus = RedisBus()

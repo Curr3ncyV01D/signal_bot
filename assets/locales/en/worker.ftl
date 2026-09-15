@@ -69,3 +69,19 @@ bouncer-subscription-expired =
 
     Personal signal delivery has been suspended.
     Press /start and renew your subscription to restore access.
+
+bouncer-degraded-to-free-notification =
+    ⏳ Your VIP access period has expired.
+
+    You have been switched to the basic free signal stream with standard filters.
+    To restore personal settings, activate a subscription via the /start menu.
+
+bouncer-expired-unsubscribed-notification =
+    ⏳ Your VIP access period has expired.
+
+    Signal delivery has been paused because you are not subscribed to our news channel and community chat.
+    Subscribe to the resources below and press the verify button to continue receiving free signals:
+
+gate-button-channel = 📢 News Channel
+gate-button-chat = 💬 Community Chat
+gate-button-verify = 🔄 Verify Subscription

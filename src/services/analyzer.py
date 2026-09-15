@@ -11,6 +11,7 @@ from src.core.dto import SignalAlertType, SignalDTO, SignalOhlcRow, SignalSideLa
 from src.core.localization import normalize_locale_code
 from src.core.redis_bus import redis_bus
 from src.database.crud.user_service import get_active_users
+from src.database.functions import get_utc_now
 from src.database.session import async_session
 from src.services.logic.trigger_engine import (
     build_alert_title,
@@ -24,6 +25,7 @@ logger = logging.getLogger(__name__)
 class CachedAlertTarget(TypedDict):
     id: int
     language_code: str
+    is_vip: bool
     threshold: float
     threshold_cascade: float
     threshold_mode: str
@@ -68,9 +70,17 @@ def _decode_redis_payload(payload: bytes | str | None) -> bytes | None:
 
 
 def _build_cached_target(source: Any, target_id: int) -> CachedAlertTarget:
+    subscription_end = getattr(source, "subscription_end", None)
+    is_blocked = bool(getattr(source, "is_blocked", False))
+    is_vip = bool(
+        subscription_end is not None
+        and subscription_end > get_utc_now()
+        and not is_blocked
+    )
     return {
         "id": target_id,
         "language_code": normalize_locale_code(getattr(source, "language_code", None)),
+        "is_vip": is_vip,
         "threshold": float(source.threshold),
         "threshold_cascade": float(source.threshold_cascade),
         "threshold_mode": str(source.threshold_mode),

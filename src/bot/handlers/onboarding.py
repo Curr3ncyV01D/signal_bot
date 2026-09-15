@@ -9,11 +9,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.core.config import ImagePaths, config
 from src.core.dto import SettingPresetId
 from src.core.localization import normalize_locale_code
+from src.core.redis_bus import redis_bus
 from src.database.crud import billing_service
 from src.database.crud.user_service import (
+    activate_trial,
     apply_user_setting_preset,
     complete_user_setup,
     get_or_create_user,
+    is_user_vip,
 )
 from src.database.models import User
 from src.services.analyzer import invalidate_user_cache
@@ -355,50 +358,175 @@ async def process_open_community_bonus(
     await callback.answer()
 
 
-@router.callback_query(F.data == "verify_community_join")
-async def process_verify_community_join(
+_GATE_ALLOWED_MEMBER_STATUSES = {"member", "administrator", "creator", "restricted"}
+
+
+async def _verify_gate_resources_membership(bot, user_id: int) -> tuple[bool, bool]:
+    """
+    Проверяет членство пользователя в ОБОИХ ресурсах: новостном канале + чат сообщества.
+    Если ресурс не задан — считает его выполненным.
+    Возвращает кортеж (is_community_member_only, is_gate_approved):
+      - is_community_member_only: True если в COMMUNITY_GROUP_ID пользователь есть (для бонуса)
+      - is_gate_approved: True если в ОБОИХ ресурсах пользователь есть (для Gatekeeper)
+    При любой ошибке API возвращает (False, False).
+    """
+    is_community_ok: bool = False
+    is_news_ok: bool = True
+
+    if config.NEWS_CHANNEL_ID:
+        try:
+            member = await bot.get_chat_member(config.NEWS_CHANNEL_ID, user_id)
+            status = getattr(member, "status", None)
+            is_news_ok = bool(status in _GATE_ALLOWED_MEMBER_STATUSES)
+        except Exception as exc:
+            logger.warning(
+                "Не удалось проверить участие пользователя %s в news_channel: %s",
+                user_id, exc,
+            )
+            return False, False
+
+    if config.COMMUNITY_GROUP_ID:
+        try:
+            member = await bot.get_chat_member(config.COMMUNITY_GROUP_ID, user_id)
+            status = getattr(member, "status", None)
+            is_community_ok = bool(status in _GATE_ALLOWED_MEMBER_STATUSES)
+        except Exception as exc:
+            logger.warning(
+                "Не удалось проверить участие пользователя %s в community: %s",
+                user_id, exc,
+            )
+            return False, False
+    else:
+        is_community_ok = True
+
+    gate_approved = is_news_ok and is_community_ok
+    return is_community_ok, gate_approved
+
+
+async def _update_gate_status_and_answer(
+    callback: types.CallbackQuery,
+    i18n: I18nContext,
+    gate_approved: bool,
+) -> None:
+    """Обновляет Redis gate status и отвечает на callback алертом."""
+    try:
+        await redis_bus.set_gate_status(
+            int(callback.from_user.id),
+            gate_approved,
+            ttl=config.GATE_CACHE_TTL_SEC,
+        )
+    except Exception:
+        logger.exception(
+            "Ошибка записи gate status в Redis user_id=%s gate=%s",
+            callback.from_user.id, gate_approved,
+        )
+
+    key = "gate-subscription-verified" if gate_approved else "gate-subscription-not-found"
+    await callback.answer(i18n.get(key), show_alert=True)
+
+
+@router.callback_query(F.data.in_({"verify_community_join", "verify_gate_sub"}))
+async def process_verify_gate_subscription(
     callback: types.CallbackQuery,
     session: AsyncSession,
     i18n: I18nContext,
 ) -> None:
-    if not _is_community_bonus_available():
-        await callback.answer(i18n.get("community-bonus-unavailable"), show_alert=True)
-        return
+    """
+    Универсальный обработчик ручной проверки членства в медиа-ресурсах:
+      - verify_community_join: экран бонус-оффера (проверяет + бонус + gate)
+      - verify_gate_sub: кнопка «Проверить подписку» из Bouncer-уведомления (только gate)
+    """
+    action = str(callback.data)
+
+    # 1. Универсальная проверка обоих ресурсов + обновление gate status в Redis
+    is_community_member, gate_approved = await _verify_gate_resources_membership(
+        callback.bot, callback.from_user.id,
+    )
 
     user = await session.get(User, callback.from_user.id)
     if not user:
         await callback.answer(i18n.get("profile-not-found-start"), show_alert=True)
         return
 
-    if user.is_community_bonus_used:
-        await callback.answer(i18n.get("community-bonus-already-used"), show_alert=True)
+    # 2. Если пользователь пришел с экрана community bonus: оригинальная логика применения бонуса
+    if action == "verify_community_join":
+        if not _is_community_bonus_available():
+            # Бонус недоступен (ресурс отключен в конфиге) → отвечаем только gate-статусом
+            await _update_gate_status_and_answer(callback, i18n, gate_approved)
+            return
+
+        if user.is_community_bonus_used:
+            await _update_gate_status_and_answer(callback, i18n, gate_approved)
+            return
+
+        if not is_community_member:
+            # Оригинальное сообщение о необходимости вступления именно в community
+            try:
+                await redis_bus.set_gate_status(
+                    int(callback.from_user.id),
+                    False,
+                    ttl=config.GATE_CACHE_TTL_SEC,
+                )
+            except Exception:
+                pass
+            await callback.answer(i18n.get("community-bonus-join-required"), show_alert=True)
+            return
+
+        # Пользователь в community — применяем бонус и переводим на следующий шаг онбординга
+        success, _ = await billing_service.apply_community_bonus(session, callback.from_user.id)
+        if not success:
+            await session.rollback()
+            await _update_gate_status_and_answer(callback, i18n, gate_approved)
+            return
+
+        user.onboarding_step = "PRESET_SELECTION"
+        try:
+            await session.commit()
+            await session.refresh(user)
+        except Exception:
+            await session.rollback()
+            await _update_gate_status_and_answer(callback, i18n, gate_approved)
+            return
+
+        await _update_gate_status_and_answer(callback, i18n, gate_approved)
+        # После успешного подтверждения бонуса — идем дальше на выбор пресета
+        # (если мы на экране онбординга, а не в диалоге после Bouncer)
+        if _resolve_onboarding_step(user) == "PRESET_SELECTION":
+            await render_presets_selection_screen(callback, i18n)
         return
 
+    # 3. verify_gate_sub или любой другой алиас — только gate-проверка, нет шагов онбординга
+    await _update_gate_status_and_answer(callback, i18n, gate_approved)
+    # После ручной верификации — показываем обновлённое главное меню (Clean State Model).
+    # Пользователь, только что подтвердивший членство, автоматом попадает в STATE_FREE_ACTIVE
+    # (или STATE_VIP_ACTIVE если уже купил) с актуальной CTA-кнопкой.
     try:
-        member = await callback.bot.get_chat_member(
-            chat_id=config.COMMUNITY_GROUP_ID,
-            user_id=callback.from_user.id,
-        )
+        if callback.message is not None:
+            from src.bot.handlers.commands import render_main_menu
+
+            assert user is not None, "user expected to be fetched earlier"
+            await render_main_menu(
+                callback,
+                user,
+                callback.from_user.full_name,
+                i18n,
+            )
     except Exception as exc:
-        logger.warning("Не удалось проверить участие пользователя %s в community: %s", callback.from_user.id, exc)
-        await callback.answer(i18n.get("community-bonus-verification-error"), show_alert=True)
-        return
-
-    if member.status not in {"member", "administrator", "creator"}:
-        await callback.answer(i18n.get("community-bonus-join-required"), show_alert=True)
-        return
-
-    success, _ = await billing_service.apply_community_bonus(session, callback.from_user.id)
-    if not success:
-        await session.rollback()
-        await callback.answer(i18n.get("community-bonus-activation-failed"), show_alert=True)
-        return
-
-    user.onboarding_step = "PRESET_SELECTION"
-    await session.commit()
-    await session.refresh(user)
-    await render_presets_selection_screen(callback, i18n)
-    await callback.answer(i18n.get("community-bonus-granted-toast", hours=config.COMMUNITY_BONUS_HOURS))
+        logger.warning(
+            "Не удалось перерисовать главное меню после verify_gate_sub user=%s: %s",
+            callback.from_user.id,
+            exc,
+        )
+        # Graceful fallback: убираем старую gate-клавиатуру если не смогли нарисовать новую
+        try:
+            if (
+                callback.message
+                and getattr(callback.message, "reply_markup", None) is not None
+            ):
+                await callback.message.edit_reply_markup(reply_markup=None)
+        except Exception:
+            pass
+    return
 
 
 @router.callback_query(F.data.startswith("apply_onboarding_preset_"))
@@ -412,15 +540,42 @@ async def process_apply_onboarding_preset(
         await callback.answer(i18n.get("settings-error-save"), show_alert=True)
         return
 
-    user = await apply_user_setting_preset(session, callback.from_user.id, preset_id)
+    user = await session.get(User, callback.from_user.id)
     if user is None:
+        await callback.answer(i18n.get("profile-not-found-start"), show_alert=True)
+        return
+
+    user_with_preset = await apply_user_setting_preset(session, callback.from_user.id, preset_id)
+    if user_with_preset is None:
         await callback.answer(i18n.get("settings-error-save"), show_alert=True)
         return
+
+    if not user.is_trial_used:
+        activated, _ = await activate_trial(session, callback.from_user.id)
+        if activated:
+            _, _ = await billing_service.issue_bonus_subscription(
+                session=session,
+                user_id=callback.from_user.id,
+                hours=config.TRIAL_DURATION_DAYS * 24,
+                internal_description="billing-tx-trial-description",
+                locale=user.language_code,
+            )
+            try:
+                await session.commit()
+            except Exception:
+                await session.rollback()
+                logger.error(
+                    "Не удалось закоммитить триал в онбординге пользователя %s",
+                    callback.from_user.id,
+                )
+        await invalidate_user_cache(callback.from_user.id)
 
     completed_user = await complete_user_setup(session, callback.from_user.id)
     if completed_user is None:
         await callback.answer(i18n.get("settings-error-save"), show_alert=True)
         return
+
+    await invalidate_user_cache(callback.from_user.id)
 
     from src.bot.handlers.commands import render_main_menu
 
@@ -438,10 +593,37 @@ async def process_skip_onboarding_preset(
     session: AsyncSession,
     i18n: I18nContext,
 ) -> None:
+    user = await session.get(User, callback.from_user.id)
+    if user is None:
+        await callback.answer(i18n.get("profile-not-found-start"), show_alert=True)
+        return
+
+    if not user.is_trial_used:
+        activated, _ = await activate_trial(session, callback.from_user.id)
+        if activated:
+            _, _ = await billing_service.issue_bonus_subscription(
+                session=session,
+                user_id=callback.from_user.id,
+                hours=config.TRIAL_DURATION_DAYS * 24,
+                internal_description="billing-tx-trial-description",
+                locale=user.language_code,
+            )
+            try:
+                await session.commit()
+            except Exception:
+                await session.rollback()
+                logger.error(
+                    "Не удалось закоммитить триал при skip онбординга пользователя %s",
+                    callback.from_user.id,
+                )
+        await invalidate_user_cache(callback.from_user.id)
+
     completed_user = await complete_user_setup(session, callback.from_user.id)
     if completed_user is None:
         await callback.answer(i18n.get("settings-error-save"), show_alert=True)
         return
+
+    await invalidate_user_cache(callback.from_user.id)
 
     from src.bot.handlers.commands import render_main_menu
 

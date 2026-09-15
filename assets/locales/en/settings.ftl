@@ -238,3 +238,10 @@ kb-settings-back-root = ⬅️ Back to General Settings
 kb-settings-back-main = ⬅️ Back to Menu
 kb-settings-ask-question = 💬 Ask a Question
 kb-settings-back = ⬅️ Back to Settings
+
+# ===== Paywall (Phase 4) =====
+paywall-settings-locked-alert = 💎 Customizing filters and presets is available only with a VIP subscription.
+
+Standard signal filters are active on the Free tier. Upgrade to VIP to customize the terminal for your strategy.
+paywall-settings-locked-banner = 💎 Upgrade to VIP to customize filters for your strategy. Standard signal filters are active on the Free tier.
+kb-settings-buy-vip = 💎 Unlock Settings (VIP)

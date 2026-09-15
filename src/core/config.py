@@ -39,7 +39,7 @@ class Settings(BaseSettings):
     REDIS_CHART_CACHE_PREFIX: str = "csl:chart_cache"
     REDIS_PENDING_IDLE_MS: int = 30000
     LOG_CHANNEL_ID: str | None = None
-    NEWS_CHANNEL_ID: str | None = None
+    NEWS_CHANNEL_ID: int | str | None = None
     NEWS_CHANNEL_URL: str | None = None
     
     # === 2. ПЛАТЕЖНАЯ СИСТЕМА (Billing & CryptoPay / Cryptomus) ===
@@ -78,6 +78,7 @@ class Settings(BaseSettings):
     TRIAL_DURATION_DAYS: int = 1
     COMMUNITY_BONUS_HOURS: int = 48
     REFERRAL_BONUS_PERCENT: float = 15.0
+    FREE_TRIAL_TOTAL_DAYS: int = 3
     SETTING_PRESETS: dict[str, SettingPresetDTO] = Field(
         default_factory=lambda: {
             "SCALPER": SettingPresetDTO(
@@ -90,8 +91,8 @@ class Settings(BaseSettings):
                 threshold_mcap_usd_min=1000.0,
                 threshold_cascade_mcap_pct=0.008,
                 threshold_cascade_mcap_usd_min=1000.0,
-                rsi_min=35.0,
-                rsi_max=65.0,
+                filter_rsi_min=35.0,
+                filter_rsi_max=65.0,
                 alert_cascade=True,
                 alert_volume=True,
                 alert_squeeze=True,
@@ -111,8 +112,8 @@ class Settings(BaseSettings):
                 threshold_mcap_usd_min=5000.0,
                 threshold_cascade_mcap_pct=0.015,
                 threshold_cascade_mcap_usd_min=5000.0,
-                rsi_min=30.0,
-                rsi_max=70.0,
+                filter_rsi_min=30.0,
+                filter_rsi_max=70.0,
                 alert_cascade=True,
                 alert_volume=True,
                 alert_squeeze=True,
@@ -132,8 +133,8 @@ class Settings(BaseSettings):
                 threshold_mcap_usd_min=20000.0,
                 threshold_cascade_mcap_pct=0.1,
                 threshold_cascade_mcap_usd_min=20000.0,
-                rsi_min=20.0,
-                rsi_max=80.0,
+                filter_rsi_min=20.0,
+                filter_rsi_max=80.0,
                 alert_cascade=True,
                 alert_volume=True,
                 alert_squeeze=True,
@@ -142,6 +143,27 @@ class Settings(BaseSettings):
                 alert_oi=True,
                 alert_rsi=True,
                 alert_cvd=True,
+            ),
+            "FREE_NOISE": SettingPresetDTO(
+                threshold_mode="USD",
+                threshold=2000.0,
+                threshold_cascade=1500.0,
+                threshold_oi_percent=3.0,
+                threshold_oi_value=50000.0,
+                threshold_mcap_pct=0.005,
+                threshold_mcap_usd_min=1000.0,
+                threshold_cascade_mcap_pct=0.005,
+                threshold_cascade_mcap_usd_min=1000.0,
+                filter_rsi_min=40.0,
+                filter_rsi_max=60.0,
+                alert_cascade=True,
+                alert_volume=True,
+                alert_squeeze=True,
+                alert_longs=True,
+                alert_shorts=True,
+                alert_oi=True,
+                alert_rsi=True,
+                alert_cvd=False,
             ),
         }
     )
@@ -180,6 +202,7 @@ class Settings(BaseSettings):
     OI_WINDOW_MINUTES: int = 5                   # Окно анализа изменения ОИ (минуты)
     TICKER_THROTTLE_SEC: float = 2.0             # Лимит частоты обновления цен (сек) для разгрузки CPU
     CHART_CACHE_TTL_SEC: int = 180               # Время жизни кэша готового графика (сек)
+    GATE_CACHE_TTL_SEC: int = 600                # TTL кэша проверки членства в каналах (10 минут)
     CHART_PRICE_DELTA_THRESHOLD: float = 0.005   # Порог изменения цены (0.5%) для перерисовки графика
     CHART_MIN_VOLUME_USD: float = 5000.0         # Мин. USD объем ликвидации для рендера графика
     CHART_MIN_CAP_RATIO: float = 0.01            # Мин. % от капитализации для рендера графика
@@ -198,15 +221,32 @@ class Settings(BaseSettings):
     # Фильтрация монет
     IGNORED_SYMBOLS: list[str] = [] 
 
-    @field_validator("LOG_CHANNEL_ID", "NEWS_CHANNEL_ID", mode="before")
+    @field_validator("LOG_CHANNEL_ID", mode="before")
     @classmethod
-    def parse_optional_channel_ids(cls, value: str | None) -> str | None:
+    def parse_optional_log_channel_id(cls, value: str | None) -> str | None:
         if value is None:
             return None
         if isinstance(value, str):
             normalized = value.strip()
             return normalized or None
         return str(value)
+
+    @field_validator("NEWS_CHANNEL_ID", mode="before")
+    @classmethod
+    def parse_optional_news_channel_id(cls, value: int | str | None) -> int | str | None:
+        if value is None:
+            return None
+        if isinstance(value, int):
+            return value
+        if isinstance(value, str):
+            normalized = value.strip()
+            if not normalized:
+                return None
+            try:
+                return int(normalized)
+            except ValueError:
+                return normalized
+        return value
 
     @field_validator("IGNORED_SYMBOLS", mode="before")
     @classmethod
