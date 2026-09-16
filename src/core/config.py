@@ -147,10 +147,10 @@ class Settings(BaseSettings):
             ),
             "FREE_NOISE": SettingPresetDTO(
                 threshold_mode="USD",
-                threshold=2000.0,
-                threshold_cascade=1500.0,
-                threshold_oi_percent=3.0,
-                threshold_oi_value=50000.0,
+                threshold=3000.0,
+                threshold_cascade=2000.0,
+                threshold_oi_percent=10.0,
+                threshold_oi_value=200000.0,
                 threshold_mcap_pct=0.005,
                 threshold_mcap_usd_min=1000.0,
                 threshold_cascade_mcap_pct=0.005,
@@ -163,7 +163,7 @@ class Settings(BaseSettings):
                 alert_longs=True,
                 alert_shorts=True,
                 alert_oi=True,
-                alert_rsi=True,
+                alert_rsi=False,
                 alert_cvd=False,
             ),
         }
