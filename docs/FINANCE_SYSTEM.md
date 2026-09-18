@@ -10,11 +10,23 @@
   - [billing_processor.py](file:///root/signal_bot_dev/src/services/logic/billing_processor.py)
   - [cryptomus.py](file:///root/signal_bot_dev/src/services/cryptomus.py)
   - [cryptopay.py](file:///root/signal_bot_dev/src/services/cryptopay.py)
+  - [cactus_client.py](file:///root/signal_bot/src/services/cactus_client.py) — Фиатный шлюз CactusPay (Карты РФ / СБП, RUB)
   - [payment_worker.py](file:///root/signal_bot_dev/src/services/payment_worker.py)
+  - [shop.py](file:///root/signal_bot/src/bot/handlers/shop.py) — UI биллинга и Hosted Checkout
+  - [billing_kb.py](file:///root/signal_bot/src/bot/keyboards/billing_kb.py) — Клавиатуры методов оплаты
+  - [bouncer.py](file:///root/signal_bot/src/services/bouncer.py) — «Вышибала» (Bouncer): контроль истечения подписки, автопродление, атомарная деградация до FREE_NOISE пресета и развилка A/B сервисных уведомлений при истечении
+  - [messenger_worker.py](file:///root/signal_bot/src/services/messenger_worker.py) — Доставщик алертов: рантайм-сегментация VIP/Free, Gatekeeper-проверка членства, отключение рендера графиков для Free
+  - [redis_bus.py](file:///root/signal_bot/src/core/redis_bus.py) — Шина Redis + методы шлюза подписок set_gate_status/get_gate_status (ключ csl:gate:{user_id})
+  - [commands.py](file:///root/signal_bot/src/bot/handlers/commands.py) + [main_kb.py](file:///root/signal_bot/src/bot/keyboards/main_kb.py) — Clean State Model: 4-состоятельный резолвер главного меню, монолитный футер и рендер Gate Screen подэкрана разблокировки
+  - [settings.py](file:///root/signal_bot/src/bot/handlers/settings.py) + [settings_kb.py](file:///root/signal_bot/src/bot/keyboards/settings_kb.py) — Paywall защита настроек (11 точек Early Exit) + открытый master-тумблер is_signals_enabled для всех
+  - [onboarding.py](file:///root/signal_bot/src/bot/handlers/onboarding.py) — 3-шаговый онбординг (язык → бонус сообщества → пресет) и формирование 3-дневного пробного VIP-периода
 - Контекстные документы:
   - [IMPLEMENTATION_PLAN.md](file:///root/signal_bot_dev/IMPLEMENTATION_PLAN.md)
   - [new_finance_system_release.md](file:///root/signal_bot_dev/new_finance_system_release.md)
   - [new_finance_system_report.md](file:///root/signal_bot_dev/new_finance_system_report.md)
+  - [MANUAL_BILLING.md](file:///root/signal_bot/docs/MANUAL_BILLING.md) — Ручное подтверждение крипто-оплат
+  - [CACTUS_PAY_INTEGRATION.md](file:///root/signal_bot/docs/CACTUS_PAY_INTEGRATION.md) — Исчерпывающая документация по CactusPay (данный документ является справочным материалом для провайдера CACTUS)
+  - [FREEMIUM_AND_GATEKEEPER.md](file:///root/signal_bot/docs/FREEMIUM_AND_GATEKEEPER.md) — Исчерпывающая документация по гибридной Freemium-воронке, 4-состоятельной UI-модели главного меню и шлюзу обязательных медиа-подписок (справочный материал для механик конверсии VIP/Free)
 
 ---
 
@@ -26,10 +38,11 @@
 
 Для финансового контура это означает следующее:
 
-- `Gateway layer` взаимодействует с внешним провайдером платежей и формирует внешний снимок состояния платежа. Основной шлюз реализован в [cryptomus.py](file:///root/signal_bot_dev/src/services/cryptomus.py), остаточная совместимость с legacy-провайдером сохранена в [cryptopay.py](file:///root/signal_bot_dev/src/services/cryptopay.py).
+- `Gateway layer` взаимодействует с внешним провайдером платежей и формирует внешний снимок состояния платежа. Основной крипто-шлюз реализован в [cryptomus.py](file:///root/signal_bot_dev/src/services/cryptomus.py), остаточная совместимость с legacy-провайдером сохранена в [cryptopay.py](file:///root/signal_bot_dev/src/services/cryptopay.py). Фиатный рублёвый шлюз (Карты РФ / СБП / Hosted Checkout) реализован в [cactus_client.py](file:///root/signal_bot/src/services/cactus_client.py) и документирован отдельно в [CACTUS_PAY_INTEGRATION.md](file:///root/signal_bot/docs/CACTUS_PAY_INTEGRATION.md).
 - `CRUD layer` инкапсулирует только атомарные операции над БД: создание инвойса, выборка сущностей, изменение баланса, обновление записи инвойса, продление подписки. Этот слой реализован в [billing_service.py](file:///root/signal_bot_dev/src/database/crud/billing_service.py).
 - `Processor layer` является "мозгом" биллинга: выполняет синхронизацию с провайдером, захватывает lock, рассчитывает дельту, исполняет intent и возвращает DTO. Этот слой реализован в [billing_processor.py](file:///root/signal_bot_dev/src/services/logic/billing_processor.py).
-- `Delivery layer` использует результат процессора для фона и UI: [payment_worker.py](file:///root/signal_bot_dev/src/services/payment_worker.py) и [wallet.py](file:///root/signal_bot_dev/src/bot/handlers/wallet.py#L243-L315).
+- `Delivery layer` использует результат процессора для фона и UI: [payment_worker.py](file:///root/signal_bot_dev/src/services/payment_worker.py) (фоновый polling+уведомления) и [shop.py](file:///root/signal_bot/src/bot/handlers/shop.py) (экран выбора тарифа/метода, Hosted Checkout CactusPay, ручной триггер проверки).
+- `Freemium/Audience-Building layer` является надстройкой над биллингом и управляет сегментацией VIP/Free, шлюзом медиа-подписок (Gatekeeper) и жизненным циклом пробного периода. Деградация тарифа при экспирации, контроль членства в каналах и сегментация доставки алертов реализованы в [bouncer.py](file:///root/signal_bot/src/services/bouncer.py) и [messenger_worker.py](file:///root/signal_bot/src/services/messenger_worker.py). Полная спецификация Freemium-воронки и 4-состоятельной UI-модели приведена в отдельном документе [FREEMIUM_AND_GATEKEEPER.md](file:///root/signal_bot/docs/FREEMIUM_AND_GATEKEEPER.md).
 
 ```mermaid
 flowchart LR
