@@ -27,6 +27,7 @@
   - [MANUAL_BILLING.md](file:///root/signal_bot/docs/MANUAL_BILLING.md) — Ручное подтверждение крипто-оплат
   - [CACTUS_PAY_INTEGRATION.md](file:///root/signal_bot/docs/CACTUS_PAY_INTEGRATION.md) — Исчерпывающая документация по CactusPay (данный документ является справочным материалом для провайдера CACTUS)
   - [FREEMIUM_AND_GATEKEEPER.md](file:///root/signal_bot/docs/FREEMIUM_AND_GATEKEEPER.md) — Исчерпывающая документация по гибридной Freemium-воронке, 4-состоятельной UI-модели главного меню и шлюзу обязательных медиа-подписок (справочный материал для механик конверсии VIP/Free)
+  - [SERVICES_ARCHITECTURE.md](file:///root/signal_bot/docs/SERVICES_ARCHITECTURE.md) — Доменная декомпозиция слоя src/services/ по философии «Улей»: карта пакетов (ingestion/logic/payments/workers/rendering/monitoring), направления импортов и инварианты сопровождения
 
 ---
 
