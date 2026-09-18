@@ -17,7 +17,7 @@ from src.database.crud.user_service import (
     get_vip_receiver_ids, 
     get_free_receiver_ids
 )
-from src.services.broadcast_service import run_broadcast
+from src.services.monitoring.broadcast_service import run_broadcast
 
 logger = logging.getLogger(__name__)
 

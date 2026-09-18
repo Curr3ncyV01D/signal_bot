@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 import sys
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from src.services.chart_generator import _render_sync
+from src.services.rendering.chart_generator import _render_sync
 
 def generate_dummy_ohlc(count=100):
     """Генерирует фейковые данные свечей (Random Walk)"""

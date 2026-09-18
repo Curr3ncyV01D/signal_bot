@@ -24,8 +24,8 @@ from src.bot.handlers.admin_payments import send_payment_review_card
 from src.core.config import config, ImagePaths
 from src.core.redis_bus import LockResult, redis_bus
 from src.database.crud import billing_service, user_service
-from src.services.analyzer import invalidate_user_cache
-from src.services.cactus_client import (
+from src.services.logic.analyzer import invalidate_user_cache
+from src.services.payments.cactus_client import (
     CACTUS_MIN_AMOUNT_RUB,
     CactusAPIError,
     CactusConfigurationError,

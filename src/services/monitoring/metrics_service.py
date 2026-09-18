@@ -4,8 +4,8 @@ import time
 from datetime import datetime, timezone
 from src.core.config import config
 from src.database.crud.stats_service import get_financial_metrics, get_audience_metrics
-from src.services.bouncer import BouncerManager
-from src.services.payment_worker import PaymentManager
+from src.services.workers.bouncer import BouncerManager
+from src.services.workers.payment_worker import PaymentManager
 
 class MetricsService:
     _process = None

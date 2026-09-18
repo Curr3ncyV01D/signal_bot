@@ -11,7 +11,7 @@ from aiogram.types import BufferedInputFile
 from src.core.config import config, setup_logging
 from src.core.dto import SignalDTO
 from src.core.redis_bus import redis_bus
-from src.services import chart_generator
+from src.services.rendering import chart_generator
 from src.utils import strip_emojis
 
 logger = logging.getLogger(__name__)

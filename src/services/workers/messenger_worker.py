@@ -17,7 +17,7 @@ from src.core.redis_bus import LockResult, redis_bus
 from src.database.crud.user_service import get_active_users, get_user_by_id
 from src.database.functions import get_utc_now
 from src.database.session import async_session
-from src.services.asset_manager import (
+from src.services.rendering.asset_manager import (
     AssetManager,
     PLACEHOLDER_MSG_ID_REDIS_KEY,
 )

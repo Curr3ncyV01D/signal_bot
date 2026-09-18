@@ -21,8 +21,8 @@ from src.bot.handlers.onboarding import (
     _verify_gate_resources_membership,
 )
 from src.bot.keyboards import get_start_kb, get_status_kb
-from src.services.analyzer import invalidate_user_cache
-from src.services.metrics_service import MetricsService
+from src.services.logic.analyzer import invalidate_user_cache
+from src.services.monitoring.metrics_service import MetricsService
 from src.utils import format_datetime, format_smart_num
 
 logger = logging.getLogger(__name__)

@@ -19,7 +19,7 @@ from src.database.crud.user_service import (
     is_user_vip,
 )
 from src.database.models import User
-from src.services.analyzer import invalidate_user_cache
+from src.services.logic.analyzer import invalidate_user_cache
 from src.utils import format_smart_num
 
 logger = logging.getLogger(__name__)

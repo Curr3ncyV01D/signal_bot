@@ -3,7 +3,7 @@ import logging
 from src.core.config import config
 from src.database.session import async_session
 from src.database.crud.liq_service import save_liquidation
-from src.services.analyzer import process_liquidation_item
+from src.services.logic.analyzer import process_liquidation_item
 
 logger = logging.getLogger(__name__)
 

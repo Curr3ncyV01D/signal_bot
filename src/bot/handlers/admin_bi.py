@@ -11,7 +11,7 @@ from aiogram.fsm.context import FSMContext
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.bot.filters.admin import IsAdminFilter
-from src.services.metrics_service import MetricsService
+from src.services.monitoring.metrics_service import MetricsService
 from src.bot.utils.admin_bi_formatter import BIFormatter
 from src.bot.keyboards.admin_bi_kb import (
     get_bi_main_kb, get_bi_finance_kb, 

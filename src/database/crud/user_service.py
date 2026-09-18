@@ -437,7 +437,7 @@ async def apply_user_setting_preset(session: AsyncSession, user_id: int, preset_
         if user is None:
             return None
 
-        from src.services.analyzer import invalidate_user_cache
+        from src.services.logic.analyzer import invalidate_user_cache
 
         await invalidate_user_cache(user.id)
         return user

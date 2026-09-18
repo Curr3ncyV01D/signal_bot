@@ -19,25 +19,25 @@ from src.bot.middlewares.block_middleware import BlockMiddleware
 from src.bot.middlewares.fsm_cleaner import FSMCleanerMiddleware
 from src.bot.middlewares.db_session import DbSessionMiddleware
 from src.bot.middlewares.analytics import AnalyticsMiddleware
-from src.services.bybit_ws import BybitListener
+from src.services.ingestion.bybit_ws import BybitListener
 from src.services.aggregators.liq_aggregator import LiquidationAggregator
 from src.services.aggregators.market_aggregator import MarketAggregator
 from src.services.aggregators.trade_aggregator import TradeAggregator
-from src.services.analyzer import (
+from src.services.logic.analyzer import (
     user_cache_refresher_task, 
     user_cache_refresher_task_once
 )
-from src.services.worker import DataWorker
-from src.services.retention import retention_policy_worker
-from src.services.warmup import warmup_ohlc, warmup_system
-from src.services.bouncer import bouncer_worker
-from src.services.dashboard import dashboard_worker
-from src.services.payment_worker import payment_checker_worker
-from src.services.cryptomus import cryptomus_client
-from src.services.cryptopay import cryptopay
-from src.services.asset_manager import AssetManager
-from src.services.symbol_sync import build_target_symbols, symbol_sync_worker
-from src.services.supply_worker import supply_sync_worker
+from src.services.ingestion.worker import DataWorker
+from src.services.workers.retention import retention_policy_worker
+from src.services.ingestion.warmup import warmup_ohlc, warmup_system
+from src.services.workers.bouncer import bouncer_worker
+from src.services.monitoring.dashboard import dashboard_worker
+from src.services.workers.payment_worker import payment_checker_worker
+from src.services.payments.cryptomus import cryptomus_client
+from src.services.payments.cryptopay import cryptopay
+from src.services.rendering.asset_manager import AssetManager
+from src.services.ingestion.symbol_sync import build_target_symbols, symbol_sync_worker
+from src.services.workers.supply_worker import supply_sync_worker
 from src.utils import lag_detector
 
 logger = logging.getLogger(__name__)

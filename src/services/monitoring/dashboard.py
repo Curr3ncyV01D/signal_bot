@@ -9,7 +9,7 @@ from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
 from src.core.config import config
 from src.database.session import async_session
 from src.bot.utils.dashboard_formatter import DashboardFormatter
-from src.services.asset_manager import AssetManager
+from src.services.rendering.asset_manager import AssetManager
 
 logger = logging.getLogger(__name__)
 

@@ -13,7 +13,7 @@ from src.core.localization import (
 )
 from src.database.models import User
 from src.database.session import async_session
-from src.services.analyzer import invalidate_user_cache
+from src.services.logic.analyzer import invalidate_user_cache
 
 
 class UserLocaleManager(BaseManager):

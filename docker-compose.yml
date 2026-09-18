@@ -63,7 +63,7 @@ services:
 
   artist:
     build: .
-    command: python -m src.services.chart_worker
+    command: python -m src.services.workers.chart_worker
     volumes:
       - .:/app
     container_name: ${PROJECT_NAME}_artist
@@ -87,7 +87,7 @@ services:
 
   messenger:
     build: .
-    command: python -m src.services.messenger_worker
+    command: python -m src.services.workers.messenger_worker
     volumes:
       - .:/app
     container_name: ${PROJECT_NAME}_messenger

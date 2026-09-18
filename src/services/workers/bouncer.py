@@ -17,7 +17,7 @@ from src.database.crud.user_service import degrade_user_to_free_tier
 from src.database.functions import get_utc_now
 from src.database.models import User
 from src.database.session import async_session
-from src.services.analyzer import invalidate_user_cache
+from src.services.logic.analyzer import invalidate_user_cache
 
 logger = logging.getLogger(__name__)
 

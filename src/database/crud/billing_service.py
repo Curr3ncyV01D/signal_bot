@@ -11,7 +11,7 @@ from src.core.i18n_runtime import background_i18n
 from src.core.localization import SUPPORTED_LOCALES
 from src.database.functions import get_utc_now
 from src.database.models import Invoice, Transaction, User
-from src.services.analyzer import invalidate_user_cache
+from src.services.logic.analyzer import invalidate_user_cache
 
 logger = logging.getLogger(__name__)
 

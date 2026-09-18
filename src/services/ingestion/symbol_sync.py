@@ -5,8 +5,8 @@ from src.core.config import config
 from src.database.crud.fundamentals_service import sync_coin_fundamentals_list
 from src.database.session import async_session
 from src.services.aggregators.market_aggregator import MarketAggregator
-from src.services.bybit_ws import BybitListener
-from src.services.warmup import warmup_ohlc, warmup_system
+from src.services.ingestion.bybit_ws import BybitListener
+from src.services.ingestion.warmup import warmup_ohlc, warmup_system
 
 logger = logging.getLogger(__name__)
 

@@ -31,8 +31,8 @@ from src.database.crud.user_service import (
     update_user_subscription,
 )
 from src.database.models import User
-from src.services import analyzer
-from src.services.dashboard import recreate_dashboard_logic
+from src.services.logic import analyzer
+from src.services.monitoring.dashboard import recreate_dashboard_logic
 from src.utils import format_datetime, format_smart_num, parse_numeric_input
 
 logger = logging.getLogger(__name__)
